@@ -25,6 +25,7 @@ import { getTrustTier } from './trust.service.js'
 import { getRedis } from '../lib/redis.js'
 import { sendToAgent } from '../ws/events.js'
 import { isOnline } from '../ws/registry.js'
+import { fireWebhooks } from './webhook.service.js'
 
 const MAX_CONTENT_BYTES = 32_768 // 32 KB
 
@@ -186,12 +187,15 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
 
 async function pushToRecipient(recipientId: string, message: Record<string, unknown>) {
   if (isOnline(recipientId)) {
+    // Agent is connected via WebSocket — push directly
     sendToAgent(recipientId, {
       type: 'message.new',
       payload: message,
     })
-    // Mark as delivered since recipient is connected
     await updateMessageStatus(message.id as string, 'delivered')
+  } else {
+    // Agent is offline — try webhook delivery (best-effort with retries)
+    fireWebhooks(recipientId, 'message.new', message)
   }
 }
 
@@ -229,11 +233,17 @@ export async function markAsDelivered(messageId: string) {
 export async function markAsRead(messageId: string, agentId: string) {
   const message = await updateMessageStatus(messageId, 'read')
 
-  if (message.sender_id && isOnline(message.sender_id)) {
-    sendToAgent(message.sender_id, {
-      type: 'message.read',
-      payload: { message_id: messageId, read_by: agentId, read_at: message.read_at },
-    })
+  const readPayload = { message_id: messageId, read_by: agentId, read_at: message.read_at }
+
+  if (message.sender_id) {
+    if (isOnline(message.sender_id)) {
+      sendToAgent(message.sender_id, {
+        type: 'message.read',
+        payload: readPayload,
+      })
+    } else {
+      fireWebhooks(message.sender_id, 'message.read', readPayload)
+    }
   }
 
   return message
