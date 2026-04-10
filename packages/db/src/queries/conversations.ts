@@ -79,3 +79,37 @@ export async function getConversationParticipants(conversationId: string): Promi
   if (error) throw error
   return (data ?? []).map((d) => d.agent_id)
 }
+
+export async function countColdOutreaches(agentId: string): Promise<number> {
+  const todayStart = new Date()
+  todayStart.setUTCHours(0, 0, 0, 0)
+
+  const { data, error } = await getSupabaseClient()
+    .rpc('count_cold_outreaches', {
+      p_agent_id: agentId,
+      p_since: todayStart.toISOString(),
+    })
+
+  if (error) throw error
+  return (data as number) ?? 0
+}
+
+export async function getConversation(conversationId: string) {
+  const { data, error } = await getSupabaseClient()
+    .from('conversations')
+    .select('*')
+    .eq('id', conversationId)
+    .single()
+
+  if (error) throw error
+  return data
+}
+
+export async function markConversationEstablished(conversationId: string) {
+  const { error } = await getSupabaseClient()
+    .from('conversations')
+    .update({ established: true })
+    .eq('id', conversationId)
+
+  if (error) throw error
+}

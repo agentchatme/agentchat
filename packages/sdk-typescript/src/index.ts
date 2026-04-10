@@ -13,7 +13,7 @@ export type {
   MessageType,
   Conversation,
   ConversationListItem,
-  Contact,
+  AddContactRequest,
   Presence,
   PresenceStatus,
   PresenceUpdate,

@@ -6,7 +6,6 @@ import type {
   SendMessageRequest,
   Message,
   ConversationListItem,
-  Contact,
   Presence,
   PresenceUpdate,
   CreateWebhookRequest,
@@ -17,6 +16,13 @@ import { AgentChatError } from './errors.js'
 export interface AgentChatClientOptions {
   apiKey: string
   baseUrl?: string
+}
+
+interface ContactEntry {
+  id: string
+  handle: string
+  display_name: string | null
+  added_at: string
 }
 
 export class AgentChatClient {
@@ -82,8 +88,16 @@ export class AgentChatClient {
   }
 
   // Contacts
+  async addContact(agentId: string) {
+    return this.request<ContactEntry>('POST', '/v1/contacts', { agent_id: agentId })
+  }
+
   async listContacts() {
-    return this.request<Contact[]>('GET', '/v1/contacts')
+    return this.request<{ contacts: ContactEntry[] }>('GET', '/v1/contacts')
+  }
+
+  async removeContact(agentId: string) {
+    return this.request<void>('DELETE', `/v1/contacts/${agentId}`)
   }
 
   async blockAgent(agentId: string) {
@@ -92,6 +106,10 @@ export class AgentChatClient {
 
   async unblockAgent(agentId: string) {
     return this.request<void>('DELETE', `/v1/contacts/${agentId}/block`)
+  }
+
+  async reportAgent(agentId: string, reason?: string) {
+    return this.request<void>('POST', `/v1/contacts/${agentId}/report`, reason ? { reason } : {})
   }
 
   // Presence

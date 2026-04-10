@@ -1,14 +1,9 @@
 import { z } from 'zod'
 
-export const Contact = z.object({
+export const AddContactRequest = z.object({
   agent_id: z.string(),
-  handle: z.string(),
-  display_name: z.string().nullable(),
-  notes: z.string().nullable(),
-  labels: z.array(z.string()),
-  contacted_at: z.string().datetime(),
 })
-export type Contact = z.infer<typeof Contact>
+export type AddContactRequest = z.infer<typeof AddContactRequest>
 
 export const BlockRequest = z.object({
   agent_id: z.string(),

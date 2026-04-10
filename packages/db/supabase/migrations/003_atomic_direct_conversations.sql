@@ -4,21 +4,11 @@
 
 ALTER TABLE conversations
   ADD COLUMN direct_agent_a TEXT REFERENCES agents(id),
-  ADD COLUMN direct_agent_b TEXT REFERENCES agents(id);
+  ADD COLUMN direct_agent_b TEXT REFERENCES agents(id),
+  ADD COLUMN initiated_by TEXT REFERENCES agents(id),
+  ADD COLUMN established BOOLEAN NOT NULL DEFAULT FALSE;
 
--- Unique constraint: only one direct conversation per agent pair
--- agent_a is always the lexicographically smaller ID
-ALTER TABLE conversations
-  ADD CONSTRAINT unique_direct_pair UNIQUE (direct_agent_a, direct_agent_b);
-
--- Check constraint: direct conversations MUST have the pair set, groups MUST NOT
-ALTER TABLE conversations
-  ADD CONSTRAINT direct_pair_check CHECK (
-    (type = 'direct' AND direct_agent_a IS NOT NULL AND direct_agent_b IS NOT NULL AND direct_agent_a < direct_agent_b)
-    OR (type = 'group' AND direct_agent_a IS NULL AND direct_agent_b IS NULL)
-  );
-
--- Backfill existing direct conversations (if any)
+-- Backfill existing direct conversations BEFORE adding constraints
 UPDATE conversations c
 SET
   direct_agent_a = sub.agent_a,
@@ -37,10 +27,30 @@ FROM (
 ) sub
 WHERE c.id = sub.conversation_id;
 
+-- Delete any direct conversations that couldn't be backfilled (orphans with missing participants)
+DELETE FROM conversations
+WHERE type = 'direct' AND direct_agent_a IS NULL;
+
+-- NOW add constraints (all rows are clean)
+ALTER TABLE conversations
+  ADD CONSTRAINT unique_direct_pair UNIQUE (direct_agent_a, direct_agent_b);
+
+ALTER TABLE conversations
+  ADD CONSTRAINT direct_pair_check CHECK (
+    (type = 'direct' AND direct_agent_a IS NOT NULL AND direct_agent_b IS NOT NULL AND direct_agent_a < direct_agent_b)
+    OR (type = 'group' AND direct_agent_a IS NULL AND direct_agent_b IS NULL)
+  );
+
+-- Index for efficient cold outreach counting
+CREATE INDEX idx_conversations_cold_outreach
+  ON conversations(initiated_by, created_at)
+  WHERE established = FALSE AND type = 'direct';
+
 -- Replace the old find function with an atomic find-or-create
 DROP FUNCTION IF EXISTS find_direct_conversation(TEXT, TEXT);
 
 -- Atomic find-or-create: uses INSERT ... ON CONFLICT to prevent race conditions
+-- p_agent_a = the initiator (sender of the first message)
 CREATE OR REPLACE FUNCTION find_or_create_direct_conversation(
   p_agent_a TEXT,
   p_agent_b TEXT,
@@ -51,7 +61,6 @@ DECLARE
   sorted_a TEXT := LEAST(p_agent_a, p_agent_b);
   sorted_b TEXT := GREATEST(p_agent_a, p_agent_b);
   v_conv_id TEXT;
-  v_is_new BOOLEAN;
 BEGIN
   -- Try to find existing first (fast path)
   SELECT c.id INTO v_conv_id
@@ -67,8 +76,8 @@ BEGIN
 
   -- Attempt insert — the unique constraint handles the race
   BEGIN
-    INSERT INTO conversations (id, type, direct_agent_a, direct_agent_b)
-    VALUES (p_conv_id, 'direct', sorted_a, sorted_b);
+    INSERT INTO conversations (id, type, direct_agent_a, direct_agent_b, initiated_by)
+    VALUES (p_conv_id, 'direct', sorted_a, sorted_b, p_agent_a);
 
     INSERT INTO conversation_participants (conversation_id, agent_id)
     VALUES (p_conv_id, p_agent_a), (p_conv_id, p_agent_b);
@@ -97,4 +106,15 @@ RETURNS TEXT AS $$
   SELECT id FROM conversations
   WHERE direct_agent_a = LEAST(agent_a, agent_b)
     AND direct_agent_b = GREATEST(agent_a, agent_b);
+$$ LANGUAGE sql;
+
+-- Count active cold outreaches (unestablished conversations initiated today)
+CREATE OR REPLACE FUNCTION count_cold_outreaches(p_agent_id TEXT, p_since TIMESTAMPTZ)
+RETURNS INTEGER AS $$
+  SELECT COALESCE(COUNT(*)::INTEGER, 0)
+  FROM conversations
+  WHERE initiated_by = p_agent_id
+    AND established = FALSE
+    AND type = 'direct'
+    AND created_at >= p_since;
 $$ LANGUAGE sql;

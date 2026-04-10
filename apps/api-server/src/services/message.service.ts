@@ -9,12 +9,17 @@ import {
   getUndeliveredMessages,
   deleteMessage,
   isBlocked,
+  isContact,
   findOrCreateDirectConversation,
   updateConversationLastMessage,
   isParticipant,
   getConversationParticipants,
+  countColdOutreaches,
+  getConversation,
+  markConversationEstablished,
+  addContact,
 } from '@agentchat/db'
-import { NEW_CONVERSATIONS_PER_DAY, MESSAGES_PER_MINUTE } from '@agentchat/shared'
+import { NEW_CONVERSATIONS_PER_DAY, MESSAGES_PER_SECOND } from '@agentchat/shared'
 import type { SendMessageRequest } from '@agentchat/shared'
 import { getTrustTier } from './trust.service.js'
 import { getRedis } from '../lib/redis.js'
@@ -59,48 +64,83 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     throw new MessageError('VALIDATION_ERROR', 'Cannot send a message to yourself', 400)
   }
 
-  // 2. Check if sender is blocked by recipient
+  // 2. Check recipient's inbox mode
+  const inboxMode = (recipient.settings as Record<string, unknown>)?.inbox_mode ?? 'open'
+  if (inboxMode === 'contacts_only') {
+    const isSenderInContacts = await isContact(recipient.id, senderId)
+    if (!isSenderInContacts) {
+      throw new MessageError(
+        'INBOX_RESTRICTED',
+        'This agent only accepts messages from contacts',
+        403,
+      )
+    }
+  } else if (inboxMode === 'verified_only') {
+    const sender = await findAgentById(senderId)
+    const senderTier = getTrustTier(sender?.trust_score ?? 0)
+    if (senderTier !== 'verified' && senderTier !== 'established') {
+      throw new MessageError(
+        'INBOX_RESTRICTED',
+        'This agent only accepts messages from verified agents',
+        403,
+      )
+    }
+  }
+
+  // 3. Check if sender is blocked by recipient
   const blocked = await isBlocked(recipient.id, senderId)
   if (blocked) {
     throw new MessageError('BLOCKED', 'You are blocked by this agent', 403)
   }
 
-  // 3. Check if conversation already exists (read-only, no creation yet)
-  const existingConvId = await findDirectConversation(senderId, recipient.id)
-
-  // 4. Rate limit checks BEFORE creating anything
+  // 4. Check sender status (suspended/restricted agents can't cold-message)
   const sender = await findAgentById(senderId)
   if (!sender) {
     throw new MessageError('AGENT_NOT_FOUND', 'Sender agent not found', 404)
   }
+  if (sender.status === 'suspended') {
+    throw new MessageError('SUSPENDED', 'Your agent is suspended', 403)
+  }
+
   const tier = getTrustTier(sender.trust_score)
 
-  // 4a. If this would be a new conversation, check new-conversation rate limit
+  // 5. Per-second rate limit (protects infrastructure)
+  const perSecLimit = MESSAGES_PER_SECOND[tier]
+  const perSecAllowed = await checkPerSecondRateLimit(senderId, perSecLimit)
+  if (!perSecAllowed) {
+    throw new MessageError(
+      'RATE_LIMITED',
+      `Too many messages per second (${perSecLimit}/sec limit for ${tier} tier)`,
+      429,
+    )
+  }
+
+  // 6. Check if conversation already exists (read-only, no creation yet)
+  const existingConvId = await findDirectConversation(senderId, recipient.id)
+
+  // 7. Cold outreach rate limit (only for new conversations)
   if (!existingConvId) {
+    // Restricted agents (trust score <= 0) can't start new conversations
+    if (sender.trust_score <= 0) {
+      throw new MessageError(
+        'RESTRICTED',
+        'Your agent is restricted due to low trust score. You can only message existing contacts.',
+        403,
+      )
+    }
+
     const limit = NEW_CONVERSATIONS_PER_DAY[tier]
-    const allowed = await checkNewConversationRateLimit(senderId, limit)
-    if (!allowed) {
+    const coldCount = await countColdOutreaches(senderId)
+    if (coldCount >= limit) {
       throw new MessageError(
         'RATE_LIMITED',
-        `Daily new conversation limit reached (${limit}/day for ${tier} tier)`,
+        `Daily new agent outreach limit reached (${limit}/day for ${tier} tier). Limit frees up when recipients reply.`,
         429,
       )
     }
   }
 
-  // 4b. Per-conversation message rate limit (applies to all conversations)
-  const convIdForRateLimit = existingConvId ?? 'pending'
-  const msgLimit = MESSAGES_PER_MINUTE[tier]
-  const msgAllowed = await checkMessageRateLimit(senderId, convIdForRateLimit, msgLimit)
-  if (!msgAllowed) {
-    throw new MessageError(
-      'RATE_LIMITED',
-      `Message rate limit exceeded (${msgLimit}/min for ${tier} tier)`,
-      429,
-    )
-  }
-
-  // 5. Atomically find or create conversation (safe against race conditions)
+  // 8. Atomically find or create conversation (safe against race conditions)
   const newConvId = generateId('conv')
   const { conversationId } = await findOrCreateDirectConversation(
     senderId,
@@ -108,7 +148,20 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     newConvId,
   )
 
-  // 6. STORE FIRST — write to PostgreSQL (this is the durability guarantee)
+  // 9. If sender is NOT the initiator, mark conversation as established
+  //    (recipient replying → mutual conversation, frees up initiator's rate limit slot)
+  //    Also auto-add each other as contacts (organic contact formation)
+  if (existingConvId) {
+    const conv = await getConversation(conversationId)
+    if (conv && !conv.established && conv.initiated_by !== senderId) {
+      await markConversationEstablished(conversationId)
+      // Auto-add mutual contacts (both directions, fire-and-forget)
+      addContact(senderId, recipient.id).catch(() => {})
+      addContact(recipient.id, senderId).catch(() => {})
+    }
+  }
+
+  // 10. STORE FIRST — write to PostgreSQL (this is the durability guarantee)
   const messageId = generateId('msg')
   const message = await insertMessage({
     id: messageId,
@@ -120,14 +173,12 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     status: 'stored',
   })
 
-  // 7. Update conversation timestamp
+  // 11. Update conversation timestamp
   await updateConversationLastMessage(conversationId)
 
-  // 8. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
-  //    This runs after we've already stored the message and will return 201
+  // 12. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
   pushToRecipient(recipient.id, message).catch(() => {
     // Push failed — that's fine, message is safe in DB
-    // Recipient gets it on next sync
   })
 
   return message
@@ -142,37 +193,16 @@ async function pushToRecipient(recipientId: string, message: Record<string, unkn
     // Mark as delivered since recipient is connected
     await updateMessageStatus(message.id as string, 'delivered')
   }
-  // If not online, message stays as 'stored' — delivered on next sync
 }
 
-async function checkNewConversationRateLimit(agentId: string, limit: number): Promise<boolean> {
+async function checkPerSecondRateLimit(agentId: string, limit: number): Promise<boolean> {
   const redis = getRedis()
-  const key = `ratelimit:newconv:${agentId}`
-  const today = new Date().toISOString().split('T')[0]
-  const dailyKey = `${key}:${today}`
-
-  const current = await redis.incr(dailyKey)
-
-  // Set expiry on first increment (24 hours)
-  if (current === 1) {
-    await redis.expire(dailyKey, 86400)
-  }
-
-  return current <= limit
-}
-
-async function checkMessageRateLimit(
-  agentId: string,
-  conversationId: string,
-  limit: number,
-): Promise<boolean> {
-  const redis = getRedis()
-  const minute = Math.floor(Date.now() / 60_000)
-  const key = `ratelimit:msg:${agentId}:${conversationId}:${minute}`
+  const second = Math.floor(Date.now() / 1000)
+  const key = `ratelimit:persec:${agentId}:${second}`
 
   const current = await redis.incr(key)
   if (current === 1) {
-    await redis.expire(key, 120) // 2 min TTL (covers current + overlap)
+    await redis.expire(key, 3) // 3s TTL (covers current + buffer)
   }
 
   return current <= limit
@@ -184,7 +214,6 @@ export async function getMessages(
   limit = 50,
   before?: string,
 ) {
-  // Verify the requesting agent is a participant
   const participant = await isParticipant(conversationId, agentId)
   if (!participant) {
     throw new MessageError('FORBIDDEN', 'You are not a participant in this conversation', 403)
@@ -198,10 +227,8 @@ export async function markAsDelivered(messageId: string) {
 }
 
 export async function markAsRead(messageId: string, agentId: string) {
-  // Update message status
   const message = await updateMessageStatus(messageId, 'read')
 
-  // Notify sender that message was read (best-effort)
   if (message.sender_id && isOnline(message.sender_id)) {
     sendToAgent(message.sender_id, {
       type: 'message.read',
@@ -213,14 +240,10 @@ export async function markAsRead(messageId: string, agentId: string) {
 }
 
 export async function syncUndelivered(agentId: string) {
-  // Get all messages waiting for this agent
   const messages = await getUndeliveredMessages(agentId)
 
-  // Mark them all as delivered
   for (const msg of messages) {
-    await updateMessageStatus(msg.id, 'delivered').catch(() => {
-      // Non-critical, continue with other messages
-    })
+    await updateMessageStatus(msg.id, 'delivered').catch(() => {})
   }
 
   return messages
