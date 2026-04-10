@@ -7,45 +7,25 @@ export async function findDirectConversation(agentA: string, agentB: string): Pr
   return data as string
 }
 
-export async function createDirectConversation(agentA: string, agentB: string, conversationId: string) {
-  const supabase = getSupabaseClient()
-
-  // Create conversation
-  const { error: convError } = await supabase
-    .from('conversations')
-    .insert({ id: conversationId, type: 'direct' })
-
-  if (convError) throw convError
-
-  // Add both participants
-  const { error: partError } = await supabase
-    .from('conversation_participants')
-    .insert([
-      { conversation_id: conversationId, agent_id: agentA },
-      { conversation_id: conversationId, agent_id: agentB },
-    ])
-
-  if (partError) {
-    // Rollback conversation if participants fail
-    await supabase.from('conversations').delete().eq('id', conversationId)
-    throw partError
-  }
-
-  return conversationId
-}
-
 export async function findOrCreateDirectConversation(
   agentA: string,
   agentB: string,
   newConversationId: string,
 ): Promise<{ conversationId: string; isNew: boolean }> {
-  const existing = await findDirectConversation(agentA, agentB)
-  if (existing) {
-    return { conversationId: existing, isNew: false }
-  }
+  const { data, error } = await getSupabaseClient()
+    .rpc('find_or_create_direct_conversation', {
+      p_agent_a: agentA,
+      p_agent_b: agentB,
+      p_conv_id: newConversationId,
+    })
 
-  await createDirectConversation(agentA, agentB, newConversationId)
-  return { conversationId: newConversationId, isNew: true }
+  if (error) throw error
+
+  const row = Array.isArray(data) ? data[0] : data
+  return {
+    conversationId: row.conversation_id,
+    isNew: row.is_new,
+  }
 }
 
 export async function getAgentConversations(agentId: string, limit = 50) {

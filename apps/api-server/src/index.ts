@@ -1,3 +1,4 @@
+import './env.js' // Validate env vars immediately — crash on missing credentials
 import { Hono } from 'hono'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { serve } from '@hono/node-server'

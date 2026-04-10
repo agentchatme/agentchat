@@ -33,8 +33,9 @@ export async function createAgent(req: CreateAgentRequest, ownerId: string) {
     .single()
 
   if (error) throw error
-  // Return agent with raw API key — shown only once
-  return { ...data, api_key: apiKey }
+  // Return agent with raw API key — shown only once, strip the hash
+  const { api_key_hash: _, ...agentData } = data
+  return { ...agentData, api_key: apiKey }
 }
 
 export async function getAgent(idOrHandle: string) {
@@ -84,7 +85,8 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, ownerId: 
     .single()
 
   if (error) throw error
-  return data
+  const { api_key_hash: _, ...safeData } = data
+  return safeData
 }
 
 export async function deleteAgent(id: string, ownerId: string) {
@@ -114,7 +116,7 @@ export async function listOwnerAgents(ownerId: string) {
     .order('created_at', { ascending: false })
 
   if (error) throw error
-  return data
+  return data.map(({ api_key_hash: _, ...rest }) => rest)
 }
 
 export class AgentError extends Error {
