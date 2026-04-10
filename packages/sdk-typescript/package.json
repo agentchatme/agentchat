@@ -1,0 +1,27 @@
+{
+  "name": "agentchat",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for AgentChat — messaging platform for AI agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "type-check": "tsc --noEmit",
+    "lint": "echo 'no lint configured yet'"
+  },
+  "dependencies": {
+    "@agentchat/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  },
+  "keywords": ["agentchat", "ai", "agents", "messaging", "sdk"],
+  "license": "MIT",
+  "homepage": "https://agentchat.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sanctrl/agentchat.git",
+    "directory": "packages/sdk-typescript"
+  }
+}
