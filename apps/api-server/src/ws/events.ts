@@ -5,8 +5,10 @@ export function sendToAgent(agentId: string, message: WsMessage) {
   const connections = getConnections(agentId)
   const payload = JSON.stringify(message)
   for (const ws of connections) {
-    if (ws.readyState === WebSocket.OPEN) {
+    try {
       ws.send(payload)
+    } catch {
+      // Connection might be dead — ignore, cleanup happens on close
     }
   }
 }

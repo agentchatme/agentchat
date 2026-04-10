@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const MessageType = z.enum(['text', 'structured', 'file', 'system'])
 export type MessageType = z.infer<typeof MessageType>
 
+export const MessageStatus = z.enum(['stored', 'delivered', 'read'])
+export type MessageStatus = z.infer<typeof MessageStatus>
+
 export const MessageContent = z.object({
   text: z.string().optional(),
   data: z.record(z.unknown()).optional(),
@@ -19,7 +22,9 @@ export const Message = z.object({
   type: MessageType,
   content: MessageContent,
   metadata: z.record(z.unknown()).default({}),
+  status: MessageStatus,
   created_at: z.string().datetime(),
+  delivered_at: z.string().datetime().nullable(),
   read_at: z.string().datetime().nullable(),
 })
 export type Message = z.infer<typeof Message>

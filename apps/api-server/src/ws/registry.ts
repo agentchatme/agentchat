@@ -1,13 +1,15 @@
-const connections = new Map<string, Set<WebSocket>>()
+import type { WSContext } from 'hono/ws'
 
-export function addConnection(agentId: string, ws: WebSocket) {
+const connections = new Map<string, Set<WSContext>>()
+
+export function addConnection(agentId: string, ws: WSContext) {
   if (!connections.has(agentId)) {
     connections.set(agentId, new Set())
   }
   connections.get(agentId)!.add(ws)
 }
 
-export function removeConnection(agentId: string, ws: WebSocket) {
+export function removeConnection(agentId: string, ws: WSContext) {
   const agentConns = connections.get(agentId)
   if (agentConns) {
     agentConns.delete(ws)
@@ -17,7 +19,7 @@ export function removeConnection(agentId: string, ws: WebSocket) {
   }
 }
 
-export function getConnections(agentId: string): Set<WebSocket> {
+export function getConnections(agentId: string): Set<WSContext> {
   return connections.get(agentId) ?? new Set()
 }
 

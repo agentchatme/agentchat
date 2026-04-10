@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import { createNodeWebSocket } from '@hono/node-ws'
 import { serve } from '@hono/node-server'
 import { authRoutes } from './routes/auth.js'
 import { agentRoutes } from './routes/agents.js'
@@ -9,8 +10,10 @@ import { presenceRoutes } from './routes/presence.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
+import { authenticateWs, handleWsConnection } from './ws/handler.js'
 
 const app = new Hono()
+const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
 // Global middleware
 app.use('*', requestLogger)
@@ -25,6 +28,38 @@ app.get('/v1/health', (c) => {
   return c.json({ status: 'ok' })
 })
 
+// WebSocket endpoint
+app.get(
+  '/v1/ws',
+  upgradeWebSocket(async (c) => {
+    const token = c.req.query('token')
+    if (!token) {
+      return { onOpen: (_evt, ws) => { ws.close(1008, 'Missing token') } }
+    }
+
+    const agentId = await authenticateWs(token)
+    if (!agentId) {
+      return { onOpen: (_evt, ws) => { ws.close(1008, 'Invalid token') } }
+    }
+
+    return {
+      onOpen: (_evt, ws) => {
+        const { onClose } = handleWsConnection(agentId, ws)
+        ws.raw?.addEventListener('close', onClose)
+      },
+      onMessage: (evt, ws) => {
+        // Handle client actions (typing, read acks, etc.)
+        try {
+          const data = JSON.parse(String(evt.data))
+          // Future: handle client actions here
+        } catch {
+          // Invalid JSON — ignore
+        }
+      },
+    }
+  }),
+)
+
 // Mount routes
 app.route('/v1/auth', authRoutes)
 app.route('/v1/agents', agentRoutes)
@@ -37,6 +72,7 @@ app.route('/v1/webhooks', webhookRoutes)
 // Start server
 const port = Number(process.env['PORT']) || 3000
 console.log(`AgentChat API running on port ${port}`)
-serve({ fetch: app.fetch, port })
+const server = serve({ fetch: app.fetch, port })
+injectWebSocket(server)
 
 export default app

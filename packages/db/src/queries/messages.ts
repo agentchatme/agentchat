@@ -1,5 +1,27 @@
 import { getSupabaseClient } from '../client.js'
 
+export async function insertMessage(message: {
+  id: string
+  conversation_id: string
+  sender_id: string
+  type: string
+  content: Record<string, unknown>
+  metadata?: Record<string, unknown>
+  status?: string
+}) {
+  const { data, error } = await getSupabaseClient()
+    .from('messages')
+    .insert({
+      ...message,
+      status: message.status ?? 'stored',
+    })
+    .select()
+    .single()
+
+  if (error) throw error
+  return data
+}
+
 export async function getConversationMessages(
   conversationId: string,
   limit = 50,
@@ -21,19 +43,60 @@ export async function getConversationMessages(
   return data
 }
 
-export async function insertMessage(message: {
-  id: string
-  conversation_id: string
-  sender_id: string
-  type: string
-  content: Record<string, unknown>
-  metadata?: Record<string, unknown>
-}) {
+export async function updateMessageStatus(
+  messageId: string,
+  status: 'delivered' | 'read',
+) {
+  const updates: Record<string, unknown> = { status }
+  if (status === 'delivered') {
+    updates.delivered_at = new Date().toISOString()
+  } else if (status === 'read') {
+    updates.read_at = new Date().toISOString()
+  }
+
   const { data, error } = await getSupabaseClient()
     .from('messages')
-    .insert(message)
+    .update(updates)
+    .eq('id', messageId)
     .select()
     .single()
+
   if (error) throw error
   return data
+}
+
+export async function getUndeliveredMessages(agentId: string) {
+  // Get all conversations this agent is part of
+  const { data: participations, error: partError } = await getSupabaseClient()
+    .from('conversation_participants')
+    .select('conversation_id')
+    .eq('agent_id', agentId)
+
+  if (partError) throw partError
+  if (!participations || participations.length === 0) return []
+
+  const convIds = participations.map((p) => p.conversation_id)
+
+  // Get all stored (undelivered) messages in those conversations, NOT sent by this agent
+  const { data, error } = await getSupabaseClient()
+    .from('messages')
+    .select('*')
+    .in('conversation_id', convIds)
+    .neq('sender_id', agentId)
+    .eq('status', 'stored')
+    .order('created_at', { ascending: true })
+
+  if (error) throw error
+  return data
+}
+
+export async function deleteMessage(messageId: string, agentId: string) {
+  // Only the sender can delete their own message
+  const { error } = await getSupabaseClient()
+    .from('messages')
+    .delete()
+    .eq('id', messageId)
+    .eq('sender_id', agentId)
+
+  if (error) throw error
 }
