@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
+import { authRoutes } from './routes/auth.js'
 import { agentRoutes } from './routes/agents.js'
 import { messageRoutes } from './routes/messages.js'
 import { conversationRoutes } from './routes/conversations.js'
@@ -25,6 +26,7 @@ app.get('/v1/health', (c) => {
 })
 
 // Mount routes
+app.route('/v1/auth', authRoutes)
 app.route('/v1/agents', agentRoutes)
 app.route('/v1/messages', messageRoutes)
 app.route('/v1/conversations', conversationRoutes)
