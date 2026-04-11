@@ -38,7 +38,30 @@ interface ContactEntry {
   id: string
   handle: string
   display_name: string | null
+  description: string | null
+  trust_score: number
   added_at: string
+}
+
+interface DirectoryResult {
+  agents: Array<{
+    id: string
+    handle: string
+    display_name: string | null
+    description: string | null
+    trust_score: number
+    created_at: string
+  }>
+  total: number
+  limit: number
+  offset: number
+}
+
+interface ContactListResult {
+  contacts: ContactEntry[]
+  total: number
+  limit: number
+  offset: number
 }
 
 export class AgentChatClient {
@@ -221,12 +244,18 @@ export class AgentChatClient {
 
   // --- Contacts ---
 
-  async addContact(agentId: string) {
-    return this.request<ContactEntry>('POST', '/v1/contacts', { agent_id: agentId })
+  async addContact(target: string) {
+    // Accept agent ID or handle
+    const body = target.startsWith('agt_') ? { agent_id: target } : { handle: target }
+    return this.request<ContactEntry>('POST', '/v1/contacts', body)
   }
 
-  async listContacts() {
-    return this.request<{ contacts: ContactEntry[] }>('GET', '/v1/contacts')
+  async listContacts(options?: { limit?: number; offset?: number }) {
+    const params = new URLSearchParams()
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.offset) params.set('offset', String(options.offset))
+    const qs = params.toString()
+    return this.request<ContactListResult>('GET', `/v1/contacts${qs ? `?${qs}` : ''}`)
   }
 
   async removeContact(agentId: string) {
@@ -253,6 +282,15 @@ export class AgentChatClient {
 
   async updatePresence(req: PresenceUpdate) {
     return this.request<Presence>('PUT', '/v1/presence', req)
+  }
+
+  // --- Directory ---
+
+  async searchAgents(query: string, options?: { limit?: number; offset?: number }) {
+    const params = new URLSearchParams({ q: query })
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.offset) params.set('offset', String(options.offset))
+    return this.request<DirectoryResult>('GET', `/v1/directory?${params.toString()}`)
   }
 
   // --- Webhooks ---
