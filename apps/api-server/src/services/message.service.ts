@@ -51,7 +51,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     )
   }
 
-  // 1. Resolve recipient
+  // 1. Resolve recipient (must be first — everything depends on recipient.id)
   const recipient = req.to.startsWith('agt_')
     ? await findAgentById(req.to)
     : await findAgentByHandle(req.to.replace(/^@/, ''))
@@ -64,7 +64,25 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     throw new MessageError('VALIDATION_ERROR', 'Cannot send a message to yourself', 400)
   }
 
-  // 2. Check recipient's inbox mode
+  // 2. Parallel reads — all independent queries that only need senderId + recipient.id
+  const [sender, blocked, existingConvId] = await Promise.all([
+    findAgentById(senderId),
+    isBlocked(recipient.id, senderId),
+    findDirectConversation(senderId, recipient.id),
+  ])
+
+  // 3. Validate results from parallel reads
+  if (!sender) {
+    throw new MessageError('AGENT_NOT_FOUND', 'Sender agent not found', 404)
+  }
+  if (sender.status === 'suspended') {
+    throw new MessageError('SUSPENDED', 'Your agent is suspended', 403)
+  }
+  if (blocked) {
+    throw new MessageError('BLOCKED', 'You are blocked by this agent', 403)
+  }
+
+  // 4. Check recipient's inbox mode (uses sender data from parallel fetch)
   const inboxMode = (recipient.settings as Record<string, unknown>)?.inbox_mode ?? 'open'
   if (inboxMode === 'contacts_only') {
     const isSenderInContacts = await isContact(recipient.id, senderId)
@@ -76,8 +94,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
       )
     }
   } else if (inboxMode === 'verified_only') {
-    const sender = await findAgentById(senderId)
-    const senderTier = getTrustTier(sender?.trust_score ?? 0)
+    const senderTier = getTrustTier(sender.trust_score ?? 0)
     if (senderTier !== 'verified' && senderTier !== 'established') {
       throw new MessageError(
         'INBOX_RESTRICTED',
@@ -87,24 +104,8 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     }
   }
 
-  // 3. Check if sender is blocked by recipient
-  const blocked = await isBlocked(recipient.id, senderId)
-  if (blocked) {
-    throw new MessageError('BLOCKED', 'You are blocked by this agent', 403)
-  }
-
-  // 4. Check sender status (suspended/restricted agents can't cold-message)
-  const sender = await findAgentById(senderId)
-  if (!sender) {
-    throw new MessageError('AGENT_NOT_FOUND', 'Sender agent not found', 404)
-  }
-  if (sender.status === 'suspended') {
-    throw new MessageError('SUSPENDED', 'Your agent is suspended', 403)
-  }
-
+  // 5. Per-second rate limit (side effect — runs after validation passes)
   const tier = getTrustTier(sender.trust_score)
-
-  // 5. Per-second rate limit (protects infrastructure)
   const perSecLimit = MESSAGES_PER_SECOND[tier]
   const perSecAllowed = await checkPerSecondRateLimit(senderId, perSecLimit)
   if (!perSecAllowed) {
@@ -115,12 +116,8 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     )
   }
 
-  // 6. Check if conversation already exists (read-only, no creation yet)
-  const existingConvId = await findDirectConversation(senderId, recipient.id)
-
-  // 7. Cold outreach rate limit (only for new conversations)
+  // 6. Cold outreach rate limit (only for new conversations)
   if (!existingConvId) {
-    // Restricted agents (trust score <= 0) can't start new conversations
     if (sender.trust_score <= 0) {
       throw new MessageError(
         'RESTRICTED',
@@ -140,7 +137,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     }
   }
 
-  // 8. Atomically find or create conversation (safe against race conditions)
+  // 7. Atomically find or create conversation (safe against race conditions)
   const newConvId = generateId('conv')
   const { conversationId } = await findOrCreateDirectConversation(
     senderId,
@@ -148,35 +145,34 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     newConvId,
   )
 
-  // 9. If sender is NOT the initiator, mark conversation as established
+  // 8. If sender is NOT the initiator, mark conversation as established
   //    (recipient replying → mutual conversation, frees up initiator's rate limit slot)
   //    Also auto-add each other as contacts (organic contact formation)
   if (existingConvId) {
     const conv = await getConversation(conversationId)
     if (conv && !conv.established && conv.initiated_by !== senderId) {
       await markConversationEstablished(conversationId)
-      // Auto-add mutual contacts (both directions, fire-and-forget)
       addContact(senderId, recipient.id).catch(() => {})
       addContact(recipient.id, senderId).catch(() => {})
     }
   }
 
-  // 10. STORE FIRST — write to PostgreSQL (this is the durability guarantee)
+  // 9. Store message + update timestamp in parallel (both only need conversationId)
   const messageId = generateId('msg')
-  const message = await insertMessage({
-    id: messageId,
-    conversation_id: conversationId,
-    sender_id: senderId,
-    type: req.type ?? 'text',
-    content: req.content as Record<string, unknown>,
-    metadata: req.metadata as Record<string, unknown> | undefined,
-    status: 'stored',
-  })
+  const [message] = await Promise.all([
+    insertMessage({
+      id: messageId,
+      conversation_id: conversationId,
+      sender_id: senderId,
+      type: req.type ?? 'text',
+      content: req.content as Record<string, unknown>,
+      metadata: req.metadata as Record<string, unknown> | undefined,
+      status: 'stored',
+    }),
+    updateConversationLastMessage(conversationId),
+  ])
 
-  // 11. Update conversation timestamp
-  await updateConversationLastMessage(conversationId)
-
-  // 12. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
+  // 10. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
   pushToRecipient(recipient.id, message).catch(() => {
     // Push failed — that's fine, message is safe in DB
   })
