@@ -24,7 +24,6 @@ import type { SendMessageRequest } from '@agentchat/shared'
 import { getTrustTier } from './trust.service.js'
 import { getRedis } from '../lib/redis.js'
 import { sendToAgent } from '../ws/events.js'
-import { isOnline } from '../ws/registry.js'
 import { fireWebhooks } from './webhook.service.js'
 
 const MAX_CONTENT_BYTES = 32_768 // 32 KB
@@ -186,17 +185,19 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
 }
 
 async function pushToRecipient(recipientId: string, message: Record<string, unknown>) {
-  if (isOnline(recipientId)) {
-    // Agent is connected via WebSocket — push directly
-    sendToAgent(recipientId, {
-      type: 'message.new',
-      payload: message,
-    })
-    await updateMessageStatus(message.id as string, 'delivered')
-  } else {
-    // Agent is offline — try webhook delivery (best-effort with retries)
-    fireWebhooks(recipientId, 'message.new', message)
-  }
+  // Both paths fire in parallel — no gating on local connection state.
+  // Pub/sub fans out to all servers; the server holding the WebSocket delivers + marks "delivered".
+  // Webhooks fire independently as a parallel path (agents deduplicate by message ID).
+  // Sync on reconnect is the final safety net for anything both paths miss.
+
+  // Path 1: Real-time via pub/sub → WebSocket (all servers check local connections)
+  sendToAgent(recipientId, {
+    type: 'message.new',
+    payload: message,
+  })
+
+  // Path 2: Webhook delivery (parallel, best-effort with retries)
+  fireWebhooks(recipientId, 'message.new', message)
 }
 
 async function checkPerSecondRateLimit(agentId: string, limit: number): Promise<boolean> {
@@ -236,14 +237,12 @@ export async function markAsRead(messageId: string, agentId: string) {
   const readPayload = { message_id: messageId, read_by: agentId, read_at: message.read_at }
 
   if (message.sender_id) {
-    if (isOnline(message.sender_id)) {
-      sendToAgent(message.sender_id, {
-        type: 'message.read',
-        payload: readPayload,
-      })
-    } else {
-      fireWebhooks(message.sender_id, 'message.read', readPayload)
-    }
+    // Both paths fire — no gating on local connection state
+    sendToAgent(message.sender_id, {
+      type: 'message.read',
+      payload: readPayload,
+    })
+    fireWebhooks(message.sender_id, 'message.read', readPayload)
   }
 
   return message

@@ -1,5 +1,6 @@
 import Redis from 'ioredis'
 import type { WsMessage } from '@agentchat/shared'
+import { updateMessageStatus } from '@agentchat/db'
 import { getConnections } from './registry.js'
 
 const CHANNEL = 'agentchat:ws:fanout'
@@ -74,16 +75,32 @@ export function publishToAgent(agentId: string, message: WsMessage) {
   }
 }
 
-/** Deliver to local WebSocket connections only (called by subscriber on each server) */
+/**
+ * Deliver to local WebSocket connections only (called by subscriber on each server).
+ * Marks message as "delivered" ONLY after successful WebSocket send — not before.
+ */
 function deliverLocally(agentId: string, message: WsMessage) {
   const connections = getConnections(agentId)
-  const payload = JSON.stringify(message)
+  if (connections.size === 0) return
+
+  const raw = JSON.stringify(message)
+  let delivered = false
+
   for (const ws of connections) {
     try {
-      ws.send(payload)
+      ws.send(raw)
+      delivered = true
     } catch {
       // Dead connection — cleanup happens on close event
     }
+  }
+
+  // Mark "delivered" only after at least one WebSocket actually accepted the message.
+  // Only for message.new events (not read receipts, presence, etc.)
+  if (delivered && message.type === 'message.new' && message.payload?.id) {
+    updateMessageStatus(message.payload.id as string, 'delivered').catch(() => {
+      // Non-critical — sync on reconnect will catch it
+    })
   }
 }
 
