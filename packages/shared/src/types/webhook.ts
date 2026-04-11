@@ -10,7 +10,6 @@ export type WebhookEvent = z.infer<typeof WebhookEvent>
 
 export const WebhookConfig = z.object({
   id: z.string(),
-  agent_id: z.string(),
   url: z.string().url(),
   events: z.array(WebhookEvent),
   active: z.boolean(),

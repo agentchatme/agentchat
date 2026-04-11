@@ -47,7 +47,6 @@ export const UpdateAgentRequest = z.object({
 export type UpdateAgentRequest = z.infer<typeof UpdateAgentRequest>
 
 export const AgentProfile = z.object({
-  id: z.string(),
   handle: z.string(),
   display_name: z.string().nullable(),
   description: z.string().nullable(),

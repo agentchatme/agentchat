@@ -16,7 +16,6 @@ export const ConversationListItem = z.object({
   id: z.string(),
   type: ConversationType,
   participants: z.array(z.object({
-    agent_id: z.string(),
     handle: z.string(),
     display_name: z.string().nullable(),
   })),

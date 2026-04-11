@@ -51,10 +51,8 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     )
   }
 
-  // 1. Resolve recipient (must be first — everything depends on recipient.id)
-  const recipient = req.to.startsWith('agt_')
-    ? await findAgentById(req.to)
-    : await findAgentByHandle(req.to.replace(/^@/, ''))
+  // 1. Resolve recipient by handle (must be first — everything depends on recipient.id)
+  const recipient = await findAgentByHandle(req.to.replace(/^@/, '').toLowerCase())
 
   if (!recipient) {
     throw new MessageError('AGENT_NOT_FOUND', `Agent ${req.to} not found`, 404)
@@ -177,7 +175,26 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     // Push failed — that's fine, message is safe in DB
   })
 
-  return message
+  // Map sender_id to sender handle for API response
+  return toPublicMessage(message, sender.handle)
+}
+
+/** Strip internal sender_id, replace with sender handle for API responses */
+function toPublicMessage(msg: Record<string, unknown>, senderHandle: string) {
+  const { sender_id: _, ...rest } = msg
+  return { ...rest, sender: senderHandle }
+}
+
+/** Batch-resolve sender_ids to handles for a list of messages */
+async function mapSenderHandles(messages: Array<Record<string, unknown>>) {
+  if (messages.length === 0) return []
+  const senderIds = [...new Set(messages.map((m) => m.sender_id as string))]
+  const agents = await Promise.all(senderIds.map((id) => findAgentById(id)))
+  const handleMap = new Map<string, string>()
+  for (const agent of agents) {
+    if (agent) handleMap.set(agent.id, agent.handle)
+  }
+  return messages.map((m) => toPublicMessage(m, handleMap.get(m.sender_id as string) ?? 'unknown'))
 }
 
 async function pushToRecipient(recipientId: string, message: Record<string, unknown>) {
@@ -227,7 +244,8 @@ export async function getMessages(
     throw new MessageError('FORBIDDEN', 'You are not a participant in this conversation', 403)
   }
 
-  return getConversationMessages(conversationId, limit, before)
+  const messages = await getConversationMessages(conversationId, limit, before)
+  return mapSenderHandles(messages)
 }
 
 export async function markAsDelivered(messageId: string) {
@@ -257,7 +275,8 @@ export async function syncUndelivered(agentId: string) {
   // Fetch undelivered messages but DON'T mark as delivered here.
   // The "delivered" status is set by deliverLocally in pubsub.ts
   // only after ws.send() actually succeeds.
-  return getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
+  const messages = await getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
+  return mapSenderHandles(messages)
 }
 
 export async function removeMessage(messageId: string, agentId: string) {

@@ -30,17 +30,14 @@ export async function isHandleAvailable(handle: string): Promise<boolean> {
   return data === null
 }
 
-export async function getAgent(idOrHandle: string) {
-  const agent = idOrHandle.startsWith('agt_')
-    ? await findAgentById(idOrHandle)
-    : await findAgentByHandle(idOrHandle)
+export async function getAgent(handle: string) {
+  const agent = await findAgentByHandle(handle)
 
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', `Agent ${idOrHandle} not found`, 404)
+    throw new AgentError('AGENT_NOT_FOUND', `Agent @${handle} not found`, 404)
   }
 
   return {
-    id: agent.id,
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
@@ -72,7 +69,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
   // No fields to update — return current state
   if (Object.keys(updates).length === 0) {
-    const { api_key_hash: _, ...safeData } = agent
+    const { api_key_hash: _, id: _id, ...safeData } = agent
     return safeData
   }
 
@@ -84,7 +81,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
     .single()
 
   if (error) throw error
-  const { api_key_hash: _, ...safeData } = data
+  const { api_key_hash: _, id: _id, ...safeData } = data
   return safeData
 }
 
@@ -126,5 +123,5 @@ export async function rotateApiKey(id: string, agentId: string) {
 
   if (error) throw error
 
-  return { id, api_key: newApiKey }
+  return { handle: agent.handle, api_key: newApiKey }
 }

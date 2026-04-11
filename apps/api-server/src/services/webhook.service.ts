@@ -44,13 +44,15 @@ export async function registerWebhook(agentId: string, url: string, events: Webh
   })
 
   // Return with secret visible (shown only on creation, like API keys)
-  return { ...webhook, secret }
+  // Strip internal agent_id — agent knows it's theirs
+  const { agent_id: _, ...safe } = webhook
+  return { ...safe, secret }
 }
 
 export async function listWebhooks(agentId: string) {
   const webhooks = await getWebhooksByAgent(agentId)
-  // Strip secrets from list response
-  return webhooks.map(({ secret: _, ...rest }) => rest)
+  // Strip secrets and internal agent_id from list response
+  return webhooks.map(({ secret: _, agent_id: _a, ...rest }) => rest)
 }
 
 export async function getWebhook(id: string, agentId: string) {
@@ -58,7 +60,7 @@ export async function getWebhook(id: string, agentId: string) {
   if (!webhook || webhook.agent_id !== agentId) {
     throw new WebhookError('NOT_FOUND', 'Webhook not found', 404)
   }
-  const { secret: _, ...safe } = webhook
+  const { secret: _, agent_id: _a, ...safe } = webhook
   return safe
 }
 

@@ -4,7 +4,7 @@ export const PresenceStatus = z.enum(['online', 'offline', 'busy'])
 export type PresenceStatus = z.infer<typeof PresenceStatus>
 
 export const Presence = z.object({
-  agent_id: z.string(),
+  handle: z.string(),
   status: PresenceStatus,
   custom_message: z.string().nullable(),
   last_seen: z.string().datetime(),

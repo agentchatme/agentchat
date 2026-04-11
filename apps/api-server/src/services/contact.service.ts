@@ -26,85 +26,80 @@ export class ContactError extends Error {
   }
 }
 
-function resolveAgent(idOrHandle: string) {
-  return idOrHandle.startsWith('agt_')
-    ? findAgentById(idOrHandle)
-    : findAgentByHandle(idOrHandle.replace(/^@/, ''))
+async function resolveHandle(handle: string) {
+  const agent = await findAgentByHandle(handle)
+  if (!agent) {
+    throw new ContactError('AGENT_NOT_FOUND', `Agent @${handle} not found`, 404)
+  }
+  return agent
 }
 
-export async function addToContacts(agentId: string, targetIdOrHandle: string) {
-  const target = await resolveAgent(targetIdOrHandle)
-  if (!target) {
-    throw new ContactError('AGENT_NOT_FOUND', `Agent ${targetIdOrHandle} not found`, 404)
-  }
+export async function addToContacts(agentId: string, targetHandle: string) {
+  const target = await resolveHandle(targetHandle)
 
   if (target.id === agentId) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot add yourself as a contact', 400)
   }
 
   await addContact(agentId, target.id)
-  return { agent_id: target.id, handle: target.handle, display_name: target.display_name }
+  return { handle: target.handle, display_name: target.display_name }
 }
 
-export async function removeFromContacts(agentId: string, targetAgentId: string) {
-  await removeContact(agentId, targetAgentId)
+export async function removeFromContacts(agentId: string, targetHandle: string) {
+  const target = await resolveHandle(targetHandle)
+  await removeContact(agentId, target.id)
 }
 
 export async function getContacts(agentId: string, limit = 50, offset = 0) {
   return listContacts(agentId, limit, offset)
 }
 
-export async function block(agentId: string, targetAgentId: string) {
-  const target = await findAgentById(targetAgentId)
-  if (!target) {
-    throw new ContactError('AGENT_NOT_FOUND', `Agent ${targetAgentId} not found`, 404)
-  }
+export async function block(agentId: string, targetHandle: string) {
+  const target = await resolveHandle(targetHandle)
 
   if (target.id === agentId) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot block yourself', 400)
   }
 
-  await blockAgent(agentId, targetAgentId)
+  await blockAgent(agentId, target.id)
 
   // Trust degradation: blocked agent loses trust
-  const newScore = await updateTrustScore(targetAgentId, TRUST_DELTAS.BLOCKED)
+  const newScore = await updateTrustScore(target.id, TRUST_DELTAS.BLOCKED)
 
   // Auto-suspend if trust score dropped below threshold
   if (newScore <= AUTO_SUSPEND_THRESHOLD) {
-    await autoSuspendIfNeeded(targetAgentId, AUTO_SUSPEND_THRESHOLD)
+    await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
   }
 }
 
-export async function unblock(agentId: string, targetAgentId: string) {
-  await unblockAgent(agentId, targetAgentId)
+export async function unblock(agentId: string, targetHandle: string) {
+  const target = await resolveHandle(targetHandle)
+  await unblockAgent(agentId, target.id)
 }
 
-export async function report(agentId: string, targetAgentId: string, reason?: string) {
-  const target = await findAgentById(targetAgentId)
-  if (!target) {
-    throw new ContactError('AGENT_NOT_FOUND', `Agent ${targetAgentId} not found`, 404)
-  }
+export async function report(agentId: string, targetHandle: string, reason?: string) {
+  const target = await resolveHandle(targetHandle)
 
   if (target.id === agentId) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot report yourself', 400)
   }
 
   // Check if already blocked — if not, auto-block (reporting implies blocking)
-  const alreadyBlocked = await isBlocked(agentId, targetAgentId)
+  const alreadyBlocked = await isBlocked(agentId, target.id)
   if (!alreadyBlocked) {
-    await blockAgent(agentId, targetAgentId)
-    await updateTrustScore(targetAgentId, TRUST_DELTAS.BLOCKED)
+    await blockAgent(agentId, target.id)
+    await updateTrustScore(target.id, TRUST_DELTAS.BLOCKED)
   }
 
   const reportId = generateId('rpt')
-  await reportAgent(agentId, targetAgentId, reportId, reason)
+  await reportAgent(agentId, target.id, reportId, reason)
 
   // Trust degradation: reported agent loses more trust
-  const newScore = await updateTrustScore(targetAgentId, TRUST_DELTAS.REPORTED)
+  const newScore = await updateTrustScore(target.id, TRUST_DELTAS.REPORTED)
 
   // Auto-suspend if trust score dropped below threshold
   if (newScore <= AUTO_SUSPEND_THRESHOLD) {
-    await autoSuspendIfNeeded(targetAgentId, AUTO_SUSPEND_THRESHOLD)
+    await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
   }
 }
 

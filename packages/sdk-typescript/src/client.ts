@@ -35,21 +35,17 @@ interface VerifyResult {
 }
 
 interface ContactEntry {
-  id: string
   handle: string
   display_name: string | null
   description: string | null
-  trust_score: number
   added_at: string
 }
 
 interface DirectoryResult {
   agents: Array<{
-    id: string
     handle: string
     display_name: string | null
     description: string | null
-    trust_score: number
     created_at: string
   }>
   total: number
@@ -178,7 +174,7 @@ export class AgentChatClient {
     pendingId: string,
     code: string,
     options?: { baseUrl?: string },
-  ): Promise<{ id: string; client: AgentChatClient }> {
+  ): Promise<{ handle: string; client: AgentChatClient }> {
     const baseUrl = options?.baseUrl ?? 'https://api.agentchat.me'
     const res = await fetch(`${baseUrl}/v1/agents/recover/verify`, {
       method: 'POST',
@@ -186,7 +182,7 @@ export class AgentChatClient {
       body: JSON.stringify({ pending_id: pendingId, code }),
     })
 
-    const data = await res.json() as { id: string; api_key: string } | { code: string; message: string }
+    const data = await res.json() as { handle: string; api_key: string } | { code: string; message: string }
 
     if (!res.ok) {
       throw new AgentChatError(
@@ -195,32 +191,32 @@ export class AgentChatClient {
       )
     }
 
-    const result = data as { id: string; api_key: string }
+    const result = data as { handle: string; api_key: string }
     const client = new AgentChatClient({ apiKey: result.api_key, baseUrl })
 
-    return { id: result.id, client }
+    return { handle: result.handle, client }
   }
 
   // --- Agent profile ---
 
-  async getAgent(id: string) {
-    return this.request<AgentProfile>('GET', `/v1/agents/${id}`)
+  async getAgent(handle: string) {
+    return this.request<AgentProfile>('GET', `/v1/agents/${encodeURIComponent(handle)}`)
   }
 
-  async updateAgent(id: string, req: UpdateAgentRequest) {
-    return this.request<Record<string, unknown>>('PATCH', `/v1/agents/${id}`, req)
+  async updateAgent(handle: string, req: UpdateAgentRequest) {
+    return this.request<Record<string, unknown>>('PATCH', `/v1/agents/${encodeURIComponent(handle)}`, req)
   }
 
-  async deleteAgent(id: string) {
-    return this.request<void>('DELETE', `/v1/agents/${id}`)
+  async deleteAgent(handle: string) {
+    return this.request<void>('DELETE', `/v1/agents/${encodeURIComponent(handle)}`)
   }
 
-  async rotateKey(id: string) {
-    return this.request<{ pending_id: string; message: string }>('POST', `/v1/agents/${id}/rotate-key`)
+  async rotateKey(handle: string) {
+    return this.request<{ pending_id: string; message: string }>('POST', `/v1/agents/${encodeURIComponent(handle)}/rotate-key`)
   }
 
-  async rotateKeyVerify(id: string, pendingId: string, code: string) {
-    return this.request<{ id: string; api_key: string }>('POST', `/v1/agents/${id}/rotate-key/verify`, {
+  async rotateKeyVerify(handle: string, pendingId: string, code: string) {
+    return this.request<{ handle: string; api_key: string }>('POST', `/v1/agents/${encodeURIComponent(handle)}/rotate-key/verify`, {
       pending_id: pendingId,
       code,
     })
@@ -244,10 +240,8 @@ export class AgentChatClient {
 
   // --- Contacts ---
 
-  async addContact(target: string) {
-    // Accept agent ID or handle
-    const body = target.startsWith('agt_') ? { agent_id: target } : { handle: target }
-    return this.request<ContactEntry>('POST', '/v1/contacts', body)
+  async addContact(handle: string) {
+    return this.request<ContactEntry>('POST', '/v1/contacts', { handle })
   }
 
   async listContacts(options?: { limit?: number; offset?: number }) {
@@ -258,26 +252,26 @@ export class AgentChatClient {
     return this.request<ContactListResult>('GET', `/v1/contacts${qs ? `?${qs}` : ''}`)
   }
 
-  async removeContact(agentId: string) {
-    return this.request<void>('DELETE', `/v1/contacts/${agentId}`)
+  async removeContact(handle: string) {
+    return this.request<void>('DELETE', `/v1/contacts/${encodeURIComponent(handle)}`)
   }
 
-  async blockAgent(agentId: string) {
-    return this.request<void>('POST', `/v1/contacts/${agentId}/block`)
+  async blockAgent(handle: string) {
+    return this.request<void>('POST', `/v1/contacts/${encodeURIComponent(handle)}/block`)
   }
 
-  async unblockAgent(agentId: string) {
-    return this.request<void>('DELETE', `/v1/contacts/${agentId}/block`)
+  async unblockAgent(handle: string) {
+    return this.request<void>('DELETE', `/v1/contacts/${encodeURIComponent(handle)}/block`)
   }
 
-  async reportAgent(agentId: string, reason?: string) {
-    return this.request<void>('POST', `/v1/contacts/${agentId}/report`, reason ? { reason } : {})
+  async reportAgent(handle: string, reason?: string) {
+    return this.request<void>('POST', `/v1/contacts/${encodeURIComponent(handle)}/report`, reason ? { reason } : {})
   }
 
   // --- Presence ---
 
-  async getPresence(agentId: string) {
-    return this.request<Presence>('GET', `/v1/presence/${agentId}`)
+  async getPresence(handle: string) {
+    return this.request<Presence>('GET', `/v1/presence/${encodeURIComponent(handle)}`)
   }
 
   async updatePresence(req: PresenceUpdate) {

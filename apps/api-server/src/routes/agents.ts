@@ -10,9 +10,7 @@ import { ipRateLimit } from '../middleware/rate-limit.js'
 const agents = new Hono()
 
 // ─── Account Recovery (no API key needed — email-only) ─────────────────────
-// These MUST be registered before /:id routes to avoid "recover" matching as a param.
-// Fixes the lockout scenario: if an agent loses its API key (network drop during
-// rotation, lost credentials), this endpoint recovers access via email OTP.
+// These MUST be registered before /:handle routes to avoid "recover" matching as a param.
 
 // POST /v1/agents/recover — Step 1: Send OTP to agent's email (no auth)
 agents.post('/recover', ipRateLimit(3, 3600), async (c) => {
@@ -108,11 +106,11 @@ agents.post('/recover/verify', ipRateLimit(10, 600), async (c) => {
 
 // ─── Public profile ────────────────────────────────────────────────────────
 
-// GET /v1/agents/:id — Get agent profile (public, no auth)
-agents.get('/:id', async (c) => {
-  const id = c.req.param('id')
+// GET /v1/agents/:handle — Get agent profile (public, no auth)
+agents.get('/:handle', async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   try {
-    const agent = await getAgent(id)
+    const agent = await getAgent(handle)
     return c.json(agent)
   } catch (e) {
     if (e instanceof AgentError) {
@@ -124,9 +122,9 @@ agents.get('/:id', async (c) => {
 
 // ─── Self-management (agent auth via API key) ──────────────────────────────
 
-// PATCH /v1/agents/:id — Update own profile
-agents.patch('/:id', authMiddleware, async (c) => {
-  const id = c.req.param('id')
+// PATCH /v1/agents/:handle — Update own profile
+agents.patch('/:handle', authMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   let body: unknown
   try {
     body = await c.req.json()
@@ -140,8 +138,13 @@ agents.patch('/:id', authMiddleware, async (c) => {
   }
 
   try {
+    // Resolve handle to internal ID, then verify ownership
     const agentId = c.get('agentId')
-    const agent = await updateAgent(id, parsed.data, agentId)
+    const authedAgent = await findAgentById(agentId)
+    if (!authedAgent || authedAgent.handle !== handle) {
+      return c.json({ code: 'FORBIDDEN', message: 'You can only update your own agent' }, 403)
+    }
+    const agent = await updateAgent(agentId, parsed.data, agentId)
     return c.json(agent)
   } catch (e) {
     if (e instanceof AgentError) {
@@ -151,12 +154,16 @@ agents.patch('/:id', authMiddleware, async (c) => {
   }
 })
 
-// DELETE /v1/agents/:id — Delete own agent (soft delete)
-agents.delete('/:id', authMiddleware, async (c) => {
-  const id = c.req.param('id')
+// DELETE /v1/agents/:handle — Delete own agent (soft delete)
+agents.delete('/:handle', authMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   try {
     const agentId = c.get('agentId')
-    await deleteAgent(id, agentId)
+    const authedAgent = await findAgentById(agentId)
+    if (!authedAgent || authedAgent.handle !== handle) {
+      return c.json({ code: 'FORBIDDEN', message: 'You can only delete your own agent' }, 403)
+    }
+    await deleteAgent(agentId, agentId)
     return c.json({ message: 'Agent deleted' })
   } catch (e) {
     if (e instanceof AgentError) {
@@ -168,27 +175,27 @@ agents.delete('/:id', authMiddleware, async (c) => {
 
 // ─── API Key Rotation (two-step OTP, requires current API key) ─────────────
 
-// POST /v1/agents/:id/rotate-key — Step 1: Send OTP
-agents.post('/:id/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (c) => {
-  const id = c.req.param('id')
+// POST /v1/agents/:handle/rotate-key — Step 1: Send OTP
+agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   const agentId = c.get('agentId')
 
-  if (id !== agentId) {
+  const authedAgent = await findAgentById(agentId)
+  if (!authedAgent || authedAgent.handle !== handle) {
     return c.json({ code: 'FORBIDDEN', message: 'You can only rotate your own API key' }, 403)
   }
 
-  const agent = await findAgentById(id)
-  if (!agent || agent.status === 'deleted') {
+  if (authedAgent.status === 'deleted') {
     return c.json({ code: 'AGENT_NOT_FOUND', message: 'Agent not found' }, 404)
   }
 
   // Store pending rotation in Redis BEFORE sending OTP
   const pendingId = generateId('pnd')
   const redis = getRedis()
-  await redis.set(`rotate:${pendingId}`, JSON.stringify({ agent_id: id, email: agent.email }), { ex: 600 })
+  await redis.set(`rotate:${pendingId}`, JSON.stringify({ agent_id: agentId, email: authedAgent.email }), { ex: 600 })
 
   const supabase = getSupabaseClient()
-  const { error } = await supabase.auth.signInWithOtp({ email: agent.email })
+  const { error } = await supabase.auth.signInWithOtp({ email: authedAgent.email })
 
   if (error) {
     await redis.del(`rotate:${pendingId}`).catch(() => {})
@@ -198,12 +205,13 @@ agents.post('/:id/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (c) =
   return c.json({ pending_id: pendingId, message: 'Verification code sent to registered email' })
 })
 
-// POST /v1/agents/:id/rotate-key/verify — Step 2: Verify OTP and rotate
-agents.post('/:id/rotate-key/verify', authMiddleware, async (c) => {
-  const id = c.req.param('id')
+// POST /v1/agents/:handle/rotate-key/verify — Step 2: Verify OTP and rotate
+agents.post('/:handle/rotate-key/verify', authMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   const agentId = c.get('agentId')
 
-  if (id !== agentId) {
+  const authedAgent = await findAgentById(agentId)
+  if (!authedAgent || authedAgent.handle !== handle) {
     return c.json({ code: 'FORBIDDEN', message: 'You can only rotate your own API key' }, 403)
   }
 
@@ -229,7 +237,7 @@ agents.post('/:id/rotate-key/verify', authMiddleware, async (c) => {
 
   const pending = typeof raw === 'string' ? JSON.parse(raw) : raw
 
-  if (pending.agent_id !== id) {
+  if (pending.agent_id !== agentId) {
     return c.json({ code: 'FORBIDDEN', message: 'Invalid rotation request' }, 403)
   }
 
@@ -249,7 +257,7 @@ agents.post('/:id/rotate-key/verify', authMiddleware, async (c) => {
   await redis.del(`rotate:${pending_id}`)
 
   try {
-    const result = await rotateApiKey(id, agentId)
+    const result = await rotateApiKey(agentId, agentId)
     return c.json(result)
   } catch (e) {
     if (e instanceof AgentError) {

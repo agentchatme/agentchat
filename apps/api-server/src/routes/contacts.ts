@@ -12,7 +12,7 @@ import {
 
 const contacts = new Hono()
 
-// POST /v1/contacts — Add agent to contact book (accepts handle or agent_id)
+// POST /v1/contacts — Add agent to contact book (by handle)
 contacts.post('/', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
   let body: unknown
@@ -22,15 +22,13 @@ contacts.post('/', authMiddleware, async (c) => {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
   }
 
-  const { agent_id, handle } = body as { agent_id?: string; handle?: string }
-  const target = agent_id || handle
-
-  if (!target || typeof target !== 'string') {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'agent_id or handle is required' }, 400)
+  const { handle } = body as { handle?: string }
+  if (!handle || typeof handle !== 'string') {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'handle is required' }, 400)
   }
 
   try {
-    const contact = await addToContacts(agentId, target)
+    const contact = await addToContacts(agentId, handle.replace(/^@/, '').toLowerCase())
     return c.json(contact, 201)
   } catch (e) {
     if (e instanceof ContactError) {
@@ -49,36 +47,64 @@ contacts.get('/', authMiddleware, async (c) => {
   return c.json(result)
 })
 
-// DELETE /v1/contacts/:agent_id — Remove a contact
-contacts.delete('/:agent_id', authMiddleware, async (c) => {
+// DELETE /v1/contacts/:handle — Remove a contact
+contacts.delete('/:handle', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const targetId = c.req.param('agent_id')
-  await removeFromContacts(agentId, targetId)
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    await removeFromContacts(agentId, handle)
+  } catch (e) {
+    if (e instanceof ContactError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
   return c.json({ ok: true })
 })
 
-// POST /v1/contacts/:agent_id/block — Block an agent
-contacts.post('/:agent_id/block', authMiddleware, async (c) => {
+// POST /v1/contacts/:handle/block — Block an agent
+contacts.post('/:handle/block', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const targetId = c.req.param('agent_id')
-  await block(agentId, targetId)
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    await block(agentId, handle)
+  } catch (e) {
+    if (e instanceof ContactError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 400 | 404)
+    }
+    throw e
+  }
   return c.json({ ok: true })
 })
 
-// DELETE /v1/contacts/:agent_id/block — Unblock an agent
-contacts.delete('/:agent_id/block', authMiddleware, async (c) => {
+// DELETE /v1/contacts/:handle/block — Unblock an agent
+contacts.delete('/:handle/block', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const targetId = c.req.param('agent_id')
-  await unblock(agentId, targetId)
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    await unblock(agentId, handle)
+  } catch (e) {
+    if (e instanceof ContactError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
   return c.json({ ok: true })
 })
 
-// POST /v1/contacts/:agent_id/report — Report an agent
-contacts.post('/:agent_id/report', authMiddleware, async (c) => {
+// POST /v1/contacts/:handle/report — Report an agent
+contacts.post('/:handle/report', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const targetId = c.req.param('agent_id')
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string })
-  await report(agentId, targetId, body.reason)
+  try {
+    await report(agentId, handle, body.reason)
+  } catch (e) {
+    if (e instanceof ContactError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 400 | 404)
+    }
+    throw e
+  }
   return c.json({ ok: true })
 })
 

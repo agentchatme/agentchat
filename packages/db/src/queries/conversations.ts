@@ -70,14 +70,31 @@ export async function isParticipant(conversationId: string, agentId: string): Pr
   return !!data
 }
 
-export async function getConversationParticipants(conversationId: string): Promise<string[]> {
+export async function getConversationParticipants(conversationId: string) {
   const { data, error } = await getSupabaseClient()
     .from('conversation_participants')
     .select('agent_id')
     .eq('conversation_id', conversationId)
 
   if (error) throw error
-  return (data ?? []).map((d) => d.agent_id)
+  if (!data || data.length === 0) return []
+
+  // Resolve agent IDs to handles
+  const agentIds = data.map((d) => d.agent_id)
+  const { data: agents, error: agentError } = await getSupabaseClient()
+    .from('agents')
+    .select('id, handle, display_name')
+    .in('id', agentIds)
+
+  if (agentError) throw agentError
+
+  const agentMap = new Map((agents ?? []).map((a) => [a.id, a]))
+  return data
+    .filter((d) => agentMap.has(d.agent_id))
+    .map((d) => {
+      const agent = agentMap.get(d.agent_id)!
+      return { handle: agent.handle, display_name: agent.display_name }
+    })
 }
 
 export async function countColdOutreaches(agentId: string): Promise<number> {

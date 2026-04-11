@@ -18,7 +18,7 @@ export type MessageContent = z.infer<typeof MessageContent>
 export const Message = z.object({
   id: z.string(),
   conversation_id: z.string(),
-  sender_id: z.string(),
+  sender: z.string(),
   type: MessageType,
   content: MessageContent,
   metadata: z.record(z.unknown()).default({}),

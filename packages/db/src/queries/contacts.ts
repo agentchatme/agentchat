@@ -42,19 +42,19 @@ export async function listContacts(ownerAgentId: string, limit = 50, offset = 0)
   const agentMap = new Map((agents ?? []).map((a) => [a.id, a]))
 
   // Only return contacts whose agent is still active
+  // Sorted alphabetically by handle — simple, like a phone book
   const contacts = data
     .filter((d) => agentMap.has(d.contact_agent_id))
     .map((d) => {
       const agent = agentMap.get(d.contact_agent_id)!
       return {
-        id: agent.id,
         handle: agent.handle,
         display_name: agent.display_name,
         description: agent.description,
-        trust_score: agent.trust_score,
         added_at: d.created_at,
       }
     })
+    .sort((a, b) => a.handle.localeCompare(b.handle))
 
   return { contacts, total: count ?? 0, limit, offset }
 }

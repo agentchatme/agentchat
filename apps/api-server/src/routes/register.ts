@@ -137,8 +137,8 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
       description: pending.description,
     })
 
-    // Return agent (without api_key_hash) + raw API key (shown once)
-    const { api_key_hash: _, ...safeAgent } = agent
+    // Return agent (without internal id or api_key_hash) + raw API key (shown once)
+    const { api_key_hash: _, id: _id, ...safeAgent } = agent
     return c.json({ agent: safeAgent, api_key: apiKey }, 201)
   } catch (e: unknown) {
     // DB unique constraint violation — handle or email was taken between check and insert

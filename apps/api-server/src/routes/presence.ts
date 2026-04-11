@@ -4,8 +4,8 @@ import { authMiddleware } from '../middleware/auth.js'
 
 const presence = new Hono()
 
-// GET /v1/presence/:agent_id — Check if online
-presence.get('/:agent_id', async (c) => {
+// GET /v1/presence/:handle — Check if online
+presence.get('/:handle', async (c) => {
   // TODO: implement via presence.service
   return c.json({ message: 'not implemented' }, 501)
 })
