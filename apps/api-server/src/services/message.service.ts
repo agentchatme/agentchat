@@ -170,13 +170,15 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     updateConversationLastMessage(conversationId),
   ])
 
+  // Map sender_id to sender handle BEFORE any external delivery
+  const publicMessage = toPublicMessage(message, sender.handle)
+
   // 10. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
-  pushToRecipient(recipient.id, message).catch(() => {
+  pushToRecipient(recipient.id, publicMessage).catch(() => {
     // Push failed — that's fine, message is safe in DB
   })
 
-  // Map sender_id to sender handle for API response
-  return toPublicMessage(message, sender.handle)
+  return publicMessage
 }
 
 /** Strip internal sender_id, replace with sender handle for API responses */
@@ -255,10 +257,14 @@ export async function markAsDelivered(messageId: string) {
 export async function markAsRead(messageId: string, agentId: string) {
   const message = await updateMessageStatus(messageId, 'read')
 
-  const readPayload = { message_id: messageId, read_by: agentId, read_at: message.read_at }
+  // Resolve reader's handle for external payload (never expose internal ID)
+  const reader = await findAgentById(agentId)
+  const readerHandle = reader?.handle ?? 'unknown'
+
+  const readPayload = { message_id: messageId, read_by: readerHandle, read_at: message.read_at }
 
   if (message.sender_id) {
-    // Both paths fire — no gating on local connection state
+    // Route internally via sender_id, but payload uses handles only
     sendToAgent(message.sender_id, {
       type: 'message.read',
       payload: readPayload,
@@ -266,7 +272,9 @@ export async function markAsRead(messageId: string, agentId: string) {
     fireWebhooks(message.sender_id, 'message.read', readPayload)
   }
 
-  return message
+  // Map sender_id to handle in the response
+  const senderAgent = await findAgentById(message.sender_id)
+  return toPublicMessage(message, senderAgent?.handle ?? 'unknown')
 }
 
 const SYNC_BATCH_SIZE = 200

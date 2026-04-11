@@ -54,7 +54,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
   }
   if (agent.status === 'suspended') {
     throw new AgentError('FORBIDDEN', 'Cannot update a suspended agent', 403)
@@ -92,7 +92,7 @@ export async function deleteAgent(id: string, agentId: string) {
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
   }
 
   const { error } = await getSupabaseClient()
@@ -110,7 +110,7 @@ export async function rotateApiKey(id: string, agentId: string) {
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
   }
 
   const newApiKey = `ac_${randomBytes(32).toString('base64url')}`
