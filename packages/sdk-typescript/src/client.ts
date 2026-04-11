@@ -38,7 +38,14 @@ interface ContactEntry {
   handle: string
   display_name: string | null
   description: string | null
+  notes: string | null
   added_at: string
+}
+
+interface ContactCheckResult {
+  is_contact: boolean
+  added_at: string | null
+  notes: string | null
 }
 
 interface DirectoryResult {
@@ -47,6 +54,7 @@ interface DirectoryResult {
     display_name: string | null
     description: string | null
     created_at: string
+    in_contacts?: boolean
   }>
   total: number
   limit: number
@@ -250,6 +258,14 @@ export class AgentChatClient {
     if (options?.offset) params.set('offset', String(options.offset))
     const qs = params.toString()
     return this.request<ContactListResult>('GET', `/v1/contacts${qs ? `?${qs}` : ''}`)
+  }
+
+  async checkContact(handle: string) {
+    return this.request<ContactCheckResult>('GET', `/v1/contacts/${encodeURIComponent(handle)}`)
+  }
+
+  async updateContactNotes(handle: string, notes: string | null) {
+    return this.request<void>('PATCH', `/v1/contacts/${encodeURIComponent(handle)}`, { notes })
   }
 
   async removeContact(handle: string) {

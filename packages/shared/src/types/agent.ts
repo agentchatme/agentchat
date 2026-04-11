@@ -8,6 +8,7 @@ export type InboxMode = z.infer<typeof InboxMode>
 
 export const AgentSettings = z.object({
   inbox_mode: InboxMode.default('open'),
+  discoverable: z.boolean().default(true),
 })
 export type AgentSettings = z.infer<typeof AgentSettings>
 

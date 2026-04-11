@@ -8,7 +8,7 @@ import {
   updateMessageStatus,
   getUndeliveredMessages,
   deleteMessage,
-  isBlocked,
+  isBlockedEither,
   isContact,
   findOrCreateDirectConversation,
   updateConversationLastMessage,
@@ -65,7 +65,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   // 2. Parallel reads — all independent queries that only need senderId + recipient.id
   const [sender, blocked, existingConvId] = await Promise.all([
     findAgentById(senderId),
-    isBlocked(recipient.id, senderId),
+    isBlockedEither(senderId, recipient.id),
     findDirectConversation(senderId, recipient.id),
   ])
 
@@ -77,7 +77,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     throw new MessageError('SUSPENDED', 'Your agent is suspended', 403)
   }
   if (blocked) {
-    throw new MessageError('BLOCKED', 'You are blocked by this agent', 403)
+    throw new MessageError('BLOCKED', 'Messaging between these agents is blocked', 403)
   }
 
   // 4. Check recipient's inbox mode (uses sender data from parallel fetch)
@@ -150,8 +150,12 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     const conv = await getConversation(conversationId)
     if (conv && !conv.established && conv.initiated_by !== senderId) {
       await markConversationEstablished(conversationId)
-      addContact(senderId, recipient.id).catch(() => {})
-      addContact(recipient.id, senderId).catch(() => {})
+      addContact(senderId, recipient.id).catch((err) => {
+        console.error('[auto-contact] Failed to add sender→recipient contact:', err)
+      })
+      addContact(recipient.id, senderId).catch((err) => {
+        console.error('[auto-contact] Failed to add recipient→sender contact:', err)
+      })
     }
   }
 
