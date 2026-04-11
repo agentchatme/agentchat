@@ -41,7 +41,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
 
   const { data: conversations, error: convError } = await getSupabaseClient()
     .from('conversations')
-    .select('*')
+    .select('id, type, created_at, updated_at, last_message_at')
     .in('id', convIds)
     .order('last_message_at', { ascending: false, nullsFirst: false })
     .limit(limit)
