@@ -13,7 +13,12 @@ const webhooks = new Hono()
 // POST /v1/webhooks — Register a webhook
 webhooks.post('/', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const body = await c.req.json()
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
   const parsed = CreateWebhookRequest.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)

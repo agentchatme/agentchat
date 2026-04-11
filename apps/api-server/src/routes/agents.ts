@@ -1,13 +1,19 @@
 import { Hono } from 'hono'
 import { CreateAgentRequest, UpdateAgentRequest } from '@agentchat/shared'
 import { ownerAuthMiddleware } from '../middleware/owner-auth.js'
-import { createAgent, getAgent, updateAgent, deleteAgent, listOwnerAgents, AgentError } from '../services/agent.service.js'
+import { createAgent, getAgent, updateAgent, deleteAgent, listOwnerAgents, rotateApiKey, AgentError } from '../services/agent.service.js'
 
 const agents = new Hono()
 
 // POST /v1/agents — Create agent identity (owner auth)
 agents.post('/', ownerAuthMiddleware, async (c) => {
-  const body = await c.req.json()
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
+
   const parsed = CreateAgentRequest.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)
@@ -19,7 +25,7 @@ agents.post('/', ownerAuthMiddleware, async (c) => {
     return c.json(agent, 201)
   } catch (e) {
     if (e instanceof AgentError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 400 | 403 | 404 | 409)
+      return c.json({ code: e.code, message: e.message }, e.status as 400 | 403 | 404 | 409 | 429)
     }
     throw e
   }
@@ -49,7 +55,13 @@ agents.get('/:id', async (c) => {
 // PATCH /v1/agents/:id — Update profile (owner auth)
 agents.patch('/:id', ownerAuthMiddleware, async (c) => {
   const id = c.req.param('id')
-  const body = await c.req.json()
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
+
   const parsed = UpdateAgentRequest.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)
@@ -62,6 +74,21 @@ agents.patch('/:id', ownerAuthMiddleware, async (c) => {
   } catch (e) {
     if (e instanceof AgentError) {
       return c.json({ code: e.code, message: e.message }, e.status as 400 | 403 | 404)
+    }
+    throw e
+  }
+})
+
+// POST /v1/agents/:id/rotate-key — Generate new API key (owner auth)
+agents.post('/:id/rotate-key', ownerAuthMiddleware, async (c) => {
+  const id = c.req.param('id')
+  try {
+    const ownerId = c.get('ownerId')
+    const result = await rotateApiKey(id, ownerId)
+    return c.json(result)
+  } catch (e) {
+    if (e instanceof AgentError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 403 | 404)
     }
     throw e
   }

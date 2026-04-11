@@ -12,7 +12,12 @@ presence.get('/:agent_id', async (c) => {
 
 // PUT /v1/presence — Update presence (auth required)
 presence.put('/', authMiddleware, async (c) => {
-  const body = await c.req.json()
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
   const parsed = PresenceUpdate.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)

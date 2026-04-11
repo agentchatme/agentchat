@@ -4,14 +4,22 @@ import { getSupabaseClient, findAgentById, findAgentByHandle } from '@agentchat/
 import { isValidHandle } from '@agentchat/shared'
 import type { CreateAgentRequest, UpdateAgentRequest } from '@agentchat/shared'
 
+const MAX_AGENTS_PER_OWNER = 25
+
 export async function createAgent(req: CreateAgentRequest, ownerId: string) {
   if (!isValidHandle(req.handle)) {
     throw new AgentError('INVALID_HANDLE', 'Handle contains invalid characters or is reserved', 400)
   }
 
+  // Enforce agent-per-owner limit
+  const existing = await listOwnerAgents(ownerId)
+  if (existing.length >= MAX_AGENTS_PER_OWNER) {
+    throw new AgentError('LIMIT_REACHED', `Maximum ${MAX_AGENTS_PER_OWNER} agents per account`, 429)
+  }
+
   // Check if handle is taken
-  const existing = await findAgentByHandle(req.handle)
-  if (existing) {
+  const taken = await findAgentByHandle(req.handle)
+  if (taken) {
     throw new AgentError('HANDLE_TAKEN', `Handle @${req.handle} is already taken`, 409)
   }
 
@@ -44,7 +52,7 @@ export async function getAgent(idOrHandle: string) {
     ? await findAgentById(idOrHandle)
     : await findAgentByHandle(idOrHandle)
 
-  if (!agent) {
+  if (!agent || agent.status === 'deleted') {
     throw new AgentError('AGENT_NOT_FOUND', `Agent ${idOrHandle} not found`, 404)
   }
 
@@ -63,11 +71,14 @@ export async function getAgent(idOrHandle: string) {
 export async function updateAgent(id: string, req: UpdateAgentRequest, ownerId: string) {
   // Verify ownership
   const agent = await findAgentById(id)
-  if (!agent) {
+  if (!agent || agent.status === 'deleted') {
     throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
   }
   if (agent.owner_id !== ownerId) {
     throw new AgentError('FORBIDDEN', 'You do not own this agent', 403)
+  }
+  if (agent.status === 'suspended') {
+    throw new AgentError('FORBIDDEN', 'Cannot update a suspended agent', 403)
   }
 
   const updates: Record<string, unknown> = {}
@@ -91,7 +102,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, ownerId: 
 
 export async function deleteAgent(id: string, ownerId: string) {
   const agent = await findAgentById(id)
-  if (!agent) {
+  if (!agent || agent.status === 'deleted') {
     throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
   }
   if (agent.owner_id !== ownerId) {
@@ -105,6 +116,28 @@ export async function deleteAgent(id: string, ownerId: string) {
     .eq('id', id)
 
   if (error) throw error
+}
+
+export async function rotateApiKey(id: string, ownerId: string) {
+  const agent = await findAgentById(id)
+  if (!agent || agent.status === 'deleted') {
+    throw new AgentError('AGENT_NOT_FOUND', `Agent ${id} not found`, 404)
+  }
+  if (agent.owner_id !== ownerId) {
+    throw new AgentError('FORBIDDEN', 'You do not own this agent', 403)
+  }
+
+  const newApiKey = `ac_${randomBytes(32).toString('base64url')}`
+  const newHash = createHash('sha256').update(newApiKey).digest('hex')
+
+  const { error } = await getSupabaseClient()
+    .from('agents')
+    .update({ api_key_hash: newHash })
+    .eq('id', id)
+
+  if (error) throw error
+
+  return { id, api_key: newApiKey }
 }
 
 export async function listOwnerAgents(ownerId: string) {

@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { z } from 'zod'
 import { getSupabaseClient } from '@agentchat/db'
+import { ipRateLimit } from '../middleware/rate-limit.js'
 
 const auth = new Hono()
 
@@ -9,9 +10,15 @@ const AuthRequest = z.object({
   password: z.string().min(8),
 })
 
-// POST /v1/auth/signup — Create owner account
-auth.post('/signup', async (c) => {
-  const body = await c.req.json()
+// POST /v1/auth/signup — Create owner account (5 per hour per IP)
+auth.post('/signup', ipRateLimit(5, 3600), async (c) => {
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
+
   const parsed = AuthRequest.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)
@@ -50,9 +57,15 @@ auth.post('/signup', async (c) => {
   }, 201)
 })
 
-// POST /v1/auth/login — Login as owner
-auth.post('/login', async (c) => {
-  const body = await c.req.json()
+// POST /v1/auth/login — Login as owner (10 per minute per IP)
+auth.post('/login', ipRateLimit(10, 60), async (c) => {
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
+
   const parsed = AuthRequest.safeParse(body)
   if (!parsed.success) {
     return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid request', details: parsed.error.flatten() }, 400)
