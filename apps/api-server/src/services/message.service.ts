@@ -251,14 +251,10 @@ export async function markAsRead(messageId: string, agentId: string) {
 const SYNC_BATCH_SIZE = 200
 
 export async function syncUndelivered(agentId: string) {
-  const messages = await getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
-
-  // Batch mark as delivered (don't await each one sequentially)
-  await Promise.allSettled(
-    messages.map((msg) => updateMessageStatus(msg.id, 'delivered'))
-  )
-
-  return messages
+  // Fetch undelivered messages but DON'T mark as delivered here.
+  // The "delivered" status is set by deliverLocally in pubsub.ts
+  // only after ws.send() actually succeeds.
+  return getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
 }
 
 export async function removeMessage(messageId: string, agentId: string) {

@@ -43,6 +43,9 @@ export async function getConversationMessages(
   return data
 }
 
+// Status lifecycle is forward-only: stored → delivered → read
+const STATUS_RANK: Record<string, number> = { stored: 0, delivered: 1, read: 2 }
+
 export async function updateMessageStatus(
   messageId: string,
   status: 'delivered' | 'read',
@@ -54,12 +57,29 @@ export async function updateMessageStatus(
     updates.read_at = new Date().toISOString()
   }
 
+  // Only allow forward transitions — never downgrade "read" to "delivered"
+  const allowedPrevious = Object.entries(STATUS_RANK)
+    .filter(([, rank]) => rank < STATUS_RANK[status]!)
+    .map(([name]) => name)
+
   const { data, error } = await getSupabaseClient()
     .from('messages')
     .update(updates)
     .eq('id', messageId)
+    .in('status', allowedPrevious)
     .select()
     .single()
+
+  if (error && error.code === 'PGRST116') {
+    // No rows matched — status was already at or beyond this level. Not an error.
+    const { data: existing, error: fetchError } = await getSupabaseClient()
+      .from('messages')
+      .select()
+      .eq('id', messageId)
+      .single()
+    if (fetchError) throw fetchError
+    return existing
+  }
 
   if (error) throw error
   return data

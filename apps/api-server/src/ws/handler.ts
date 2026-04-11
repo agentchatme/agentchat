@@ -26,25 +26,36 @@ export function handleWsConnection(agentId: string, ws: WSContext) {
   // Start heartbeat ping/pong cycle
   startHeartbeat(agentId, ws)
 
-  // On connect, deliver any undelivered messages (sync on reconnect, paginated)
-  syncUndelivered(agentId)
-    .then((messages) => {
-      for (const msg of messages) {
-        sendToAgent(agentId, {
-          type: 'message.new',
-          payload: msg,
-        })
-      }
-    })
-    .catch(() => {
-      // Non-critical — agent can always call /v1/messages/sync manually
-    })
+  // On connect, drain all undelivered messages in batches
+  drainUndelivered(agentId).catch(() => {
+    // Non-critical — agent can always call /v1/messages/sync manually
+  })
 
   return {
     onClose: () => {
       stopHeartbeat(ws)
       removeConnection(agentId, ws)
     },
+  }
+}
+
+async function drainUndelivered(agentId: string) {
+  // Keep fetching batches until there are no more undelivered messages
+  // or the agent disconnects. sendToAgent → pub/sub → deliverLocally
+  // handles marking "delivered" on actual WebSocket send.
+  let batch = await syncUndelivered(agentId)
+  while (batch.length > 0) {
+    for (const msg of batch) {
+      sendToAgent(agentId, {
+        type: 'message.new',
+        payload: msg,
+      })
+    }
+    // If batch was smaller than the limit, we've drained everything
+    if (batch.length < 200) break
+    // Small pause to avoid overwhelming the connection
+    await new Promise((r) => setTimeout(r, 100))
+    batch = await syncUndelivered(agentId)
   }
 }
 
