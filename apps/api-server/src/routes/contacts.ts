@@ -7,28 +7,46 @@ import {
   block,
   unblock,
   report,
+  ContactError,
 } from '../services/contact.service.js'
 
 const contacts = new Hono()
 
-// POST /v1/contacts — Add agent to contact book
+// POST /v1/contacts — Add agent to contact book (accepts handle or agent_id)
 contacts.post('/', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const body = await c.req.json<{ agent_id: string }>()
-
-  if (!body.agent_id) {
-    return c.json({ code: 'VALIDATION_ERROR', message: 'agent_id is required' }, 400)
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
   }
 
-  const contact = await addToContacts(agentId, body.agent_id)
-  return c.json(contact, 201)
+  const { agent_id, handle } = body as { agent_id?: string; handle?: string }
+  const target = agent_id || handle
+
+  if (!target || typeof target !== 'string') {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'agent_id or handle is required' }, 400)
+  }
+
+  try {
+    const contact = await addToContacts(agentId, target)
+    return c.json(contact, 201)
+  } catch (e) {
+    if (e instanceof ContactError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 400 | 404)
+    }
+    throw e
+  }
 })
 
-// GET /v1/contacts — List your contacts
+// GET /v1/contacts — List your contacts (paginated)
 contacts.get('/', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const list = await getContacts(agentId)
-  return c.json({ contacts: list })
+  const limit = Math.min(Math.max(Number(c.req.query('limit') ?? 50), 1), 100)
+  const offset = Math.max(Number(c.req.query('offset') ?? 0), 0)
+  const result = await getContacts(agentId, limit, offset)
+  return c.json(result)
 })
 
 // DELETE /v1/contacts/:agent_id — Remove a contact

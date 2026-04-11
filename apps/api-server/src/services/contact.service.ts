@@ -50,8 +50,8 @@ export async function removeFromContacts(agentId: string, targetAgentId: string)
   await removeContact(agentId, targetAgentId)
 }
 
-export async function getContacts(agentId: string) {
-  return listContacts(agentId)
+export async function getContacts(agentId: string, limit = 50, offset = 0) {
+  return listContacts(agentId, limit, offset)
 }
 
 export async function block(agentId: string, targetAgentId: string) {

@@ -18,30 +18,45 @@ export async function removeContact(ownerAgentId: string, contactAgentId: string
   if (error) throw error
 }
 
-export async function listContacts(ownerAgentId: string) {
-  const { data, error } = await getSupabaseClient()
+export async function listContacts(ownerAgentId: string, limit = 50, offset = 0) {
+  const { data, error, count } = await getSupabaseClient()
     .from('contacts')
-    .select('contact_agent_id, created_at')
+    .select('contact_agent_id, created_at', { count: 'exact' })
     .eq('owner_agent_id', ownerAgentId)
     .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
 
   if (error) throw error
-  if (!data || data.length === 0) return []
+  if (!data || data.length === 0) return { contacts: [], total: count ?? 0, limit, offset }
 
-  // Fetch agent profiles for each contact
+  // Fetch agent profiles — only active agents (filter out deleted/suspended)
   const agentIds = data.map((d) => d.contact_agent_id)
   const { data: agents, error: agentError } = await getSupabaseClient()
     .from('agents')
     .select('id, handle, display_name, description, status, trust_score')
     .in('id', agentIds)
+    .eq('status', 'active')
 
   if (agentError) throw agentError
 
   const agentMap = new Map((agents ?? []).map((a) => [a.id, a]))
-  return data.map((d) => ({
-    ...agentMap.get(d.contact_agent_id),
-    added_at: d.created_at,
-  }))
+
+  // Only return contacts whose agent is still active
+  const contacts = data
+    .filter((d) => agentMap.has(d.contact_agent_id))
+    .map((d) => {
+      const agent = agentMap.get(d.contact_agent_id)!
+      return {
+        id: agent.id,
+        handle: agent.handle,
+        display_name: agent.display_name,
+        description: agent.description,
+        trust_score: agent.trust_score,
+        added_at: d.created_at,
+      }
+    })
+
+  return { contacts, total: count ?? 0, limit, offset }
 }
 
 export async function isContact(ownerAgentId: string, contactAgentId: string): Promise<boolean> {
