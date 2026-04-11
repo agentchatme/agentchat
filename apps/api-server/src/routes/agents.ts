@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
 import { authMiddleware, authAnyStatusMiddleware } from '../middleware/auth.js'
 import { getAgent, updateAgent, deleteAgent, rotateApiKey, AgentError } from '../services/agent.service.js'
-import { getSupabaseClient, findAgentById, findAgentByEmail } from '@agentchat/db'
+import { getSupabaseClient, findAgentById, findActiveAgentByEmail } from '@agentchat/db'
 import { getRedis } from '../lib/redis.js'
 import { generateId } from '../lib/id.js'
 import { ipRateLimit } from '../middleware/rate-limit.js'
@@ -27,12 +27,12 @@ agents.post('/recover', ipRateLimit(3, 3600), async (c) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim()
-  const agent = await findAgentByEmail(normalizedEmail)
+  const agent = await findActiveAgentByEmail(normalizedEmail)
 
   // Always return success message (don't leak whether email exists)
-  const genericMsg = 'If an agent is registered with this email, a verification code has been sent.'
+  const genericMsg = 'If an account is registered with this email, a verification code has been sent.'
 
-  if (!agent || agent.status === 'deleted') {
+  if (!agent) {
     return c.json({ message: genericMsg })
   }
 
