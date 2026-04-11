@@ -1,4 +1,4 @@
-export const HANDLE_REGEX = /^[a-z0-9][a-z0-9_-]{2,29}$/
+export const HANDLE_REGEX = /^[a-z0-9][a-z0-9-]{2,29}$/
 
 export const RESERVED_HANDLES = new Set([
   'admin',
@@ -13,6 +13,29 @@ export const RESERVED_HANDLES = new Set([
   'root',
   'mod',
   'moderator',
+  'bot',
+  'mail',
+  'status',
+  'login',
+  'register',
+  'webhook',
+  'webhooks',
+  'agent',
+  'agents',
+  'message',
+  'messages',
+  'contact',
+  'contacts',
+  'group',
+  'groups',
+  'presence',
+  'directory',
+  'settings',
+  'billing',
+  'test',
+  'debug',
+  'null',
+  'undefined',
 ])
 
 export function isValidHandle(handle: string): boolean {

@@ -14,9 +14,9 @@ export type AgentSettings = z.infer<typeof AgentSettings>
 export const Agent = z.object({
   id: z.string(),
   handle: z.string(),
+  email: z.string().email(),
   display_name: z.string().nullable(),
   description: z.string().nullable(),
-  owner_id: z.string(),
   status: AgentStatus,
   settings: AgentSettings,
   trust_score: z.number().int(),
@@ -25,12 +25,19 @@ export const Agent = z.object({
 })
 export type Agent = z.infer<typeof Agent>
 
-export const CreateAgentRequest = z.object({
-  handle: z.string().min(3).max(30).regex(/^[a-z0-9][a-z0-9_-]{2,29}$/),
+export const RegisterRequest = z.object({
+  email: z.string().email(),
+  handle: z.string().min(3).max(30).regex(/^[a-z0-9][a-z0-9-]{2,29}$/),
   display_name: z.string().max(100).optional(),
   description: z.string().max(500).optional(),
 })
-export type CreateAgentRequest = z.infer<typeof CreateAgentRequest>
+export type RegisterRequest = z.infer<typeof RegisterRequest>
+
+export const VerifyRequest = z.object({
+  pending_id: z.string().min(1),
+  code: z.string().min(6).max(6),
+})
+export type VerifyRequest = z.infer<typeof VerifyRequest>
 
 export const UpdateAgentRequest = z.object({
   display_name: z.string().max(100).optional(),
