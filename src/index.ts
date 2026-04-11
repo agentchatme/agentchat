@@ -18,8 +18,6 @@ export type {
   Presence,
   PresenceStatus,
   PresenceUpdate,
-  TrustTier,
-  TrustScore,
   WebhookConfig,
   CreateWebhookRequest,
   WsMessage,
