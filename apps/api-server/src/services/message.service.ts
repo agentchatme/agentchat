@@ -197,16 +197,23 @@ async function pushToRecipient(recipientId: string, message: Record<string, unkn
 }
 
 async function checkPerSecondRateLimit(agentId: string, limit: number): Promise<boolean> {
-  const redis = getRedis()
-  const second = Math.floor(Date.now() / 1000)
-  const key = `ratelimit:persec:${agentId}:${second}`
+  try {
+    const redis = getRedis()
+    const second = Math.floor(Date.now() / 1000)
+    const key = `ratelimit:persec:${agentId}:${second}`
 
-  const current = await redis.incr(key)
-  if (current === 1) {
-    await redis.expire(key, 3) // 3s TTL (covers current + buffer)
+    const current = await redis.incr(key)
+    if (current === 1) {
+      await redis.expire(key, 3) // 3s TTL (covers current + buffer)
+    }
+
+    return current <= limit
+  } catch {
+    // Redis down — fail open. Better to allow messages without rate limiting
+    // than to block all messages because the rate limiter is unavailable.
+    console.error('[rate-limit] Redis unavailable — failing open')
+    return true
   }
-
-  return current <= limit
 }
 
 export async function getMessages(

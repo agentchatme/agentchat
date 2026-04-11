@@ -39,12 +39,15 @@ export function handleWsConnection(agentId: string, ws: WSContext) {
   }
 }
 
+const MAX_DRAIN_ITERATIONS = 50 // 50 × 200 = 10,000 messages max per reconnect
+
 async function drainUndelivered(agentId: string) {
   // Keep fetching batches until there are no more undelivered messages
   // or the agent disconnects. sendToAgent → pub/sub → deliverLocally
   // handles marking "delivered" on actual WebSocket send.
   let batch = await syncUndelivered(agentId)
-  while (batch.length > 0) {
+  let iterations = 0
+  while (batch.length > 0 && iterations < MAX_DRAIN_ITERATIONS) {
     for (const msg of batch) {
       sendToAgent(agentId, {
         type: 'message.new',
@@ -53,6 +56,7 @@ async function drainUndelivered(agentId: string) {
     }
     // If batch was smaller than the limit, we've drained everything
     if (batch.length < 200) break
+    iterations++
     // Small pause to avoid overwhelming the connection
     await new Promise((r) => setTimeout(r, 100))
     batch = await syncUndelivered(agentId)
