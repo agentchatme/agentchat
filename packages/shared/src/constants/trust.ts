@@ -16,4 +16,6 @@ export const TRUST_DELTAS = {
   REPORTED: -20,
 } as const
 
-export const AUTO_SUSPEND_THRESHOLD = -20
+// Auto-suspend threshold — TBD. Will be defined when trust scoring is fully designed.
+// Set to null to disable auto-suspension until then.
+export const AUTO_SUSPEND_THRESHOLD: number | null = null

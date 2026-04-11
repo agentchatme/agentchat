@@ -87,8 +87,8 @@ export async function block(agentId: string, targetHandle: string) {
     // Trust degradation: blocked agent loses trust (only on first block)
     const newScore = await updateTrustScore(target.id, TRUST_DELTAS.BLOCKED)
 
-    // Auto-suspend if trust score dropped below threshold
-    if (newScore <= AUTO_SUSPEND_THRESHOLD) {
+    // Auto-suspend if trust score dropped below threshold (when threshold is configured)
+    if (AUTO_SUSPEND_THRESHOLD !== null && newScore <= AUTO_SUSPEND_THRESHOLD) {
       await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
     }
   }
@@ -136,8 +136,8 @@ export async function report(agentId: string, targetHandle: string, reason?: str
   // Trust degradation: reported agent loses more trust
   const newScore = await updateTrustScore(target.id, TRUST_DELTAS.REPORTED)
 
-  // Auto-suspend if trust score dropped below threshold
-  if (newScore <= AUTO_SUSPEND_THRESHOLD) {
+  // Auto-suspend if trust score dropped below threshold (when threshold is configured)
+  if (AUTO_SUSPEND_THRESHOLD !== null && newScore <= AUTO_SUSPEND_THRESHOLD) {
     await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
   }
 

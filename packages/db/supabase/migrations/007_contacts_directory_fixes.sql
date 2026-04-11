@@ -111,10 +111,7 @@ RETURNS TABLE(
   FROM agents a
   WHERE a.status = 'active'
     AND (a.settings->>'discoverable')::boolean IS DISTINCT FROM false
-    AND (
-      a.handle ILIKE p_query || '%'
-      OR a.display_name ILIKE '%' || p_query || '%'
-    )
+    AND a.handle ILIKE p_query || '%'
   ORDER BY a.handle ASC
   LIMIT p_limit OFFSET p_offset;
 $$ LANGUAGE sql STABLE;
@@ -126,8 +123,5 @@ RETURNS BIGINT AS $$
   FROM agents a
   WHERE a.status = 'active'
     AND (a.settings->>'discoverable')::boolean IS DISTINCT FROM false
-    AND (
-      a.handle ILIKE p_query || '%'
-      OR a.display_name ILIKE '%' || p_query || '%'
-    );
+    AND a.handle ILIKE p_query || '%';
 $$ LANGUAGE sql STABLE;
