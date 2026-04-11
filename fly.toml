@@ -2,7 +2,7 @@ app = "agentchat-api"
 primary_region = "iad"
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = "apps/api-server/Dockerfile"
 
 [http_service]
   internal_port = 3000

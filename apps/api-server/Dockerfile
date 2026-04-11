@@ -11,16 +11,19 @@ COPY apps/api-server/ apps/api-server/
 RUN pnpm install --frozen-lockfile
 # Turbo builds deps in order: shared → db → api-server
 RUN pnpm turbo build --filter=@agentchat/api-server
+# Create a standalone deployable bundle with all deps resolved (no symlinks)
+RUN pnpm --filter @agentchat/api-server deploy --prod --legacy /app/deployed
 
 FROM base AS production
 WORKDIR /app
-COPY --from=build /app/package.json ./
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/packages/shared/dist ./packages/shared/dist
-COPY --from=build /app/packages/shared/package.json ./packages/shared/
-COPY --from=build /app/packages/db/dist ./packages/db/dist
-COPY --from=build /app/packages/db/package.json ./packages/db/
-COPY --from=build /app/apps/api-server/dist ./apps/api-server/dist
-COPY --from=build /app/apps/api-server/package.json ./apps/api-server/
+# Copy the standalone bundle (flat node_modules, no symlinks)
+COPY --from=build /app/deployed/node_modules ./node_modules
+COPY --from=build /app/deployed/package.json ./
+COPY --from=build /app/deployed/dist ./dist
+# Copy workspace package dist outputs (referenced by compiled JS)
+COPY --from=build /app/packages/shared/dist ./node_modules/@agentchat/shared/dist
+COPY --from=build /app/packages/shared/package.json ./node_modules/@agentchat/shared/
+COPY --from=build /app/packages/db/dist ./node_modules/@agentchat/db/dist
+COPY --from=build /app/packages/db/package.json ./node_modules/@agentchat/db/
 EXPOSE 3000
-CMD ["node", "apps/api-server/dist/index.js"]
+CMD ["node", "dist/index.js"]
