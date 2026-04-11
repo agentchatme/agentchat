@@ -68,7 +68,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
   // No fields to update — return current state
   if (Object.keys(updates).length === 0) {
-    const { api_key_hash: _, id: _id, ...safeData } = agent
+    const { api_key_hash: _, id: _id, email: _email, ...safeData } = agent
     return safeData
   }
 
@@ -80,7 +80,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
     .single()
 
   if (error) throw error
-  const { api_key_hash: _, id: _id, ...safeData } = data
+  const { api_key_hash: _, id: _id, email: _email, ...safeData } = data
   return safeData
 }
 

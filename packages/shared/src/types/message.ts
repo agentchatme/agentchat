@@ -12,7 +12,10 @@ export const MessageContent = z.object({
   file_url: z.string().url().optional(),
   file_name: z.string().optional(),
   mime_type: z.string().optional(),
-})
+}).refine(
+  (c) => c.text !== undefined || c.data !== undefined || c.file_url !== undefined,
+  { message: 'Message content must include at least text, data, or file_url' },
+)
 export type MessageContent = z.infer<typeof MessageContent>
 
 export const Message = z.object({

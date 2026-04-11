@@ -54,7 +54,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   const recipient = await findAgentByHandle(req.to.replace(/^@/, '').toLowerCase())
 
   if (!recipient) {
-    throw new MessageError('AGENT_NOT_FOUND', `Agent ${req.to} not found`, 404)
+    throw new MessageError('AGENT_NOT_FOUND', `Account ${req.to} not found`, 404)
   }
 
   if (recipient.id === senderId) {
@@ -259,5 +259,8 @@ export async function syncUndelivered(agentId: string) {
 }
 
 export async function removeMessage(messageId: string, agentId: string) {
-  await deleteMessage(messageId, agentId)
+  const deleted = await deleteMessage(messageId, agentId)
+  if (!deleted) {
+    throw new MessageError('MESSAGE_NOT_FOUND', 'Message not found or you are not the sender', 404)
+  }
 }

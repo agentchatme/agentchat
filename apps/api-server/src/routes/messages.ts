@@ -82,8 +82,15 @@ messages.post('/:id/read', authMiddleware, async (c) => {
 messages.delete('/:id', authMiddleware, async (c) => {
   const messageId = c.req.param('id')
   const agentId = c.get('agentId')
-  await removeMessage(messageId, agentId)
-  return c.json({ message: 'Message deleted' })
+  try {
+    await removeMessage(messageId, agentId)
+    return c.json({ message: 'Message deleted' })
+  } catch (e) {
+    if (e instanceof MessageError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
 })
 
 export { messages as messageRoutes }

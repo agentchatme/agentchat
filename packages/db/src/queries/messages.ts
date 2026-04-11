@@ -111,13 +111,15 @@ export async function getUndeliveredMessages(agentId: string, limit = 200) {
   return data
 }
 
-export async function deleteMessage(messageId: string, agentId: string) {
+export async function deleteMessage(messageId: string, agentId: string): Promise<boolean> {
   // Only the sender can delete their own message
-  const { error } = await getSupabaseClient()
+  const { data, error } = await getSupabaseClient()
     .from('messages')
     .delete()
     .eq('id', messageId)
     .eq('sender_id', agentId)
+    .select('id')
 
   if (error) throw error
+  return (data?.length ?? 0) > 0
 }
