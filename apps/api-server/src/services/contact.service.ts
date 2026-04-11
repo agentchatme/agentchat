@@ -10,12 +10,10 @@ import {
   unblockAgent,
   hasReported,
   reportAgent,
-  updateTrustScore,
-  autoSuspendIfNeeded,
   findAgentByHandle,
 } from '@agentchat/db'
-import { TRUST_DELTAS, AUTO_SUSPEND_THRESHOLD } from '@agentchat/shared'
 import { fireWebhooks } from './webhook.service.js'
+import { evaluateEnforcement } from './enforcement.service.js'
 
 export class ContactError extends Error {
   code: string
@@ -79,23 +77,17 @@ export async function block(agentId: string, targetHandle: string) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot block yourself', 400)
   }
 
-  // Check if already blocked — idempotent, but only apply trust penalty once
-  const alreadyBlocked = await isBlocked(agentId, target.id)
   await blockAgent(agentId, target.id)
 
-  if (!alreadyBlocked) {
-    // Trust degradation: blocked agent loses trust (only on first block)
-    const newScore = await updateTrustScore(target.id, TRUST_DELTAS.BLOCKED)
-
-    // Auto-suspend if trust score dropped below threshold (when threshold is configured)
-    if (AUTO_SUSPEND_THRESHOLD !== null && newScore <= AUTO_SUSPEND_THRESHOLD) {
-      await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
-    }
-  }
+  // Evaluate enforcement thresholds asynchronously (non-blocking).
+  // Checks if the target has accumulated enough blocks to be restricted/suspended.
+  evaluateEnforcement(target.id).catch((err) => {
+    console.error('[enforcement] Failed to evaluate after block:', err)
+  })
 
   // Fire webhook so blocked agent knows (best-effort)
   fireWebhooks(target.id, 'contact.blocked', {
-    blocked_by: targetHandle, // don't expose who blocked — just notify
+    blocked_by: targetHandle,
   })
 }
 
@@ -105,9 +97,6 @@ export async function unblock(agentId: string, targetHandle: string) {
   if (!existed) {
     throw new ContactError('NOT_FOUND', `@${targetHandle} is not blocked`, 404)
   }
-
-  // Restore trust: reverse the block penalty (trust is temporary, not permanent)
-  await updateTrustScore(target.id, -TRUST_DELTAS.BLOCKED)
 }
 
 export async function report(agentId: string, targetHandle: string, reason?: string) {
@@ -127,19 +116,15 @@ export async function report(agentId: string, targetHandle: string, reason?: str
   const alreadyBlocked = await isBlocked(agentId, target.id)
   if (!alreadyBlocked) {
     await blockAgent(agentId, target.id)
-    await updateTrustScore(target.id, TRUST_DELTAS.BLOCKED)
   }
 
   const reportId = generateId('rpt')
   await reportAgent(agentId, target.id, reportId, reason)
 
-  // Trust degradation: reported agent loses more trust
-  const newScore = await updateTrustScore(target.id, TRUST_DELTAS.REPORTED)
-
-  // Auto-suspend if trust score dropped below threshold (when threshold is configured)
-  if (AUTO_SUSPEND_THRESHOLD !== null && newScore <= AUTO_SUSPEND_THRESHOLD) {
-    await autoSuspendIfNeeded(target.id, AUTO_SUSPEND_THRESHOLD)
-  }
+  // Evaluate enforcement thresholds asynchronously
+  evaluateEnforcement(target.id).catch((err) => {
+    console.error('[enforcement] Failed to evaluate after report:', err)
+  })
 
   // Fire webhook so blocked agent knows
   fireWebhooks(target.id, 'contact.blocked', {

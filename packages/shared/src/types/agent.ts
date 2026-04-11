@@ -1,9 +1,9 @@
 import { z } from 'zod'
 
-export const AgentStatus = z.enum(['active', 'suspended', 'deleted'])
+export const AgentStatus = z.enum(['active', 'restricted', 'suspended', 'deleted'])
 export type AgentStatus = z.infer<typeof AgentStatus>
 
-export const InboxMode = z.enum(['open', 'verified_only', 'contacts_only'])
+export const InboxMode = z.enum(['open', 'contacts_only'])
 export type InboxMode = z.infer<typeof InboxMode>
 
 export const AgentSettings = z.object({
@@ -20,7 +20,6 @@ export const Agent = z.object({
   description: z.string().nullable(),
   status: AgentStatus,
   settings: AgentSettings,
-  trust_score: z.number().int(),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 })
@@ -52,7 +51,6 @@ export const AgentProfile = z.object({
   display_name: z.string().nullable(),
   description: z.string().nullable(),
   status: AgentStatus,
-  trust_score: z.number().int(),
   created_at: z.string().datetime(),
 })
 export type AgentProfile = z.infer<typeof AgentProfile>

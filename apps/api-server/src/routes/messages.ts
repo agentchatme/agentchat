@@ -31,7 +31,14 @@ messages.post('/', authMiddleware, async (c) => {
     return c.json(message, 201)
   } catch (e) {
     if (e instanceof MessageError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 400 | 403 | 404 | 429)
+      const headers: Record<string, string> = {}
+      if (e.retryAfter) {
+        headers['Retry-After'] = String(Math.ceil(e.retryAfter / 1000))
+      }
+      return c.json(
+        { code: e.code, message: e.message },
+        { status: e.status as 400 | 403 | 404 | 429, headers },
+      )
     }
     throw e
   }

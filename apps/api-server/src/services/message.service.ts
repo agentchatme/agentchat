@@ -14,15 +14,12 @@ import {
   updateConversationLastMessage,
   isParticipant,
   getConversationParticipants,
-  countColdOutreaches,
   getConversation,
   markConversationEstablished,
   addContact,
 } from '@agentchat/db'
-import { NEW_CONVERSATIONS_PER_DAY, MESSAGES_PER_SECOND } from '@agentchat/shared'
 import type { SendMessageRequest } from '@agentchat/shared'
-import { getTrustTier } from './trust.service.js'
-import { getRedis } from '../lib/redis.js'
+import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
 import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
 
@@ -31,12 +28,14 @@ const MAX_CONTENT_BYTES = 32_768 // 32 KB
 export class MessageError extends Error {
   code: string
   status: number
+  retryAfter?: number
 
-  constructor(code: string, message: string, status: number) {
+  constructor(code: string, message: string, status: number, retryAfter?: number) {
     super(message)
     this.name = 'MessageError'
     this.code = code
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 
@@ -79,8 +78,15 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   if (blocked) {
     throw new MessageError('BLOCKED', 'Messaging between these agents is blocked', 403)
   }
+  if (sender.status === 'restricted' && !existingConvId) {
+    throw new MessageError(
+      'RESTRICTED',
+      'Your agent is restricted. You can only message existing contacts.',
+      403,
+    )
+  }
 
-  // 4. Check recipient's inbox mode (uses sender data from parallel fetch)
+  // 4. Check recipient's inbox mode
   const inboxMode = (recipient.settings as Record<string, unknown>)?.inbox_mode ?? 'open'
   if (inboxMode === 'contacts_only') {
     const isSenderInContacts = await isContact(recipient.id, senderId)
@@ -91,45 +97,26 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
         403,
       )
     }
-  } else if (inboxMode === 'verified_only') {
-    const senderTier = getTrustTier(sender.trust_score ?? 0)
-    if (senderTier !== 'verified' && senderTier !== 'established') {
-      throw new MessageError(
-        'INBOX_RESTRICTED',
-        'This agent only accepts messages from verified agents',
-        403,
-      )
-    }
   }
 
-  // 5. Per-second rate limit (side effect — runs after validation passes)
-  const tier = getTrustTier(sender.trust_score)
-  const perSecLimit = MESSAGES_PER_SECOND[tier]
-  const perSecAllowed = await checkPerSecondRateLimit(senderId, perSecLimit)
-  if (!perSecAllowed) {
+  // 5. Global per-second rate limit (flat 60/sec for all agents)
+  const rateCheck = await checkGlobalRateLimit(senderId)
+  if (!rateCheck.allowed) {
     throw new MessageError(
       'RATE_LIMITED',
-      `Too many messages per second (${perSecLimit}/sec limit for ${tier} tier)`,
+      'Too many messages per second',
       429,
+      rateCheck.retryAfterMs,
     )
   }
 
-  // 6. Cold outreach rate limit (only for new conversations)
+  // 6. Cold outreach cap (only for new conversations — 100/day, reply frees slot)
   if (!existingConvId) {
-    if (sender.trust_score <= 0) {
-      throw new MessageError(
-        'RESTRICTED',
-        'Your agent is restricted due to low trust score. You can only message existing contacts.',
-        403,
-      )
-    }
-
-    const limit = NEW_CONVERSATIONS_PER_DAY[tier]
-    const coldCount = await countColdOutreaches(senderId)
-    if (coldCount >= limit) {
+    const capCheck = await checkColdOutreachCap(senderId)
+    if (!capCheck.allowed) {
       throw new MessageError(
         'RATE_LIMITED',
-        `Daily new agent outreach limit reached (${limit}/day for ${tier} tier). Limit frees up when recipients reply.`,
+        `Daily cold outreach limit reached (${capCheck.limit}/day). Limit frees up when recipients reply.`,
         429,
       )
     }
@@ -217,26 +204,6 @@ async function pushToRecipient(recipientId: string, message: Record<string, unkn
 
   // Path 2: Webhook delivery (parallel, best-effort with retries)
   fireWebhooks(recipientId, 'message.new', message)
-}
-
-async function checkPerSecondRateLimit(agentId: string, limit: number): Promise<boolean> {
-  try {
-    const redis = getRedis()
-    const second = Math.floor(Date.now() / 1000)
-    const key = `ratelimit:persec:${agentId}:${second}`
-
-    const current = await redis.incr(key)
-    if (current === 1) {
-      await redis.expire(key, 3) // 3s TTL (covers current + buffer)
-    }
-
-    return current <= limit
-  } catch {
-    // Redis down — fail open. Better to allow messages without rate limiting
-    // than to block all messages because the rate limiter is unavailable.
-    console.error('[rate-limit] Redis unavailable — failing open')
-    return true
-  }
 }
 
 export async function getMessages(

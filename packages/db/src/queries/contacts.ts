@@ -133,22 +133,6 @@ export async function reportAgent(reporterId: string, reportedId: string, report
   if (error) throw error
 }
 
-// --- Trust Score ---
-
-export async function updateTrustScore(agentId: string, delta: number): Promise<number> {
-  const { data, error } = await getSupabaseClient()
-    .rpc('update_trust_score', { p_agent_id: agentId, p_delta: delta })
-  if (error) throw error
-  return data as number
-}
-
-export async function autoSuspendIfNeeded(agentId: string, threshold: number): Promise<boolean> {
-  const { data, error } = await getSupabaseClient()
-    .rpc('auto_suspend_if_needed', { p_agent_id: agentId, p_threshold: threshold })
-  if (error) throw error
-  return !!data
-}
-
 // --- Directory ---
 
 export async function searchDirectory(

@@ -42,7 +42,6 @@ export async function getAgent(handle: string) {
     display_name: agent.display_name,
     description: agent.description,
     status: agent.status,
-    trust_score: agent.trust_score,
     created_at: agent.created_at,
   }
 }

@@ -97,14 +97,11 @@ export async function getConversationParticipants(conversationId: string) {
     })
 }
 
-export async function countColdOutreaches(agentId: string): Promise<number> {
-  const todayStart = new Date()
-  todayStart.setUTCHours(0, 0, 0, 0)
-
+export async function countColdOutreaches(agentId: string, since: string): Promise<number> {
   const { data, error } = await getSupabaseClient()
     .rpc('count_cold_outreaches', {
       p_agent_id: agentId,
-      p_since: todayStart.toISOString(),
+      p_since: since,
     })
 
   if (error) throw error
