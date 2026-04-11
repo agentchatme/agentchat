@@ -8,6 +8,7 @@ const envSchema = z.object({
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
   SENTRY_DSN: z.string().optional(),
+  REDIS_URL: z.string().optional(), // TCP Redis for pub/sub (ioredis). Optional — local-only delivery if unset.
 })
 
 function loadEnv() {

@@ -1,14 +1,8 @@
 import type { WsMessage } from '@agentchat/shared'
-import { getConnections } from './registry.js'
+import { publishToAgent } from './pubsub.js'
 
 export function sendToAgent(agentId: string, message: WsMessage) {
-  const connections = getConnections(agentId)
-  const payload = JSON.stringify(message)
-  for (const ws of connections) {
-    try {
-      ws.send(payload)
-    } catch {
-      // Connection might be dead — ignore, cleanup happens on close
-    }
-  }
+  // Publishes to Redis for fan-out across all servers.
+  // Falls back to local-only delivery if pub/sub is not configured.
+  publishToAgent(agentId, message)
 }

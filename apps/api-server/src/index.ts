@@ -12,6 +12,7 @@ import { webhookRoutes } from './routes/webhooks.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection } from './ws/handler.js'
+import { initPubSub } from './ws/pubsub.js'
 
 const app = new Hono()
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
@@ -69,6 +70,9 @@ app.route('/v1/conversations', conversationRoutes)
 app.route('/v1/contacts', contactRoutes)
 app.route('/v1/presence', presenceRoutes)
 app.route('/v1/webhooks', webhookRoutes)
+
+// Initialize Redis pub/sub for multi-server WebSocket fan-out
+initPubSub(process.env['REDIS_URL'])
 
 // Start server
 const port = Number(process.env['PORT']) || 3000
