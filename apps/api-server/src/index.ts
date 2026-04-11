@@ -2,7 +2,7 @@ import './env.js' // Validate env vars immediately — crash on missing credenti
 import { Hono } from 'hono'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { serve } from '@hono/node-server'
-import { authRoutes } from './routes/auth.js'
+import { registerRoutes } from './routes/register.js'
 import { agentRoutes } from './routes/agents.js'
 import { messageRoutes } from './routes/messages.js'
 import { conversationRoutes } from './routes/conversations.js'
@@ -24,7 +24,7 @@ app.onError(errorHandler)
 
 // Health check
 app.get('/', (c) => {
-  return c.json({ name: 'AgentChat API', version: '0.1.0', status: 'alive' })
+  return c.json({ name: 'AgentChat API', version: '0.2.0', status: 'alive' })
 })
 
 app.get('/v1/health', (c) => {
@@ -51,10 +51,9 @@ app.get(
         ws.raw?.addEventListener('close', onClose)
       },
       onMessage: (evt, ws) => {
-        // Handle client actions (typing, read acks, etc.)
         try {
           const data = JSON.parse(String(evt.data))
-          // Future: handle client actions here
+          // Future: handle client actions here (typing, read acks)
         } catch {
           // Invalid JSON — ignore
         }
@@ -64,7 +63,7 @@ app.get(
 )
 
 // Mount routes
-app.route('/v1/auth', authRoutes)
+app.route('/v1/register', registerRoutes)
 app.route('/v1/agents', agentRoutes)
 app.route('/v1/messages', messageRoutes)
 app.route('/v1/conversations', conversationRoutes)

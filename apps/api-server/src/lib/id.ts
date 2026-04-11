@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 
-type Prefix = 'agt' | 'msg' | 'conv' | 'grp' | 'whk' | 'rpt'
+type Prefix = 'agt' | 'msg' | 'conv' | 'grp' | 'whk' | 'rpt' | 'pnd'
 
 export function generateId(prefix: Prefix): string {
   const bytes = randomBytes(12)
