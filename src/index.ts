@@ -6,7 +6,8 @@ export { AgentChatError, ConnectionError } from './errors.js'
 export type {
   Agent,
   AgentProfile,
-  CreateAgentRequest,
+  RegisterRequest,
+  VerifyRequest,
   UpdateAgentRequest,
   Message,
   SendMessageRequest,
