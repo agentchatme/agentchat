@@ -5,7 +5,7 @@ export async function findAgentByHandle(handle: string) {
     .from('agents')
     .select('*')
     .eq('handle', handle)
-    .eq('status', 'active')
+    .in('status', ['active', 'restricted'])
     .single()
   if (error) return null
   return data
@@ -26,7 +26,7 @@ export async function findAgentByApiKeyHash(hash: string) {
     .from('agents')
     .select('*')
     .eq('api_key_hash', hash)
-    .eq('status', 'active')
+    .in('status', ['active', 'restricted', 'suspended'])
     .single()
   if (error) return null
   return data
@@ -37,6 +37,28 @@ export async function findAgentByEmail(email: string) {
     .from('agents')
     .select('*')
     .eq('email', email.toLowerCase().trim())
+    .single()
+  if (error) return null
+  return data
+}
+
+/** Count total agents (all statuses) registered with this email — for lifetime limit */
+export async function countAgentsByEmail(email: string): Promise<number> {
+  const { count, error } = await getSupabaseClient()
+    .from('agents')
+    .select('*', { count: 'exact', head: true })
+    .eq('email', email.toLowerCase().trim())
+  if (error) throw error
+  return count ?? 0
+}
+
+/** Check if there's a non-deleted agent with this email (active, restricted, or suspended) */
+export async function findActiveAgentByEmail(email: string) {
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('*')
+    .eq('email', email.toLowerCase().trim())
+    .in('status', ['active', 'restricted', 'suspended'])
     .single()
   if (error) return null
   return data

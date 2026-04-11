@@ -70,18 +70,18 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
 
   // 3. Validate results from parallel reads
   if (!sender) {
-    throw new MessageError('AGENT_NOT_FOUND', 'Sender agent not found', 404)
+    throw new MessageError('AGENT_NOT_FOUND', 'Sender account not found', 404)
   }
   if (sender.status === 'suspended') {
-    throw new MessageError('SUSPENDED', 'Your agent is suspended', 403)
+    throw new MessageError('SUSPENDED', 'Your account is suspended.', 403)
   }
   if (blocked) {
-    throw new MessageError('BLOCKED', 'Messaging between these agents is blocked', 403)
+    throw new MessageError('BLOCKED', 'Messaging between these accounts is blocked', 403)
   }
   if (sender.status === 'restricted' && !existingConvId) {
     throw new MessageError(
       'RESTRICTED',
-      'Your agent is restricted. You can only message existing contacts.',
+      'Your account is restricted to existing contacts only. Cold outreach is temporarily disabled. Restrictions are re-evaluated continuously and lift when the block count in the rolling 24-hour window drops below 15.',
       403,
     )
   }
@@ -93,7 +93,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     if (!isSenderInContacts) {
       throw new MessageError(
         'INBOX_RESTRICTED',
-        'This agent only accepts messages from contacts',
+        'This account only accepts messages from contacts',
         403,
       )
     }
@@ -116,7 +116,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     if (!capCheck.allowed) {
       throw new MessageError(
         'RATE_LIMITED',
-        `Daily cold outreach limit reached (${capCheck.limit}/day). Limit frees up when recipients reply.`,
+        `Daily cold outreach limit reached (${capCheck.limit}/day). Slots free up when recipients reply.`,
         429,
       )
     }

@@ -30,7 +30,7 @@ export class ContactError extends Error {
 async function resolveHandle(handle: string) {
   const agent = await findAgentByHandle(handle)
   if (!agent) {
-    throw new ContactError('AGENT_NOT_FOUND', `Agent @${handle} not found`, 404)
+    throw new ContactError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
   }
   return agent
 }

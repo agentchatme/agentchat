@@ -34,7 +34,7 @@ export async function getAgent(handle: string) {
   const agent = await findAgentByHandle(handle)
 
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', `Agent @${handle} not found`, 404)
+    throw new AgentError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
   }
 
   return {
@@ -48,15 +48,15 @@ export async function getAgent(handle: string) {
 
 export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: string) {
   if (id !== agentId) {
-    throw new AgentError('FORBIDDEN', 'You can only update your own agent', 403)
+    throw new AgentError('FORBIDDEN', 'You can only update your own account', 403)
   }
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Account not found', 404)
   }
   if (agent.status === 'suspended') {
-    throw new AgentError('FORBIDDEN', 'Cannot update a suspended agent', 403)
+    throw new AgentError('FORBIDDEN', 'Cannot update a suspended account', 403)
   }
 
   const updates: Record<string, unknown> = {}
@@ -86,12 +86,12 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
 export async function deleteAgent(id: string, agentId: string) {
   if (id !== agentId) {
-    throw new AgentError('FORBIDDEN', 'You can only delete your own agent', 403)
+    throw new AgentError('FORBIDDEN', 'You can only delete your own account', 403)
   }
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Account not found', 404)
   }
 
   const { error } = await getSupabaseClient()
@@ -109,7 +109,7 @@ export async function rotateApiKey(id: string, agentId: string) {
 
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
-    throw new AgentError('AGENT_NOT_FOUND', 'Agent not found', 404)
+    throw new AgentError('AGENT_NOT_FOUND', 'Account not found', 404)
   }
 
   const newApiKey = `ac_${randomBytes(32).toString('base64url')}`

@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { randomBytes, createHash } from 'node:crypto'
 import { RegisterRequest, VerifyRequest } from '@agentchat/shared'
 import { isValidHandle } from '@agentchat/shared'
-import { getSupabaseClient, findAgentByEmail, insertAgent } from '@agentchat/db'
+import { getSupabaseClient, findActiveAgentByEmail, countAgentsByEmail, insertAgent } from '@agentchat/db'
 import { isHandleAvailable } from '../services/agent.service.js'
 import { generateId } from '../lib/id.js'
 import { getRedis } from '../lib/redis.js'
@@ -43,18 +43,23 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
     return c.json({ code: 'INVALID_HANDLE', message: 'Handle is invalid or reserved' }, 400)
   }
 
-  // Check handle availability (includes soft-deleted agents) and email uniqueness in parallel
-  const [handleAvailable, existingEmail] = await Promise.all([
+  // Check handle availability, active email, and lifetime email count in parallel
+  const [handleAvailable, activeAgent, emailCount] = await Promise.all([
     isHandleAvailable(handle),
-    findAgentByEmail(email),
+    findActiveAgentByEmail(email),
+    countAgentsByEmail(email),
   ])
 
   if (!handleAvailable) {
     return c.json({ code: 'HANDLE_TAKEN', message: `Handle @${handle} is already taken` }, 409)
   }
 
-  if (existingEmail) {
-    return c.json({ code: 'EMAIL_TAKEN', message: 'An agent is already registered with this email' }, 409)
+  if (activeAgent) {
+    return c.json({ code: 'EMAIL_TAKEN', message: 'An account is already registered with this email. Delete it first to create a new one.' }, 409)
+  }
+
+  if (emailCount >= 3) {
+    return c.json({ code: 'EMAIL_EXHAUSTED', message: 'This email has reached the maximum of 3 account registrations.' }, 409)
   }
 
   // Store pending registration in Redis BEFORE sending OTP
@@ -145,7 +150,7 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
     const msg = e instanceof Error ? e.message : ''
     if (msg.includes('unique') || msg.includes('duplicate') || msg.includes('agents_email_unique') || msg.includes('agents_handle_key')) {
       if (msg.includes('email')) {
-        return c.json({ code: 'EMAIL_TAKEN', message: 'An agent was already registered with this email' }, 409)
+        return c.json({ code: 'EMAIL_TAKEN', message: 'An account was already registered with this email' }, 409)
       }
       return c.json({ code: 'HANDLE_TAKEN', message: `Handle @${pending.handle} is already taken` }, 409)
     }

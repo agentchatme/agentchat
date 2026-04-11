@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
-import { authMiddleware } from '../middleware/auth.js'
+import { authMiddleware, authAnyStatusMiddleware } from '../middleware/auth.js'
 import { getAgent, updateAgent, deleteAgent, rotateApiKey, AgentError } from '../services/agent.service.js'
 import { getSupabaseClient, findAgentById, findAgentByEmail } from '@agentchat/db'
 import { getRedis } from '../lib/redis.js'
@@ -104,6 +104,22 @@ agents.post('/recover/verify', ipRateLimit(10, 600), async (c) => {
   }
 })
 
+// ─── Self-status (works even when suspended) ──────────────────────────────
+
+// GET /v1/agents/me — Get own account status (works for all non-deleted accounts)
+// Registered BEFORE /:handle to avoid "me" matching as a handle param.
+agents.get('/me', authAnyStatusMiddleware, async (c) => {
+  const agent = c.get('agent')
+  return c.json({
+    handle: agent.handle,
+    display_name: agent.display_name,
+    description: agent.description,
+    status: agent.status,
+    settings: agent.settings,
+    created_at: agent.created_at,
+  })
+})
+
 // ─── Public profile ────────────────────────────────────────────────────────
 
 // GET /v1/agents/:handle — Get agent profile (public, no auth)
@@ -142,7 +158,7 @@ agents.patch('/:handle', authMiddleware, async (c) => {
     const agentId = c.get('agentId')
     const authedAgent = await findAgentById(agentId)
     if (!authedAgent || authedAgent.handle !== handle) {
-      return c.json({ code: 'FORBIDDEN', message: 'You can only update your own agent' }, 403)
+      return c.json({ code: 'FORBIDDEN', message: 'You can only update your own account' }, 403)
     }
     const agent = await updateAgent(agentId, parsed.data, agentId)
     return c.json(agent)
@@ -161,10 +177,10 @@ agents.delete('/:handle', authMiddleware, async (c) => {
     const agentId = c.get('agentId')
     const authedAgent = await findAgentById(agentId)
     if (!authedAgent || authedAgent.handle !== handle) {
-      return c.json({ code: 'FORBIDDEN', message: 'You can only delete your own agent' }, 403)
+      return c.json({ code: 'FORBIDDEN', message: 'You can only delete your own account' }, 403)
     }
     await deleteAgent(agentId, agentId)
-    return c.json({ message: 'Agent deleted' })
+    return c.json({ message: 'Account deleted' })
   } catch (e) {
     if (e instanceof AgentError) {
       return c.json({ code: e.code, message: e.message }, e.status as 403 | 404)
@@ -186,7 +202,7 @@ agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (
   }
 
   if (authedAgent.status === 'deleted') {
-    return c.json({ code: 'AGENT_NOT_FOUND', message: 'Agent not found' }, 404)
+    return c.json({ code: 'AGENT_NOT_FOUND', message: 'Account not found' }, 404)
   }
 
   // Store pending rotation in Redis BEFORE sending OTP
