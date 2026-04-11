@@ -248,12 +248,15 @@ export async function markAsRead(messageId: string, agentId: string) {
   return message
 }
 
-export async function syncUndelivered(agentId: string) {
-  const messages = await getUndeliveredMessages(agentId)
+const SYNC_BATCH_SIZE = 200
 
-  for (const msg of messages) {
-    await updateMessageStatus(msg.id, 'delivered').catch(() => {})
-  }
+export async function syncUndelivered(agentId: string) {
+  const messages = await getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
+
+  // Batch mark as delivered (don't await each one sequentially)
+  await Promise.allSettled(
+    messages.map((msg) => updateMessageStatus(msg.id, 'delivered'))
+  )
 
   return messages
 }

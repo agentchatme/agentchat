@@ -107,3 +107,17 @@ function deliverLocally(agentId: string, message: WsMessage) {
 export function isPubSubEnabled(): boolean {
   return pub !== null
 }
+
+/** Disconnect Redis pub/sub — called during graceful shutdown */
+export function shutdownPubSub() {
+  if (sub) {
+    sub.unsubscribe().catch(() => {})
+    sub.disconnect()
+    sub = null
+  }
+  if (pub) {
+    pub.disconnect()
+    pub = null
+  }
+  console.log('[pubsub] Disconnected')
+}

@@ -65,7 +65,7 @@ export async function updateMessageStatus(
   return data
 }
 
-export async function getUndeliveredMessages(agentId: string) {
+export async function getUndeliveredMessages(agentId: string, limit = 200) {
   // Get all conversations this agent is part of
   const { data: participations, error: partError } = await getSupabaseClient()
     .from('conversation_participants')
@@ -77,7 +77,7 @@ export async function getUndeliveredMessages(agentId: string) {
 
   const convIds = participations.map((p) => p.conversation_id)
 
-  // Get all stored (undelivered) messages in those conversations, NOT sent by this agent
+  // Get oldest undelivered messages first, capped to prevent overload
   const { data, error } = await getSupabaseClient()
     .from('messages')
     .select('*')
@@ -85,6 +85,7 @@ export async function getUndeliveredMessages(agentId: string) {
     .neq('sender_id', agentId)
     .eq('status', 'stored')
     .order('created_at', { ascending: true })
+    .limit(limit)
 
   if (error) throw error
   return data

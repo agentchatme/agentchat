@@ -6,6 +6,7 @@ import {
   getWebhookById,
   deleteWebhook,
   getWebhooksForEvent,
+  updateMessageStatus,
 } from '@agentchat/db'
 import type { WebhookEvent } from '@agentchat/shared'
 
@@ -87,12 +88,22 @@ export async function fireWebhooks(
     data,
   }
 
+  // Extract message ID for status tracking (only for message.new events)
+  const messageId = event === 'message.new' ? (data.id as string | undefined) : undefined
+
   // Fire all webhooks concurrently (non-blocking)
   for (const webhook of webhooks) {
-    deliverWithRetry(webhook.url, webhook.secret, payload).catch(() => {
-      // All retries exhausted — silently fail
-      // Message is safe in DB, agent gets it on next sync
-    })
+    deliverWithRetry(webhook.url, webhook.secret, payload)
+      .then((success) => {
+        // Mark message as "delivered" on first successful webhook delivery
+        if (success && messageId) {
+          updateMessageStatus(messageId, 'delivered').catch(() => {})
+        }
+      })
+      .catch(() => {
+        // All retries exhausted — silently fail
+        // Message is safe in DB, agent gets it on next sync
+      })
   }
 }
 
@@ -101,7 +112,7 @@ async function deliverWithRetry(
   secret: string,
   payload: Record<string, unknown>,
   attempt = 0,
-): Promise<void> {
+): Promise<boolean> {
   const body = JSON.stringify(payload)
 
   // HMAC signature so receiver can verify authenticity
@@ -119,17 +130,20 @@ async function deliverWithRetry(
       signal: AbortSignal.timeout(10_000), // 10s timeout per attempt
     })
 
-    if (!response.ok && attempt < MAX_RETRIES) {
+    if (response.ok) return true
+
+    if (attempt < MAX_RETRIES) {
       await delay(RETRY_DELAYS[attempt]!)
       return deliverWithRetry(url, secret, payload, attempt + 1)
     }
+    return false
   } catch {
     // Network error or timeout
     if (attempt < MAX_RETRIES) {
       await delay(RETRY_DELAYS[attempt]!)
       return deliverWithRetry(url, secret, payload, attempt + 1)
     }
-    // All retries exhausted
+    return false
   }
 }
 

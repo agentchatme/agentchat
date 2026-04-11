@@ -26,3 +26,17 @@ export function getConnections(agentId: string): Set<WSContext> {
 export function isOnline(agentId: string): boolean {
   return (connections.get(agentId)?.size ?? 0) > 0
 }
+
+/** Close all WebSocket connections — used during graceful shutdown */
+export function closeAllConnections(code: number, reason: string) {
+  for (const [, agentConns] of connections) {
+    for (const ws of agentConns) {
+      try {
+        ws.close(code, reason)
+      } catch {
+        // Already closed
+      }
+    }
+  }
+  connections.clear()
+}
