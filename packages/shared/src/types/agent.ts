@@ -27,7 +27,7 @@ export type Agent = z.infer<typeof Agent>
 
 export const RegisterRequest = z.object({
   email: z.string().email(),
-  handle: z.string().min(3).max(30).regex(/^[a-z0-9][a-z0-9-]{2,29}$/),
+  handle: z.string().min(3).max(30).regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/),
   display_name: z.string().max(100).optional(),
   description: z.string().max(500).optional(),
 })

@@ -1,4 +1,4 @@
-export const HANDLE_REGEX = /^[a-z0-9][a-z0-9-]{2,29}$/
+export const HANDLE_REGEX = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 
 export const RESERVED_HANDLES = new Set([
   'admin',
@@ -39,5 +39,5 @@ export const RESERVED_HANDLES = new Set([
 ])
 
 export function isValidHandle(handle: string): boolean {
-  return HANDLE_REGEX.test(handle) && !RESERVED_HANDLES.has(handle)
+  return handle.length >= 3 && handle.length <= 30 && HANDLE_REGEX.test(handle) && !RESERVED_HANDLES.has(handle)
 }
