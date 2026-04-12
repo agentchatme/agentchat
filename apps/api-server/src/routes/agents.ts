@@ -3,6 +3,13 @@ import { UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
 import { authMiddleware, authAnyStatusMiddleware } from '../middleware/auth.js'
 import { getAgent, updateAgent, deleteAgent, rotateApiKey, AgentError } from '../services/agent.service.js'
 import { getSupabaseClient, findAgentById, findActiveAgentByEmail } from '@agentchat/db'
+import {
+  claimOtpSendSlot,
+  releaseOtpSendSlot,
+  registerOtpVerifyAttempt,
+  clearOtpAttempts,
+  OtpRateError,
+} from '../services/otp.service.js'
 import { getRedis } from '../lib/redis.js'
 import { generateId } from '../lib/id.js'
 import { ipRateLimit } from '../middleware/rate-limit.js'
@@ -36,6 +43,20 @@ agents.post('/recover', ipRateLimit(3, 3600), async (c) => {
     return c.json({ message: genericMsg })
   }
 
+  // Enforce cooldown + hourly cap on this email. We SWALLOW OtpRateError
+  // here and return the generic success message — surfacing a "wait 60s"
+  // response would let an attacker distinguish registered-but-rate-limited
+  // from unregistered, defeating the whole reason recover uses a generic
+  // response shape.
+  try {
+    await claimOtpSendSlot(normalizedEmail)
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      return c.json({ message: genericMsg })
+    }
+    throw e
+  }
+
   // Store pending recovery in Redis BEFORE sending OTP
   const pendingId = generateId('pnd')
   const redis = getRedis()
@@ -46,6 +67,7 @@ agents.post('/recover', ipRateLimit(3, 3600), async (c) => {
 
   if (error) {
     await redis.del(`recover:${pendingId}`).catch(() => {})
+    await releaseOtpSendSlot(normalizedEmail)
     // Still return generic success to avoid leaking info
     return c.json({ message: genericMsg })
   }
@@ -77,6 +99,18 @@ agents.post('/recover/verify', ipRateLimit(10, 600), async (c) => {
 
   const pending = typeof raw === 'string' ? JSON.parse(raw) : raw
 
+  // Cap verify attempts against this pending_id. On overflow the pending
+  // is burned so the attacker can't keep probing the 6-digit code space.
+  try {
+    await registerOtpVerifyAttempt(pending_id, 'recover:')
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      if (e.retryAfterSeconds) c.header('Retry-After', String(e.retryAfterSeconds))
+      return c.json({ code: e.code, message: e.message }, 429)
+    }
+    throw e
+  }
+
   // Verify OTP
   const supabase = getSupabaseClient()
   const { error: verifyError } = await supabase.auth.verifyOtp({
@@ -91,6 +125,7 @@ agents.post('/recover/verify', ipRateLimit(10, 600), async (c) => {
 
   // Delete pending immediately to prevent replay
   await redis.del(`recover:${pending_id}`)
+  await clearOtpAttempts(pending_id)
 
   // Generate new API key (this is effectively a forced rotation)
   try {
@@ -205,6 +240,19 @@ agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (
     return c.json({ code: 'AGENT_NOT_FOUND', message: 'Account not found' }, 404)
   }
 
+  // Rotate-key is authenticated, so surfacing the rate-limit directly is
+  // fine — there's no enumeration risk. Claim enforces the 60s cooldown
+  // and 20/hr cap against the agent's registered email address.
+  try {
+    await claimOtpSendSlot(authedAgent.email)
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      if (e.retryAfterSeconds) c.header('Retry-After', String(e.retryAfterSeconds))
+      return c.json({ code: e.code, message: e.message }, 429)
+    }
+    throw e
+  }
+
   // Store pending rotation in Redis BEFORE sending OTP
   const pendingId = generateId('pnd')
   const redis = getRedis()
@@ -215,6 +263,7 @@ agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (
 
   if (error) {
     await redis.del(`rotate:${pendingId}`).catch(() => {})
+    await releaseOtpSendSlot(authedAgent.email)
     return c.json({ code: 'OTP_FAILED', message: 'Failed to send verification code' }, 500)
   }
 
@@ -257,6 +306,18 @@ agents.post('/:handle/rotate-key/verify', authMiddleware, async (c) => {
     return c.json({ code: 'FORBIDDEN', message: 'Invalid rotation request' }, 403)
   }
 
+  // Cap brute-force attempts against this pending_id. Scoped with the
+  // 'rotate:' prefix so the burn-on-overflow evicts the right key.
+  try {
+    await registerOtpVerifyAttempt(pending_id, 'rotate:')
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      if (e.retryAfterSeconds) c.header('Retry-After', String(e.retryAfterSeconds))
+      return c.json({ code: e.code, message: e.message }, 429)
+    }
+    throw e
+  }
+
   // Verify OTP
   const supabase = getSupabaseClient()
   const { error: verifyError } = await supabase.auth.verifyOtp({
@@ -271,6 +332,7 @@ agents.post('/:handle/rotate-key/verify', authMiddleware, async (c) => {
 
   // Delete pending immediately to prevent replay
   await redis.del(`rotate:${pending_id}`)
+  await clearOtpAttempts(pending_id)
 
   try {
     const result = await rotateApiKey(agentId, agentId)

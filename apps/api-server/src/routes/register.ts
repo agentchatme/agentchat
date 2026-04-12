@@ -4,6 +4,13 @@ import { RegisterRequest, VerifyRequest } from '@agentchat/shared'
 import { isValidHandle } from '@agentchat/shared'
 import { getSupabaseClient, findActiveAgentByEmail, countAgentsByEmail, insertAgent } from '@agentchat/db'
 import { isHandleAvailable } from '../services/agent.service.js'
+import {
+  claimOtpSendSlot,
+  releaseOtpSendSlot,
+  registerOtpVerifyAttempt,
+  clearOtpAttempts,
+  OtpRateError,
+} from '../services/otp.service.js'
 import { generateId } from '../lib/id.js'
 import { getRedis } from '../lib/redis.js'
 import { ipRateLimit } from '../middleware/rate-limit.js'
@@ -62,6 +69,19 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
     return c.json({ code: 'EMAIL_EXHAUSTED', message: 'This email has reached the maximum of 3 account registrations.' }, 409)
   }
 
+  // Claim an OTP send slot BEFORE touching Redis or Supabase. This enforces
+  // the 60s per-email cooldown and the 20/hr per-email cap. Rejecting here
+  // means we never write a pending record we'd only throw away.
+  try {
+    await claimOtpSendSlot(email)
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      if (e.retryAfterSeconds) c.header('Retry-After', String(e.retryAfterSeconds))
+      return c.json({ code: e.code, message: e.message }, 429)
+    }
+    throw e
+  }
+
   // Store pending registration in Redis BEFORE sending OTP
   // (if Redis fails, we don't waste an OTP code)
   const pendingId = generateId('pnd')
@@ -75,8 +95,10 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
   const { error } = await supabase.auth.signInWithOtp({ email })
 
   if (error) {
-    // Clean up pending since OTP failed
+    // Clean up pending since OTP failed and release the claimed slot so
+    // the user isn't locked out of retrying for 60s over our flakiness.
     await redis.del(`pending:${pendingId}`).catch(() => {})
+    await releaseOtpSendSlot(email)
     return c.json({ code: 'OTP_FAILED', message: 'Failed to send verification code' }, 500)
   }
 
@@ -109,6 +131,19 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
 
   const pending: PendingRegistration = typeof raw === 'string' ? JSON.parse(raw) : raw
 
+  // Register the verify attempt BEFORE calling Supabase. The 5-attempt cap
+  // burns the pending key on overflow so an attacker can't keep probing the
+  // 6-digit code space. Supabase itself has no per-pending_id counter.
+  try {
+    await registerOtpVerifyAttempt(pending_id, 'pending:')
+  } catch (e) {
+    if (e instanceof OtpRateError) {
+      if (e.retryAfterSeconds) c.header('Retry-After', String(e.retryAfterSeconds))
+      return c.json({ code: e.code, message: e.message }, 429)
+    }
+    throw e
+  }
+
   // Verify OTP via Supabase Auth
   const supabase = getSupabaseClient()
   const { error: verifyError } = await supabase.auth.verifyOtp({
@@ -124,6 +159,7 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
   // Delete pending IMMEDIATELY after OTP verification to prevent replay.
   // If anything below fails, the user starts over (safe — no agent was created).
   await redis.del(`pending:${pending_id}`)
+  await clearOtpAttempts(pending_id)
 
   // Create agent — the DB UNIQUE constraints on handle and email are the final
   // safety net against race conditions. If two verify calls race past the OTP check,
