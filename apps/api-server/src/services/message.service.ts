@@ -3,7 +3,7 @@ import {
   findAgentByHandle,
   findAgentById,
   findDirectConversation,
-  insertMessage,
+  atomicSendMessage,
   getConversationMessages,
   updateMessageStatus,
   getUndeliveredMessages,
@@ -11,7 +11,6 @@ import {
   isBlockedEither,
   isContact,
   findOrCreateDirectConversation,
-  updateConversationLastMessage,
   isParticipant,
   getConversationParticipants,
   getConversation,
@@ -146,35 +145,37 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     }
   }
 
-  // 9. Store message + update timestamp in parallel (both only need conversationId)
+  // 9. Store message via atomic RPC — idempotency fast-path, seq allocation,
+  //    and last_message_at update all happen inside send_message_atomic.
   const messageId = generateId('msg')
-  const [message] = await Promise.all([
-    insertMessage({
-      id: messageId,
-      conversation_id: conversationId,
-      sender_id: senderId,
-      type: req.type ?? 'text',
-      content: req.content as Record<string, unknown>,
-      metadata: req.metadata as Record<string, unknown> | undefined,
-      status: 'stored',
-    }),
-    updateConversationLastMessage(conversationId),
-  ])
+  const message = await atomicSendMessage({
+    id: messageId,
+    conversation_id: conversationId,
+    sender_id: senderId,
+    client_msg_id: req.client_msg_id,
+    type: req.type ?? 'text',
+    content: req.content as Record<string, unknown>,
+    metadata: req.metadata as Record<string, unknown> | undefined,
+  })
 
   // Map sender_id to sender handle BEFORE any external delivery
   const publicMessage = toPublicMessage(message, sender.handle)
 
-  // 10. ASYNC PUSH — try real-time delivery (non-blocking, best-effort)
-  pushToRecipient(recipient.id, publicMessage).catch(() => {
-    // Push failed — that's fine, message is safe in DB
-  })
+  // 10. ASYNC PUSH — only fire on first write, not on idempotent replay.
+  //    Replaying a delivered message would double-deliver to the recipient.
+  if (!message.is_replay) {
+    pushToRecipient(recipient.id, publicMessage).catch(() => {
+      // Push failed — that's fine, message is safe in DB
+    })
+  }
 
-  return publicMessage
+  return { message: publicMessage, isReplay: message.is_replay }
 }
 
-/** Strip internal sender_id, replace with sender handle for API responses */
+/** Strip internal sender_id (and internal is_replay flag), replace sender_id
+ *  with the public sender handle. */
 function toPublicMessage(msg: Record<string, unknown>, senderHandle: string) {
-  const { sender_id: _, ...rest } = msg
+  const { sender_id: _sender, is_replay: _replay, ...rest } = msg
   return { ...rest, sender: senderHandle }
 }
 
@@ -210,14 +211,14 @@ export async function getMessages(
   agentId: string,
   conversationId: string,
   limit = 50,
-  before?: string,
+  beforeSeq?: number,
 ) {
   const participant = await isParticipant(conversationId, agentId)
   if (!participant) {
     throw new MessageError('FORBIDDEN', 'You are not a participant in this conversation', 403)
   }
 
-  const messages = await getConversationMessages(conversationId, limit, before)
+  const messages = await getConversationMessages(conversationId, limit, beforeSeq)
   return mapSenderHandles(messages)
 }
 

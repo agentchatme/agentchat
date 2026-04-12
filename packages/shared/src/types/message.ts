@@ -22,6 +22,8 @@ export const Message = z.object({
   id: z.string(),
   conversation_id: z.string(),
   sender: z.string(),
+  client_msg_id: z.string(),
+  seq: z.number().int().nonnegative(),
   type: MessageType,
   content: MessageContent,
   metadata: z.record(z.unknown()).default({}),
@@ -34,6 +36,10 @@ export type Message = z.infer<typeof Message>
 
 export const SendMessageRequest = z.object({
   to: z.string(),
+  // Sender-provided idempotency key. Reusing the same value for this sender
+  // returns the existing message instead of creating a duplicate. Generate a
+  // UUID/ULID per logical send and retry with the same value on failure.
+  client_msg_id: z.string().min(1).max(128),
   type: MessageType.default('text'),
   content: MessageContent,
   metadata: z.record(z.unknown()).optional(),

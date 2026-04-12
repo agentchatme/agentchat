@@ -27,8 +27,9 @@ messages.post('/', authMiddleware, async (c) => {
 
   try {
     const agentId = c.get('agentId')
-    const message = await sendMessage(agentId, parsed.data)
-    return c.json(message, 201)
+    const { message, isReplay } = await sendMessage(agentId, parsed.data)
+    // 200 on idempotent replay (no new side effects), 201 on first write.
+    return c.json(message, isReplay ? 200 : 201)
   } catch (e) {
     if (e instanceof MessageError) {
       const headers: Record<string, string> = {}
@@ -55,12 +56,22 @@ messages.get('/sync', authMiddleware, async (c) => {
 // GET /v1/messages/:conversation_id — Get conversation history (agent auth)
 messages.get('/:conversation_id', authMiddleware, async (c) => {
   const conversationId = c.req.param('conversation_id')
-  const limit = Number(c.req.query('limit') ?? 50)
-  const before = c.req.query('before') ?? undefined
+  const limitRaw = Number(c.req.query('limit') ?? 50)
+  const limit = Math.min(Math.max(limitRaw, 1), 200)
+  const beforeSeqRaw = c.req.query('before_seq')
+  const beforeSeq =
+    beforeSeqRaw !== undefined && beforeSeqRaw !== '' ? Number(beforeSeqRaw) : undefined
+
+  if (beforeSeq !== undefined && (!Number.isInteger(beforeSeq) || beforeSeq < 0)) {
+    return c.json(
+      { code: 'VALIDATION_ERROR', message: 'before_seq must be a non-negative integer' },
+      400,
+    )
+  }
 
   try {
     const agentId = c.get('agentId')
-    const msgs = await getMessages(agentId, conversationId, limit, before)
+    const msgs = await getMessages(agentId, conversationId, limit, beforeSeq)
     return c.json(msgs)
   } catch (e) {
     if (e instanceof MessageError) {

@@ -1,41 +1,70 @@
 import { getSupabaseClient } from '../client.js'
 
-export async function insertMessage(message: {
+/**
+ * Atomic idempotent message insert. Calls the SQL function
+ * send_message_atomic which:
+ *   1. Fast-paths on (sender_id, client_msg_id) — returns the existing row
+ *      with is_replay=true if this exact send has already happened.
+ *   2. Atomically bumps conversations.next_seq and assigns the message seq.
+ *   3. Recovers from the concurrent-insert race via a unique_violation catch.
+ *
+ * Return value includes `is_replay` so the route can map to 200 (replay) vs
+ * 201 (new) and callers can skip the push fan-out on replays.
+ */
+export async function atomicSendMessage(params: {
   id: string
   conversation_id: string
   sender_id: string
+  client_msg_id: string
   type: string
   content: Record<string, unknown>
   metadata?: Record<string, unknown>
-  status?: string
 }) {
-  const { data, error } = await getSupabaseClient()
-    .from('messages')
-    .insert({
-      ...message,
-      status: message.status ?? 'stored',
-    })
-    .select()
-    .single()
+  const { data, error } = await getSupabaseClient().rpc('send_message_atomic', {
+    p_message_id: params.id,
+    p_conversation_id: params.conversation_id,
+    p_sender_id: params.sender_id,
+    p_client_msg_id: params.client_msg_id,
+    p_type: params.type,
+    p_content: params.content,
+    p_metadata: params.metadata ?? {},
+  })
 
   if (error) throw error
-  return data
+
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) throw new Error('send_message_atomic returned no row')
+  return row as {
+    id: string
+    conversation_id: string
+    sender_id: string
+    client_msg_id: string
+    seq: number
+    type: string
+    content: Record<string, unknown>
+    metadata: Record<string, unknown>
+    status: string
+    created_at: string
+    delivered_at: string | null
+    read_at: string | null
+    is_replay: boolean
+  }
 }
 
 export async function getConversationMessages(
   conversationId: string,
   limit = 50,
-  before?: string,
+  beforeSeq?: number,
 ) {
   let query = getSupabaseClient()
     .from('messages')
     .select('*')
     .eq('conversation_id', conversationId)
-    .order('created_at', { ascending: false })
+    .order('seq', { ascending: false })
     .limit(limit)
 
-  if (before) {
-    query = query.lt('created_at', before)
+  if (beforeSeq !== undefined) {
+    query = query.lt('seq', beforeSeq)
   }
 
   const { data, error } = await query

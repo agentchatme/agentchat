@@ -37,8 +37,43 @@ export function ipRateLimit(maxRequests: number, windowSecs: number) {
   })
 }
 
-export const rateLimitMiddleware = createMiddleware(async (c, next) => {
-  // Rate limiting will be implemented with trust-score-based limits
-  // For now, pass through
-  await next()
-})
+/**
+ * Per-key rate limiter for arbitrary identifiers (e.g., email, agent_id).
+ * Used alongside ipRateLimit to enforce per-subject caps on OTP requests, etc.
+ */
+export function keyRateLimit(
+  keyPrefix: string,
+  maxRequests: number,
+  windowSecs: number,
+  keyFn: (c: Parameters<Parameters<typeof createMiddleware>[0]>[0]) => Promise<string | null> | string | null,
+) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return createMiddleware(async (c, next): Promise<any> => {
+    const subject = await keyFn(c)
+    if (!subject) {
+      await next()
+      return
+    }
+
+    const key = `rl:${keyPrefix}:${subject}:${Math.floor(Date.now() / (windowSecs * 1000))}`
+
+    try {
+      const redis = getRedis()
+      const current = await redis.incr(key)
+      if (current === 1) {
+        await redis.expire(key, windowSecs + 1)
+      }
+
+      if (current > maxRequests) {
+        return c.json(
+          { code: 'RATE_LIMITED', message: `Too many requests. Try again in ${windowSecs} seconds.` },
+          429,
+        )
+      }
+    } catch {
+      // Redis down — fail open
+    }
+
+    await next()
+  })
+}
