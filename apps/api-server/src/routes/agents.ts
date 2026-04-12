@@ -66,6 +66,7 @@ agents.post('/recover', ipRateLimit(3, 3600), async (c) => {
   const { error } = await supabase.auth.signInWithOtp({ email: normalizedEmail })
 
   if (error) {
+    console.error('[recover] signInWithOtp failed:', error.message, error.code, error.status)
     await redis.del(`recover:${pendingId}`).catch(() => {})
     await releaseOtpSendSlot(normalizedEmail)
     // Still return generic success to avoid leaking info
@@ -262,6 +263,7 @@ agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (
   const { error } = await supabase.auth.signInWithOtp({ email: authedAgent.email })
 
   if (error) {
+    console.error('[rotate-key] signInWithOtp failed:', error.message, error.code, error.status)
     await redis.del(`rotate:${pendingId}`).catch(() => {})
     await releaseOtpSendSlot(authedAgent.email)
     return c.json({ code: 'OTP_FAILED', message: 'Failed to send verification code' }, 500)

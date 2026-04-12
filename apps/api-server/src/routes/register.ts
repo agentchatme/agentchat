@@ -95,6 +95,7 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
   const { error } = await supabase.auth.signInWithOtp({ email })
 
   if (error) {
+    console.error('[register] signInWithOtp failed:', error.message, error.code, error.status)
     // Clean up pending since OTP failed and release the claimed slot so
     // the user isn't locked out of retrying for 60s over our flakiness.
     await redis.del(`pending:${pendingId}`).catch(() => {})
