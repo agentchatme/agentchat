@@ -11,6 +11,24 @@ import type {
 } from '@agentchat/shared'
 import { AgentChatError } from './errors.js'
 
+function generateClientMsgId(): string {
+  // Uses the standard Web Crypto API — supported in Node 14.17+ and every
+  // modern browser. Falls back to a hex-random string for exotic runtimes.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const cryptoObj: any = (globalThis as any).crypto
+  if (cryptoObj?.randomUUID) return cryptoObj.randomUUID() as string
+  if (cryptoObj?.getRandomValues) {
+    const bytes = new Uint8Array(16)
+    cryptoObj.getRandomValues(bytes)
+    let hex = ''
+    for (const b of bytes) hex += b.toString(16).padStart(2, '0')
+    return hex
+  }
+  // Last-resort fallback — not cryptographically strong, but idempotency
+  // keys only need to be unique per sender, not unguessable.
+  return `cmsg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+}
+
 export interface AgentChatClientOptions {
   apiKey: string
   baseUrl?: string
@@ -232,12 +250,32 @@ export class AgentChatClient {
 
   // --- Messages ---
 
-  async sendMessage(req: SendMessageRequest) {
-    return this.request<Message>('POST', '/v1/messages', req)
+  /**
+   * Send a message. Idempotent: retrying with the same `client_msg_id`
+   * returns the existing message instead of creating a duplicate. If
+   * `client_msg_id` is omitted the SDK generates a UUID — safe for
+   * fire-and-forget, but you must reuse the same value on manual retries
+   * for the guarantee to hold.
+   */
+  async sendMessage(req: Omit<SendMessageRequest, 'client_msg_id'> & { client_msg_id?: string }) {
+    const body: SendMessageRequest = {
+      ...req,
+      client_msg_id: req.client_msg_id ?? generateClientMsgId(),
+    }
+    return this.request<Message>('POST', '/v1/messages', body)
   }
 
-  async getMessages(conversationId: string, limit = 50) {
-    return this.request<Message[]>('GET', `/v1/messages/${conversationId}?limit=${limit}`)
+  async getMessages(
+    conversationId: string,
+    options?: { limit?: number; beforeSeq?: number },
+  ) {
+    const params = new URLSearchParams()
+    params.set('limit', String(options?.limit ?? 50))
+    if (options?.beforeSeq !== undefined) params.set('before_seq', String(options.beforeSeq))
+    return this.request<Message[]>(
+      'GET',
+      `/v1/messages/${encodeURIComponent(conversationId)}?${params.toString()}`,
+    )
   }
 
   // --- Conversations ---
