@@ -16,6 +16,7 @@ import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
 import { initPubSub, shutdownPubSub } from './ws/pubsub.js'
 import { closeAllConnections } from './ws/registry.js'
+import { startWebhookWorker, stopWebhookWorker } from './services/webhook-worker.js'
 
 const app = new Hono()
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
@@ -183,6 +184,11 @@ app.route('/v1/directory', directoryRoutes)
 // Initialize Redis pub/sub for multi-server WebSocket fan-out
 initPubSub(process.env['REDIS_URL'])
 
+// Start the durable webhook-delivery worker. It polls webhook_deliveries
+// on an interval and uses FOR UPDATE SKIP LOCKED so multi-server deploys
+// don't double-process the same row.
+startWebhookWorker()
+
 // Start server
 const port = Number(process.env['PORT']) || 3000
 console.log(`AgentChat API running on port ${port}`)
@@ -204,7 +210,13 @@ function gracefulShutdown(signal: string) {
   // 3. Close all WebSocket connections with a clean code
   closeAllConnections(1001, 'Server shutting down')
 
-  // 4. Disconnect Redis pub/sub
+  // 4. Stop the webhook worker polling loop. Any in-flight fetches will
+  //    complete within their 10s timeout; rows claimed but not finalized
+  //    before shutdown will be reclaimed by the next worker after the 60s
+  //    stale-delivering cutoff in claim_webhook_deliveries.
+  stopWebhookWorker()
+
+  // 5. Disconnect Redis pub/sub
   shutdownPubSub()
 
   // 5. Give in-flight requests time to finish, then force exit

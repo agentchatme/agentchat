@@ -1,4 +1,4 @@
-import { randomBytes, createHmac } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { generateId } from '../lib/id.js'
 import {
   createWebhook,
@@ -6,12 +6,9 @@ import {
   getWebhookById,
   deleteWebhook,
   getWebhooksForEvent,
-  updateDeliveryStatus,
+  enqueueWebhookDelivery,
 } from '@agentchat/db'
 import type { WebhookEvent } from '@agentchat/shared'
-
-const MAX_RETRIES = 3
-const RETRY_DELAYS = [1000, 5000, 15000] // 1s, 5s, 15s
 
 export class WebhookError extends Error {
   code: string
@@ -73,8 +70,16 @@ export async function removeWebhook(id: string, agentId: string) {
 }
 
 /**
- * Fire webhooks for a specific event on a specific agent.
- * This is best-effort with retries — failures don't affect message delivery.
+ * Enqueue webhook deliveries for a specific event on a specific agent.
+ *
+ * Inserts one row per matching webhook into webhook_deliveries — the
+ * background worker (see webhook-worker.ts) picks them up, fires the
+ * actual HTTP request, and handles retries with exponential backoff.
+ *
+ * We keep the function named fireWebhooks to preserve the call sites'
+ * semantics — from the caller's perspective, "fire" still means "this
+ * event will be delivered eventually." The fan-out just happens via a
+ * durable queue now, so a restart mid-delivery doesn't drop events.
  */
 export async function fireWebhooks(
   agentId: string,
@@ -90,66 +95,25 @@ export async function fireWebhooks(
     data,
   }
 
-  // Extract message ID for delivery tracking (only for message.new events).
-  // agentId here is the recipient whose envelope we're marking delivered.
-  const messageId = event === 'message.new' ? (data.id as string | undefined) : undefined
-
-  // Fire all webhooks concurrently (non-blocking)
-  for (const webhook of webhooks) {
-    deliverWithRetry(webhook.url, webhook.secret, payload)
-      .then((success) => {
-        // Mark this recipient's delivery envelope as delivered on first success.
-        if (success && messageId) {
-          updateDeliveryStatus(messageId, agentId, 'delivered').catch(() => {})
-        }
-      })
-      .catch(() => {
-        // All retries exhausted — silently fail
-        // Message is safe in DB, agent gets it on next sync
-      })
-  }
-}
-
-async function deliverWithRetry(
-  url: string,
-  secret: string,
-  payload: Record<string, unknown>,
-  attempt = 0,
-): Promise<boolean> {
-  const body = JSON.stringify(payload)
-
-  // HMAC signature so receiver can verify authenticity
-  const signature = createHmac('sha256', secret).update(body).digest('hex')
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-AgentChat-Signature': signature,
-        'X-AgentChat-Event': String(payload.event),
-      },
-      body,
-      signal: AbortSignal.timeout(10_000), // 10s timeout per attempt
-    })
-
-    if (response.ok) return true
-
-    if (attempt < MAX_RETRIES) {
-      await delay(RETRY_DELAYS[attempt]!)
-      return deliverWithRetry(url, secret, payload, attempt + 1)
-    }
-    return false
-  } catch {
-    // Network error or timeout
-    if (attempt < MAX_RETRIES) {
-      await delay(RETRY_DELAYS[attempt]!)
-      return deliverWithRetry(url, secret, payload, attempt + 1)
-    }
-    return false
-  }
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+  // Enqueue one delivery row per webhook. Parallel inserts to keep the
+  // calling request latency flat even for agents with the full 5 webhooks.
+  await Promise.all(
+    webhooks.map((webhook) =>
+      enqueueWebhookDelivery({
+        id: generateId('whd'),
+        webhook_id: webhook.id,
+        agent_id: agentId,
+        url: webhook.url,
+        secret: webhook.secret,
+        event,
+        payload,
+      }).catch((err) => {
+        // Enqueue shouldn't normally fail (single INSERT). If it does,
+        // we log and move on — better to lose the webhook than fail the
+        // message-send request it's attached to. The event is still
+        // safely stored in the messages table and will surface via sync.
+        console.error('[webhook] enqueue failed:', err)
+      }),
+    ),
+  )
 }
