@@ -40,3 +40,23 @@ export function closeAllConnections(code: number, reason: string) {
   }
   connections.clear()
 }
+
+/**
+ * Close every local connection for a single agent. Called when that agent's
+ * API key was rotated, their account was deleted, or they were suspended —
+ * any existing sockets authenticated with the old credential must be evicted
+ * so they can't keep receiving fan-out. Invoked per-server by the pub/sub
+ * control channel, so a rotation on one server kicks sockets on every server.
+ */
+export function closeAgentConnections(agentId: string, code: number, reason: string) {
+  const agentConns = connections.get(agentId)
+  if (!agentConns) return
+  for (const ws of agentConns) {
+    try {
+      ws.close(code, reason)
+    } catch {
+      // Already closed
+    }
+  }
+  connections.delete(agentId)
+}

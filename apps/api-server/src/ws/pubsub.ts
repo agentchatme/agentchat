@@ -1,13 +1,21 @@
 import Redis from 'ioredis'
 import type { WsMessage } from '@agentchat/shared'
 import { updateDeliveryStatus } from '@agentchat/db'
-import { getConnections } from './registry.js'
+import { getConnections, closeAgentConnections } from './registry.js'
 
-const CHANNEL = 'agentchat:ws:fanout'
+const CHANNEL_FANOUT = 'agentchat:ws:fanout'
+const CHANNEL_CONTROL = 'agentchat:ws:control'
 
 interface FanoutMessage {
   agentId: string
   message: WsMessage
+}
+
+interface ControlMessage {
+  type: 'disconnect'
+  agentId: string
+  code: number
+  reason: string
 }
 
 let pub: Redis | null = null
@@ -31,19 +39,33 @@ export function initPubSub(redisUrl?: string) {
   })
 
   sub.connect().then(() => {
-    sub!.subscribe(CHANNEL).catch((err) => {
+    sub!.subscribe(CHANNEL_FANOUT, CHANNEL_CONTROL).catch((err) => {
       console.error('[pubsub] Subscribe failed:', err.message)
     })
   }).catch((err) => {
     console.error('[pubsub] Subscriber connect failed:', err.message)
   })
 
-  sub.on('message', (_channel: string, raw: string) => {
-    try {
-      const { agentId, message } = JSON.parse(raw) as FanoutMessage
-      deliverLocally(agentId, message)
-    } catch {
-      // Malformed message — skip
+  sub.on('message', (channel: string, raw: string) => {
+    if (channel === CHANNEL_FANOUT) {
+      try {
+        const { agentId, message } = JSON.parse(raw) as FanoutMessage
+        deliverLocally(agentId, message)
+      } catch {
+        // Malformed — skip
+      }
+      return
+    }
+
+    if (channel === CHANNEL_CONTROL) {
+      try {
+        const msg = JSON.parse(raw) as ControlMessage
+        if (msg.type === 'disconnect') {
+          closeAgentConnections(msg.agentId, msg.code, msg.reason)
+        }
+      } catch {
+        // Malformed — skip
+      }
     }
   })
 
@@ -65,13 +87,34 @@ export function initPubSub(redisUrl?: string) {
 export function publishToAgent(agentId: string, message: WsMessage) {
   if (pub) {
     const payload: FanoutMessage = { agentId, message }
-    pub.publish(CHANNEL, JSON.stringify(payload)).catch(() => {
+    pub.publish(CHANNEL_FANOUT, JSON.stringify(payload)).catch(() => {
       // Publish failed — fall back to local delivery
       deliverLocally(agentId, message)
     })
   } else {
     // No pub/sub — deliver locally (single-server mode)
     deliverLocally(agentId, message)
+  }
+}
+
+/**
+ * Broadcast an agent-disconnect to every API server. Used after key
+ * rotation, account deletion, or suspension — any live sockets holding
+ * the now-invalid credential must be evicted on every host, not just
+ * the one that handled the mutating request.
+ *
+ * Falls back to local-only close if pub/sub is disabled (single-server
+ * mode). Best-effort: a failed publish also falls back to local close
+ * rather than blocking the calling request.
+ */
+export function publishDisconnect(agentId: string, code: number, reason: string) {
+  const payload: ControlMessage = { type: 'disconnect', agentId, code, reason }
+  if (pub) {
+    pub.publish(CHANNEL_CONTROL, JSON.stringify(payload)).catch(() => {
+      closeAgentConnections(agentId, code, reason)
+    })
+  } else {
+    closeAgentConnections(agentId, code, reason)
   }
 }
 

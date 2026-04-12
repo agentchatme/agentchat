@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto'
 import { getSupabaseClient, findAgentById, findAgentByHandle } from '@agentchat/db'
 import type { UpdateAgentRequest } from '@agentchat/shared'
+import { publishDisconnect } from '../ws/pubsub.js'
 
 export class AgentError extends Error {
   code: string
@@ -100,6 +101,10 @@ export async function deleteAgent(id: string, agentId: string) {
     .eq('id', id)
 
   if (error) throw error
+
+  // Evict any live WS sessions across every server. The socket was
+  // authenticated with credentials that no longer map to a valid account.
+  publishDisconnect(id, 1008, 'Account deleted')
 }
 
 export async function rotateApiKey(id: string, agentId: string) {
@@ -121,6 +126,11 @@ export async function rotateApiKey(id: string, agentId: string) {
     .eq('id', id)
 
   if (error) throw error
+
+  // Evict any live WS sessions across every server. A socket that was
+  // authenticated with the old key is no longer a valid session — the
+  // client must reconnect with the new credential.
+  publishDisconnect(id, 1008, 'API key rotated')
 
   return { handle: agent.handle, api_key: newApiKey }
 }
