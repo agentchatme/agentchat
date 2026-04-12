@@ -9,12 +9,25 @@ export type MessageStatus = z.infer<typeof MessageStatus>
 export const MessageContent = z.object({
   text: z.string().optional(),
   data: z.record(z.unknown()).optional(),
+  // Attachment id returned by POST /v1/uploads. Lets the recipient call
+  // GET /v1/attachments/:id to fetch the file. Keeping it as a top-level
+  // field (instead of a convention inside `data`) makes it introspectable
+  // by middleware, dashboards, and the sync drain path without having to
+  // parse every agent's ad-hoc data shape.
+  attachment_id: z.string().optional(),
   file_url: z.string().url().optional(),
   file_name: z.string().optional(),
   mime_type: z.string().optional(),
 }).refine(
-  (c) => c.text !== undefined || c.data !== undefined || c.file_url !== undefined,
-  { message: 'Message content must include at least text, data, or file_url' },
+  (c) =>
+    c.text !== undefined ||
+    c.data !== undefined ||
+    c.file_url !== undefined ||
+    c.attachment_id !== undefined,
+  {
+    message:
+      'Message content must include at least one of: text, data, file_url, attachment_id',
+  },
 )
 export type MessageContent = z.infer<typeof MessageContent>
 
