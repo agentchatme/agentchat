@@ -23,6 +23,7 @@ import type { SendMessageRequest } from '@agentchat/shared'
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
 import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
+import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
 
 const MAX_CONTENT_BYTES = 32_768 // 32 KB
 
@@ -44,6 +45,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   // 0. Validate content size
   const contentSize = Buffer.byteLength(JSON.stringify(req.content), 'utf8')
   if (contentSize > MAX_CONTENT_BYTES) {
+    messagesSendRejected.inc({ reason: 'too_large' })
     throw new MessageError(
       'CONTENT_TOO_LARGE',
       `Message content exceeds ${MAX_CONTENT_BYTES / 1024}KB limit`,
@@ -55,10 +57,12 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   const recipient = await findAgentByHandle(req.to.replace(/^@/, '').toLowerCase())
 
   if (!recipient) {
+    messagesSendRejected.inc({ reason: 'recipient_not_found' })
     throw new MessageError('AGENT_NOT_FOUND', `Account ${req.to} not found`, 404)
   }
 
   if (recipient.id === senderId) {
+    messagesSendRejected.inc({ reason: 'self_send' })
     throw new MessageError('VALIDATION_ERROR', 'Cannot send a message to yourself', 400)
   }
 
@@ -71,15 +75,19 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
 
   // 3. Validate results from parallel reads
   if (!sender) {
+    messagesSendRejected.inc({ reason: 'sender_not_found' })
     throw new MessageError('AGENT_NOT_FOUND', 'Sender account not found', 404)
   }
   if (sender.status === 'suspended') {
+    messagesSendRejected.inc({ reason: 'suspended' })
     throw new MessageError('SUSPENDED', 'Your account is suspended.', 403)
   }
   if (blocked) {
+    messagesSendRejected.inc({ reason: 'blocked' })
     throw new MessageError('BLOCKED', 'Messaging between these accounts is blocked', 403)
   }
   if (sender.status === 'restricted' && !existingConvId) {
+    messagesSendRejected.inc({ reason: 'restricted' })
     throw new MessageError(
       'RESTRICTED',
       'Your account is restricted to existing contacts only. Cold outreach is temporarily disabled. Restrictions are re-evaluated continuously and lift when the block count in the rolling 24-hour window drops below 15.',
@@ -92,6 +100,7 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   if (inboxMode === 'contacts_only') {
     const isSenderInContacts = await isContact(recipient.id, senderId)
     if (!isSenderInContacts) {
+      messagesSendRejected.inc({ reason: 'inbox_restricted' })
       throw new MessageError(
         'INBOX_RESTRICTED',
         'This account only accepts messages from contacts',
@@ -103,6 +112,8 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   // 5. Global per-second rate limit (flat 60/sec for all agents)
   const rateCheck = await checkGlobalRateLimit(senderId)
   if (!rateCheck.allowed) {
+    rateLimitHits.inc({ rule: 'global' })
+    messagesSendRejected.inc({ reason: 'rate_limited' })
     throw new MessageError(
       'RATE_LIMITED',
       'Too many messages per second',
@@ -115,6 +126,8 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   if (!existingConvId) {
     const capCheck = await checkColdOutreachCap(senderId)
     if (!capCheck.allowed) {
+      rateLimitHits.inc({ rule: 'cold_outreach' })
+      messagesSendRejected.inc({ reason: 'cold_outreach_cap' })
       throw new MessageError(
         'RATE_LIMITED',
         `Daily cold outreach limit reached (${capCheck.limit}/day). Slots free up when recipients reply.`,
@@ -166,9 +179,12 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   // 10. ASYNC PUSH — only fire on first write, not on idempotent replay.
   //    Replaying a delivered message would double-deliver to the recipient.
   if (!message.is_replay) {
+    messagesSent.inc({ outcome: 'ok' })
     pushToRecipient(recipient.id, publicMessage).catch(() => {
       // Push failed — that's fine, message is safe in DB
     })
+  } else {
+    messagesSent.inc({ outcome: 'replay' })
   }
 
   return { message: publicMessage, isReplay: message.is_replay }

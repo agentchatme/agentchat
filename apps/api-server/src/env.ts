@@ -17,6 +17,12 @@ const envSchema = z.object({
   // The bucket itself must be created out-of-band (Supabase Storage does not
   // expose DDL-via-SQL for buckets). See the operator checklist in the plan.
   ATTACHMENTS_BUCKET: z.string().default('attachments'),
+  // Bearer token required to scrape GET /v1/metrics. Optional — when unset,
+  // the endpoint is public, which is fine if the server sits behind a
+  // private network or the operator wants Grafana Cloud to scrape it
+  // anonymously. When set, every scrape must send `Authorization: Bearer
+  // <METRICS_TOKEN>` or get a 401.
+  METRICS_TOKEN: z.string().optional(),
 })
 
 function loadEnv() {

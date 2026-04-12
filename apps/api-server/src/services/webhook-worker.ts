@@ -7,6 +7,7 @@ import {
   updateDeliveryStatus,
   type WebhookDeliveryRow,
 } from '@agentchat/db'
+import { webhookDeliveries } from '../lib/metrics.js'
 
 /**
  * Background webhook delivery worker.
@@ -114,6 +115,7 @@ async function processRow(row: WebhookDeliveryRow) {
 
     if (response.ok) {
       await markWebhookDelivered(row.id)
+      webhookDeliveries.inc({ outcome: 'delivered' })
       // For message.new events, this worker is the signal that the agent's
       // webhook receiver actually got the message — mark the per-recipient
       // envelope so sync/drain won't replay it. Pub/sub + WS push marks the
@@ -135,12 +137,14 @@ async function scheduleNextAttempt(row: WebhookDeliveryRow, errText: string) {
   // row.attempts was already incremented by the claim RPC, so it reflects
   // the attempt that just failed.
   if (row.attempts >= MAX_ATTEMPTS) {
+    webhookDeliveries.inc({ outcome: 'dead' })
     await markWebhookDead(row.id, errText).catch((e) => {
       console.error('[webhook-worker] markDead failed:', e)
     })
     return
   }
 
+  webhookDeliveries.inc({ outcome: 'failed' })
   const delayMs = RETRY_DELAYS_MS[row.attempts - 1] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1]!
   const nextAt = new Date(Date.now() + delayMs)
   await scheduleWebhookRetry(row.id, nextAt, errText).catch((e) => {

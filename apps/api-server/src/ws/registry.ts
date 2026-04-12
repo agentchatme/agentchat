@@ -60,3 +60,10 @@ export function closeAgentConnections(agentId: string, code: number, reason: str
   }
   connections.delete(agentId)
 }
+
+/** Total count of live sockets across all agents. Used by the metrics gauge. */
+export function getTotalConnectionCount(): number {
+  let total = 0
+  for (const set of connections.values()) total += set.size
+  return total
+}
