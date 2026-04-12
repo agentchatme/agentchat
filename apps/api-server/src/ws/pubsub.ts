@@ -1,4 +1,5 @@
 import Redis from 'ioredis'
+import type { WSContext } from 'hono/ws'
 import type { WsMessage } from '@agentchat/shared'
 import { updateDeliveryStatus } from '@agentchat/db'
 import { getConnections, closeAgentConnections } from './registry.js'
@@ -120,7 +121,8 @@ export function publishDisconnect(agentId: string, code: number, reason: string)
 
 /**
  * Deliver to local WebSocket connections only (called by subscriber on each server).
- * Marks message as "delivered" ONLY after successful WebSocket send — not before.
+ * Iterates every local socket for the agent and marks the delivery envelope
+ * as "delivered" after at least one successful send.
  */
 function deliverLocally(agentId: string, message: WsMessage) {
   const connections = getConnections(agentId)
@@ -146,6 +148,34 @@ function deliverLocally(agentId: string, message: WsMessage) {
       // Non-critical — sync on reconnect will catch it
     })
   }
+}
+
+/**
+ * Deliver a message to a single specific socket. Used by the drain path on
+ * reconnect so a newly-joined socket can receive its backlog without
+ * fanning out through pub/sub — which would replay the drain to every
+ * other local socket already holding the same agent. Marks the delivery
+ * envelope as "delivered" on success.
+ *
+ * Returns true if the send succeeded (caller can continue draining) or
+ * false if the socket is dead (caller should bail).
+ */
+export function deliverToSocket(
+  ws: WSContext,
+  agentId: string,
+  message: WsMessage,
+): boolean {
+  try {
+    ws.send(JSON.stringify(message))
+  } catch {
+    return false
+  }
+  if (message.type === 'message.new' && message.payload?.id) {
+    updateDeliveryStatus(message.payload.id as string, agentId, 'delivered').catch(() => {
+      // Non-critical — sync on reconnect will catch it
+    })
+  }
+  return true
 }
 
 export function isPubSubEnabled(): boolean {

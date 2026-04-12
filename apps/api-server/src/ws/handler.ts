@@ -3,7 +3,7 @@ import type { WebSocket } from 'ws'
 import { findAgentByApiKeyHash } from '@agentchat/db'
 import { addConnection, removeConnection } from './registry.js'
 import { syncUndelivered } from '../services/message.service.js'
-import { sendToAgent } from './events.js'
+import { deliverToSocket } from './pubsub.js'
 import type { WSContext } from 'hono/ws'
 
 const HEARTBEAT_INTERVAL = 30_000 // 30 seconds
@@ -26,8 +26,11 @@ export function handleWsConnection(agentId: string, ws: WSContext) {
   // Start heartbeat ping/pong cycle
   startHeartbeat(agentId, ws)
 
-  // On connect, drain all undelivered messages in batches
-  drainUndelivered(agentId).catch(() => {
+  // On connect, drain all undelivered messages to THIS specific socket.
+  // Sending via sendToAgent → pub/sub would fan the drain back out to every
+  // other local socket for this agent and replay messages they've already
+  // seen — wrong for multi-connection clients. Deliver directly instead.
+  drainUndelivered(agentId, ws).catch(() => {
     // Non-critical — agent can always call /v1/messages/sync manually
   })
 
@@ -40,22 +43,23 @@ export function handleWsConnection(agentId: string, ws: WSContext) {
 }
 
 const MAX_DRAIN_ITERATIONS = 50 // 50 × 200 = 10,000 messages max per reconnect
+const DRAIN_BATCH_SIZE = 200
 
-async function drainUndelivered(agentId: string) {
-  // Keep fetching batches until there are no more undelivered messages
-  // or the agent disconnects. sendToAgent → pub/sub → deliverLocally
-  // handles marking "delivered" on actual WebSocket send.
+async function drainUndelivered(agentId: string, ws: WSContext) {
   let batch = await syncUndelivered(agentId)
   let iterations = 0
   while (batch.length > 0 && iterations < MAX_DRAIN_ITERATIONS) {
     for (const msg of batch) {
-      sendToAgent(agentId, {
+      const ok = deliverToSocket(ws, agentId, {
         type: 'message.new',
-        payload: msg,
+        payload: msg as Record<string, unknown>,
       })
+      // If the socket died mid-drain, stop — the client will re-sync
+      // on its next reconnect anyway.
+      if (!ok) return
     }
-    // If batch was smaller than the limit, we've drained everything
-    if (batch.length < 200) break
+    // Full batch → likely more waiting; partial → drained.
+    if (batch.length < DRAIN_BATCH_SIZE) break
     iterations++
     // Small pause to avoid overwhelming the connection
     await new Promise((r) => setTimeout(r, 100))
