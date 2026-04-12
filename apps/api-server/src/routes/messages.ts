@@ -6,6 +6,7 @@ import {
   getMessages,
   markAsRead,
   syncUndelivered,
+  ackDelivered,
   removeMessage,
   MessageError,
 } from '../services/message.service.js'
@@ -45,12 +46,62 @@ messages.post('/', authMiddleware, async (c) => {
   }
 })
 
-// GET /v1/messages/sync — Get undelivered messages for this agent (agent auth)
-// This must be before /:conversation_id to avoid route conflict
+// GET /v1/messages/sync — Get undelivered messages for this agent (agent auth).
+//
+// Query params (both optional):
+//   after  — opaque delivery_id cursor; only rows strictly after this are
+//            returned. Pass back the delivery_id of the last row from the
+//            previous response to page forward without committing anything.
+//   limit  — max rows to return (default 200, max 500)
+//
+// This endpoint is non-destructive: it does NOT mark anything delivered.
+// Call POST /v1/messages/sync/ack once the batch is safely processed.
+//
+// This must be before /:conversation_id to avoid route conflict.
 messages.get('/sync', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
-  const undelivered = await syncUndelivered(agentId)
+  const after = c.req.query('after')
+  const limitRaw = c.req.query('limit')
+  const limit = limitRaw !== undefined && limitRaw !== '' ? Number(limitRaw) : undefined
+  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+    return c.json(
+      { code: 'VALIDATION_ERROR', message: 'limit must be a positive integer' },
+      400,
+    )
+  }
+  const undelivered = await syncUndelivered(agentId, { after, limit })
   return c.json(undelivered)
+})
+
+// POST /v1/messages/sync/ack — Commit a synced batch (agent auth).
+//
+// Body: { last_delivery_id: string }
+//
+// Marks every 'stored' delivery envelope for this agent at-or-before the
+// given cursor as 'delivered'. Partial failures during client processing
+// are safe: the client simply doesn't call ack until it's done, and the
+// next /sync call returns the same unacked rows.
+//
+// Routed under /sync/ack (not /:id/sync-ack) so it's unambiguous with the
+// /:conversation_id history route.
+messages.post('/sync/ack', authMiddleware, async (c) => {
+  const agentId = c.get('agentId')
+  let body: unknown
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ code: 'VALIDATION_ERROR', message: 'Invalid JSON body' }, 400)
+  }
+  const lastDeliveryId = (body as { last_delivery_id?: unknown })?.last_delivery_id
+  if (typeof lastDeliveryId !== 'string' || !lastDeliveryId) {
+    return c.json(
+      { code: 'VALIDATION_ERROR', message: 'last_delivery_id is required' },
+      400,
+    )
+  }
+
+  const acked = await ackDelivered(agentId, lastDeliveryId)
+  return c.json({ acked })
 })
 
 // GET /v1/messages/:conversation_id — Get conversation history (agent auth)

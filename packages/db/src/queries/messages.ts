@@ -150,20 +150,65 @@ export async function updateDeliveryStatus(
   return (existing as DeliveryRow | null) ?? null
 }
 
+const DELIVERY_ID_PATTERN = /^del_[a-f0-9]{32}$/
+
 /**
- * Return all still-pending (status='stored') deliveries for an agent, oldest
- * first. Each row is composed with its underlying message for the public
- * Message shape so the sync endpoint can return drop-in-compatible payloads.
+ * Return still-pending (status='stored') deliveries for an agent, oldest
+ * first. When `afterDeliveryId` is provided, only rows strictly after that
+ * cursor are returned — enabling explicit-ack pagination without prematurely
+ * marking anything delivered.
+ *
+ * Cursor is resolved via a two-phase lookup: fetch the cursor row's
+ * (created_at, id), then filter with a composite `(created_at, id) >
+ * (cursor.created_at, cursor.id)`. We need the id tiebreaker because
+ * created_at has microsecond precision and ties are technically possible
+ * under concurrent fan-out.
+ *
+ * If the cursor is malformed or references an unknown row, we return an
+ * empty array rather than silently restarting from the beginning — a bad
+ * cursor usually means client-side bookkeeping drift, and restarting would
+ * replay messages the client has already processed.
  */
-export async function getUndeliveredMessages(agentId: string, limit = 200) {
-  const { data: deliveries, error } = await getSupabaseClient()
+export async function getUndeliveredMessages(
+  agentId: string,
+  limit = 200,
+  afterDeliveryId?: string,
+) {
+  let afterCreatedAt: string | null = null
+  let afterId: string | null = null
+
+  if (afterDeliveryId) {
+    if (!DELIVERY_ID_PATTERN.test(afterDeliveryId)) return []
+
+    const { data: cursor, error: cursorErr } = await getSupabaseClient()
+      .from('message_deliveries')
+      .select('id, created_at')
+      .eq('id', afterDeliveryId)
+      .eq('recipient_agent_id', agentId)
+      .maybeSingle()
+    if (cursorErr) throw cursorErr
+    if (!cursor) return []
+
+    afterCreatedAt = cursor.created_at as string
+    afterId = cursor.id as string
+  }
+
+  let query = getSupabaseClient()
     .from('message_deliveries')
     .select('*')
     .eq('recipient_agent_id', agentId)
     .eq('status', 'stored')
     .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
     .limit(limit)
 
+  if (afterCreatedAt && afterId) {
+    query = query.or(
+      `created_at.gt.${afterCreatedAt},and(created_at.eq.${afterCreatedAt},id.gt.${afterId})`,
+    )
+  }
+
+  const { data: deliveries, error } = await query
   if (error) throw error
   if (!deliveries || deliveries.length === 0) return []
 
@@ -180,6 +225,52 @@ export async function getUndeliveredMessages(agentId: string, limit = 200) {
   return deliveries
     .filter((d) => mmap.has(d.message_id as string))
     .map((d) => composeWithDelivery(mmap.get(d.message_id as string)!, d as DeliveryRow))
+}
+
+/**
+ * Mark all 'stored' deliveries for `agentId` at-or-before the given delivery
+ * cursor as 'delivered'. Used by POST /v1/messages/sync/ack so a client can
+ * explicitly commit a batch after it's been processed — safer than marking
+ * delivered on read, because partial-failure during client processing won't
+ * silently discard messages.
+ *
+ * Only operates on rows owned by the caller (recipient_agent_id = agentId),
+ * so a guessed cursor can't ack someone else's envelopes.
+ *
+ * Returns the number of rows updated, 0 if the cursor is malformed / unknown
+ * / not owned by the caller.
+ */
+export async function ackDeliveries(
+  agentId: string,
+  lastDeliveryId: string,
+): Promise<number> {
+  if (!DELIVERY_ID_PATTERN.test(lastDeliveryId)) return 0
+
+  const { data: cursor, error: cursorErr } = await getSupabaseClient()
+    .from('message_deliveries')
+    .select('id, created_at')
+    .eq('id', lastDeliveryId)
+    .eq('recipient_agent_id', agentId)
+    .maybeSingle()
+  if (cursorErr) throw cursorErr
+  if (!cursor) return 0
+
+  const cursorCreatedAt = cursor.created_at as string
+  const cursorId = cursor.id as string
+  const deliveredAt = new Date().toISOString()
+
+  const { data, error } = await getSupabaseClient()
+    .from('message_deliveries')
+    .update({ status: 'delivered', delivered_at: deliveredAt })
+    .eq('recipient_agent_id', agentId)
+    .eq('status', 'stored')
+    .or(
+      `created_at.lt.${cursorCreatedAt},and(created_at.eq.${cursorCreatedAt},id.lte.${cursorId})`,
+    )
+    .select('id')
+
+  if (error) throw error
+  return data?.length ?? 0
 }
 
 export async function deleteMessage(messageId: string, agentId: string): Promise<boolean> {
@@ -231,6 +322,7 @@ function composeWithDelivery(
 ) {
   return {
     ...message,
+    delivery_id: delivery?.id ?? null,
     status: delivery?.status ?? 'stored',
     delivered_at: delivery?.delivered_at ?? null,
     read_at: delivery?.read_at ?? null,

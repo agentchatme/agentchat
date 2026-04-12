@@ -8,6 +8,7 @@ import {
   getMessageById,
   updateDeliveryStatus,
   getUndeliveredMessages,
+  ackDeliveries,
   deleteMessage,
   isBlockedEither,
   isContact,
@@ -263,13 +264,37 @@ export async function markAsRead(messageId: string, agentId: string) {
 }
 
 const SYNC_BATCH_SIZE = 200
+const MAX_SYNC_LIMIT = 500
 
-export async function syncUndelivered(agentId: string) {
+export async function syncUndelivered(
+  agentId: string,
+  opts: { after?: string; limit?: number } = {},
+) {
   // Fetch undelivered messages but DON'T mark as delivered here.
-  // The "delivered" status is set by deliverLocally in pubsub.ts
-  // only after ws.send() actually succeeds.
-  const messages = await getUndeliveredMessages(agentId, SYNC_BATCH_SIZE)
+  // For the WS drain path, deliverLocally marks delivered after ws.send()
+  // succeeds. For the HTTP sync path, the client calls /sync/ack to
+  // explicitly commit a batch — this is how partial-failure during client
+  // processing is handled without silently discarding messages.
+  const rawLimit = opts.limit ?? SYNC_BATCH_SIZE
+  const limit = Math.max(1, Math.min(rawLimit, MAX_SYNC_LIMIT))
+  const messages = await getUndeliveredMessages(agentId, limit, opts.after)
   return mapSenderHandles(messages)
+}
+
+/**
+ * Explicitly mark everything up to and including the given delivery cursor
+ * as 'delivered' for this agent. Used by the HTTP sync/ack flow — see
+ * getUndeliveredMessages for the cursor semantics.
+ *
+ * Returns the count of rows that transitioned from 'stored' to 'delivered'.
+ * Callers receive 0 when the cursor is malformed or doesn't resolve — let
+ * the HTTP layer decide whether that's an error or a no-op.
+ */
+export async function ackDelivered(
+  agentId: string,
+  lastDeliveryId: string,
+): Promise<number> {
+  return ackDeliveries(agentId, lastDeliveryId)
 }
 
 export async function removeMessage(messageId: string, agentId: string) {
