@@ -13,6 +13,10 @@ const envSchema = z.object({
   // to allow all origins (the right default for a public API-key-based API,
   // since the API key is the actual auth credential, not the browser origin).
   CORS_ORIGINS: z.string().optional(),
+  // Supabase Storage bucket name for file attachments. Default "attachments".
+  // The bucket itself must be created out-of-band (Supabase Storage does not
+  // expose DDL-via-SQL for buckets). See the operator checklist in the plan.
+  ATTACHMENTS_BUCKET: z.string().default('attachments'),
 })
 
 function loadEnv() {

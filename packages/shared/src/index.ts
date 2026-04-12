@@ -6,6 +6,7 @@ export * from './types/contact.js'
 export * from './types/presence.js'
 export * from './types/webhook.js'
 export * from './types/ws.js'
+export * from './types/attachment.js'
 
 // Constants
 export * from './constants/enforcement.js'

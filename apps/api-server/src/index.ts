@@ -11,6 +11,8 @@ import { contactRoutes } from './routes/contacts.js'
 import { presenceRoutes } from './routes/presence.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { directoryRoutes } from './routes/directory.js'
+import { uploadRoutes } from './routes/uploads.js'
+import { attachmentRoutes } from './routes/attachments.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
@@ -180,6 +182,8 @@ app.route('/v1/contacts', contactRoutes)
 app.route('/v1/presence', presenceRoutes)
 app.route('/v1/webhooks', webhookRoutes)
 app.route('/v1/directory', directoryRoutes)
+app.route('/v1/uploads', uploadRoutes)
+app.route('/v1/attachments', attachmentRoutes)
 
 // Initialize Redis pub/sub for multi-server WebSocket fan-out
 initPubSub(process.env['REDIS_URL'])
