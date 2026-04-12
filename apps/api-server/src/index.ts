@@ -33,30 +33,106 @@ app.get('/v1/health', (c) => {
 })
 
 // WebSocket endpoint
+//
+// Authentication. The API key MUST NOT travel in the URL query string —
+// that path leaks to access logs, browser history, Referer headers, and
+// proxy caches. Two supported paths instead:
+//
+//   1. `Authorization: Bearer <key>` header — preferred for server clients
+//      (Node SDK, curl, tests). Authenticated upfront at upgrade time.
+//
+//   2. HELLO frame — the ONLY path browsers have, since the native
+//      WebSocket constructor cannot set custom headers. The server accepts
+//      the connection unauthenticated, waits HELLO_TIMEOUT_MS for
+//      `{type:'hello', api_key:'...'}`, then authenticates. No
+//      message.new events are pushed until the HELLO succeeds — the
+//      connection is NOT added to the registry pre-HELLO.
+const HELLO_TIMEOUT_MS = 5_000
+
 app.get(
   '/v1/ws',
   upgradeWebSocket(async (c) => {
-    const token = c.req.query('token')
-    if (!token) {
-      return { onOpen: (_evt, ws) => { ws.close(1008, 'Missing token') } }
+    // Path 1: upfront Bearer auth
+    const authHeader = c.req.header('Authorization')
+    let upfrontAgentId: string | null = null
+    if (authHeader?.startsWith('Bearer ')) {
+      upfrontAgentId = await authenticateWs(authHeader.slice(7))
+      if (!upfrontAgentId) {
+        // Bad key — fail-closed, don't fall through to HELLO.
+        return { onOpen: (_evt, ws) => { ws.close(1008, 'Invalid token') } }
+      }
     }
 
-    const agentId = await authenticateWs(token)
-    if (!agentId) {
-      return { onOpen: (_evt, ws) => { ws.close(1008, 'Invalid token') } }
+    if (upfrontAgentId) {
+      const agentId = upfrontAgentId
+      return {
+        onOpen: (_evt, ws) => {
+          const { onClose } = handleWsConnection(agentId, ws)
+          ws.raw?.addEventListener('close', onClose)
+        },
+        onMessage: (_evt, _ws) => {
+          // Future: handle client actions here (typing, read acks)
+        },
+      }
     }
+
+    // Path 2: HELLO frame — per-connection closure state.
+    let authenticated = false
+    let helloTimeout: NodeJS.Timeout | null = null
 
     return {
       onOpen: (_evt, ws) => {
-        const { onClose } = handleWsConnection(agentId, ws)
-        ws.raw?.addEventListener('close', onClose)
+        helloTimeout = setTimeout(() => {
+          if (!authenticated) {
+            try { ws.close(1008, 'HELLO frame required') } catch { /* already closed */ }
+          }
+        }, HELLO_TIMEOUT_MS)
       },
-      onMessage: (evt, ws) => {
-        try {
-          const data = JSON.parse(String(evt.data))
-          // Future: handle client actions here (typing, read acks)
-        } catch {
-          // Invalid JSON — ignore
+      onMessage: async (evt, ws) => {
+        if (!authenticated) {
+          let data: { type?: unknown; api_key?: unknown } = {}
+          try {
+            data = JSON.parse(String(evt.data))
+          } catch {
+            try { ws.close(1008, 'HELLO frame required first') } catch { /* already closed */ }
+            return
+          }
+
+          if (data.type !== 'hello' || typeof data.api_key !== 'string') {
+            try { ws.close(1008, 'HELLO frame required first') } catch { /* already closed */ }
+            return
+          }
+
+          const id = await authenticateWs(data.api_key)
+          if (!id) {
+            try { ws.close(1008, 'Invalid token') } catch { /* already closed */ }
+            return
+          }
+
+          if (helloTimeout) {
+            clearTimeout(helloTimeout)
+            helloTimeout = null
+          }
+          authenticated = true
+
+          const { onClose } = handleWsConnection(id, ws)
+          ws.raw?.addEventListener('close', onClose)
+
+          // ACK so the client knows auth succeeded before trusting the session.
+          try {
+            ws.send(JSON.stringify({ type: 'hello.ok' }))
+          } catch {
+            // Connection already gone — cleanup happens on close event
+          }
+          return
+        }
+
+        // Future: handle client actions here (typing, read acks)
+      },
+      onClose: () => {
+        if (helloTimeout) {
+          clearTimeout(helloTimeout)
+          helloTimeout = null
         }
       },
     }
