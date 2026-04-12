@@ -9,6 +9,10 @@ const envSchema = z.object({
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
   SENTRY_DSN: z.string().optional(),
   REDIS_URL: z.string().optional(), // TCP Redis for pub/sub (ioredis). Optional — local-only delivery if unset.
+  // Comma-separated list of allowed CORS origins. Leave unset or use "*"
+  // to allow all origins (the right default for a public API-key-based API,
+  // since the API key is the actual auth credential, not the browser origin).
+  CORS_ORIGINS: z.string().optional(),
 })
 
 function loadEnv() {

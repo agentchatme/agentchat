@@ -1,5 +1,6 @@
 import './env.js' // Validate env vars immediately — crash on missing credentials
 import { Hono } from 'hono'
+import { cors } from 'hono/cors'
 import { createNodeWebSocket } from '@hono/node-ws'
 import { serve } from '@hono/node-server'
 import { registerRoutes } from './routes/register.js'
@@ -21,6 +22,36 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
 // Global middleware
 app.use('*', requestLogger)
+
+// CORS — public API with API-key auth, so the origin header is NOT the
+// authentication boundary (the API key is). Defaulting to "*" lets any
+// browser-hosted agent call the API via fetch(), which matches how other
+// public APIs (Stripe, Twilio) behave. Operators can lock it down by
+// setting CORS_ORIGINS=https://app.example.com,https://staging.example.com
+// when they want to restrict the dashboard or internal tooling.
+//
+// credentials: false — we never use cookies, only the Authorization header,
+// so wildcard origin is actually allowed here (credentialed wildcard isn't).
+//
+// exposeHeaders: Retry-After so browser rate-limit responses can be read
+// by the SDK — fetch() hides non-whitelisted response headers otherwise.
+const corsOriginsRaw = process.env['CORS_ORIGINS']?.trim() ?? ''
+const corsOrigin: string | string[] =
+  corsOriginsRaw === '' || corsOriginsRaw === '*'
+    ? '*'
+    : corsOriginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+
+app.use(
+  '*',
+  cors({
+    origin: corsOrigin,
+    allowHeaders: ['Authorization', 'Content-Type'],
+    exposeHeaders: ['Retry-After'],
+    maxAge: 600,
+    credentials: false,
+  }),
+)
+
 app.onError(errorHandler)
 
 // Health check
