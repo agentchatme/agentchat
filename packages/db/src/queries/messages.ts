@@ -67,6 +67,7 @@ export async function getConversationMessages(
   conversationId: string,
   limit = 50,
   beforeSeq?: number,
+  hiddenAfter?: string | null,
 ) {
   let query = getSupabaseClient()
     .from('messages')
@@ -77,6 +78,15 @@ export async function getConversationMessages(
 
   if (beforeSeq !== undefined) {
     query = query.lt('seq', beforeSeq)
+  }
+
+  // Per-agent hide cutoff: messages at or before the hide timestamp are
+  // filtered out for the calling agent. Strict `.gt.` so that if the
+  // agent hides the conversation at the exact moment a message lands,
+  // the message is considered "in the hidden window" — the tie-breaking
+  // matches the conversation-list filter in getAgentConversations.
+  if (hiddenAfter) {
+    query = query.gt('created_at', hiddenAfter)
   }
 
   const { data: messages, error } = await query

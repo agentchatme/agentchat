@@ -5,6 +5,7 @@ import {
   findDirectConversation,
   atomicSendMessage,
   getConversationMessages,
+  getConversationHide,
   getMessageById,
   updateDeliveryStatus,
   getUndeliveredMessages,
@@ -219,7 +220,10 @@ export async function getMessages(
     throw new MessageError('FORBIDDEN', 'You are not a participant in this conversation', 403)
   }
 
-  const messages = await getConversationMessages(conversationId, limit, beforeSeq)
+  // Honor this agent's soft-delete cutoff — messages with created_at <=
+  // hidden_at are masked for them, but remain visible to the other side.
+  const hiddenAfter = await getConversationHide(agentId, conversationId)
+  const messages = await getConversationMessages(conversationId, limit, beforeSeq, hiddenAfter)
   return mapSenderHandles(messages)
 }
 

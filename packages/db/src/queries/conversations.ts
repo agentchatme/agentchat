@@ -39,15 +39,88 @@ export async function getAgentConversations(agentId: string, limit = 50) {
 
   const convIds = data.map((d) => d.conversation_id)
 
-  const { data: conversations, error: convError } = await getSupabaseClient()
-    .from('conversations')
-    .select('id, type, created_at, updated_at, last_message_at')
-    .in('id', convIds)
-    .order('last_message_at', { ascending: false, nullsFirst: false })
-    .limit(limit)
+  // Load this agent's hide rows in parallel with the conversation fetch.
+  // A conversation is hidden for this agent iff there's a hide row AND
+  // conversations.last_message_at <= hidden_at (i.e. nothing new has
+  // landed since the hide). Filtering in-app instead of in SQL keeps the
+  // PostgREST surface simple and is cheap: the hide set is small (agents
+  // who clean up regularly still tend to hide < 100 chats).
+  const [{ data: conversations, error: convError }, { data: hides, error: hideErr }] =
+    await Promise.all([
+      getSupabaseClient()
+        .from('conversations')
+        .select('id, type, created_at, updated_at, last_message_at')
+        .in('id', convIds)
+        .order('last_message_at', { ascending: false, nullsFirst: false }),
+      getSupabaseClient()
+        .from('conversation_hides')
+        .select('conversation_id, hidden_at')
+        .eq('agent_id', agentId)
+        .in('conversation_id', convIds),
+    ])
 
   if (convError) throw convError
-  return conversations
+  if (hideErr) throw hideErr
+  if (!conversations) return []
+
+  const hideMap = new Map<string, string>(
+    (hides ?? []).map((h) => [h.conversation_id as string, h.hidden_at as string]),
+  )
+
+  const visible = conversations.filter((conv) => {
+    const hiddenAt = hideMap.get(conv.id as string)
+    if (!hiddenAt) return true
+    const last = conv.last_message_at as string | null
+    // No last message yet? The hide still masks the bare conversation.
+    if (!last) return false
+    // A message arrived strictly after the hide → conversation resurfaces.
+    return last > hiddenAt
+  })
+
+  return visible.slice(0, limit)
+}
+
+/**
+ * Upsert a hide row for (agentId, conversationId) with hidden_at = NOW().
+ * Re-hiding an already-visible (or already-hidden) conversation is a no-op
+ * in terms of row count but advances hidden_at so the conversation is
+ * hidden again even if a new message arrived since the last hide.
+ */
+export async function hideConversationForAgent(
+  agentId: string,
+  conversationId: string,
+): Promise<void> {
+  const { error } = await getSupabaseClient()
+    .from('conversation_hides')
+    .upsert(
+      {
+        agent_id: agentId,
+        conversation_id: conversationId,
+        hidden_at: new Date().toISOString(),
+      },
+      { onConflict: 'agent_id,conversation_id' },
+    )
+  if (error) throw error
+}
+
+/**
+ * Look up this agent's hide timestamp for a given conversation. Returns
+ * null if the agent has not hidden it. Used by the message-history query
+ * to filter out messages that landed at or before the hide.
+ */
+export async function getConversationHide(
+  agentId: string,
+  conversationId: string,
+): Promise<string | null> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_hides')
+    .select('hidden_at')
+    .eq('agent_id', agentId)
+    .eq('conversation_id', conversationId)
+    .maybeSingle()
+
+  if (error) throw error
+  return (data?.hidden_at as string | undefined) ?? null
 }
 
 export async function updateConversationLastMessage(conversationId: string) {
