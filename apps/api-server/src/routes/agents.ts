@@ -271,7 +271,7 @@ agents.post('/:handle/rotate-key', authMiddleware, ipRateLimit(3, 3600), async (
 })
 
 // POST /v1/agents/:handle/rotate-key/verify — Step 2: Verify OTP and rotate
-agents.post('/:handle/rotate-key/verify', authMiddleware, async (c) => {
+agents.post('/:handle/rotate-key/verify', authMiddleware, ipRateLimit(10, 600), async (c) => {
   const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   const agentId = c.get('agentId')
 
