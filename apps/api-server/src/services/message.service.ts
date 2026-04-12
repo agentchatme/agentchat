@@ -5,14 +5,14 @@ import {
   findDirectConversation,
   atomicSendMessage,
   getConversationMessages,
-  updateMessageStatus,
+  getMessageById,
+  updateDeliveryStatus,
   getUndeliveredMessages,
   deleteMessage,
   isBlockedEither,
   isContact,
   findOrCreateDirectConversation,
   isParticipant,
-  getConversationParticipants,
   getConversation,
   markConversationEstablished,
   addContact,
@@ -222,31 +222,44 @@ export async function getMessages(
   return mapSenderHandles(messages)
 }
 
-export async function markAsDelivered(messageId: string) {
-  return updateMessageStatus(messageId, 'delivered')
-}
-
 export async function markAsRead(messageId: string, agentId: string) {
-  const message = await updateMessageStatus(messageId, 'read')
-
-  // Resolve reader's handle for external payload (never expose internal ID)
-  const reader = await findAgentById(agentId)
-  const readerHandle = reader?.handle ?? 'unknown'
-
-  const readPayload = { message_id: messageId, read_by: readerHandle, read_at: message.read_at }
-
-  if (message.sender_id) {
-    // Route internally via sender_id, but payload uses handles only
-    sendToAgent(message.sender_id, {
-      type: 'message.read',
-      payload: readPayload,
-    })
-    fireWebhooks(message.sender_id, 'message.read', readPayload)
+  // Update the caller's own delivery envelope. Null means no such envelope
+  // exists — the agent is not a recipient of this message (or the id is bogus).
+  const delivery = await updateDeliveryStatus(messageId, agentId, 'read')
+  if (!delivery) {
+    throw new MessageError(
+      'MESSAGE_NOT_FOUND',
+      'Message not found or you are not a recipient',
+      404,
+    )
   }
 
-  // Map sender_id to handle in the response
-  const senderAgent = await findAgentById(message.sender_id)
-  return toPublicMessage(message, senderAgent?.handle ?? 'unknown')
+  const message = await getMessageById(messageId)
+  if (!message) {
+    throw new MessageError('MESSAGE_NOT_FOUND', 'Message not found', 404)
+  }
+
+  const reader = await findAgentById(agentId)
+  const readerHandle = reader?.handle ?? 'unknown'
+  const readPayload = {
+    message_id: messageId,
+    read_by: readerHandle,
+    read_at: delivery.read_at,
+  }
+
+  const senderId = message.sender_id as string
+  // Route internally via sender_id, but payload uses handles only
+  sendToAgent(senderId, { type: 'message.read', payload: readPayload })
+  fireWebhooks(senderId, 'message.read', readPayload)
+
+  const senderAgent = await findAgentById(senderId)
+  const composed = {
+    ...message,
+    status: delivery.status,
+    delivered_at: delivery.delivered_at,
+    read_at: delivery.read_at,
+  }
+  return toPublicMessage(composed, senderAgent?.handle ?? 'unknown')
 }
 
 const SYNC_BATCH_SIZE = 200

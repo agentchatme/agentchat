@@ -1,6 +1,6 @@
 import Redis from 'ioredis'
 import type { WsMessage } from '@agentchat/shared'
-import { updateMessageStatus } from '@agentchat/db'
+import { updateDeliveryStatus } from '@agentchat/db'
 import { getConnections } from './registry.js'
 
 const CHANNEL = 'agentchat:ws:fanout'
@@ -95,10 +95,11 @@ function deliverLocally(agentId: string, message: WsMessage) {
     }
   }
 
-  // Mark "delivered" only after at least one WebSocket actually accepted the message.
-  // Only for message.new events (not read receipts, presence, etc.)
+  // Mark this agent's delivery envelope as "delivered" only after at least
+  // one local WebSocket actually accepted the message. Only for message.new
+  // events (read receipts, presence, etc. carry no message_id to update).
   if (delivered && message.type === 'message.new' && message.payload?.id) {
-    updateMessageStatus(message.payload.id as string, 'delivered').catch(() => {
+    updateDeliveryStatus(message.payload.id as string, agentId, 'delivered').catch(() => {
       // Non-critical — sync on reconnect will catch it
     })
   }

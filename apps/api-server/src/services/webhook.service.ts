@@ -6,7 +6,7 @@ import {
   getWebhookById,
   deleteWebhook,
   getWebhooksForEvent,
-  updateMessageStatus,
+  updateDeliveryStatus,
 } from '@agentchat/db'
 import type { WebhookEvent } from '@agentchat/shared'
 
@@ -90,16 +90,17 @@ export async function fireWebhooks(
     data,
   }
 
-  // Extract message ID for status tracking (only for message.new events)
+  // Extract message ID for delivery tracking (only for message.new events).
+  // agentId here is the recipient whose envelope we're marking delivered.
   const messageId = event === 'message.new' ? (data.id as string | undefined) : undefined
 
   // Fire all webhooks concurrently (non-blocking)
   for (const webhook of webhooks) {
     deliverWithRetry(webhook.url, webhook.secret, payload)
       .then((success) => {
-        // Mark message as "delivered" on first successful webhook delivery
+        // Mark this recipient's delivery envelope as delivered on first success.
         if (success && messageId) {
-          updateMessageStatus(messageId, 'delivered').catch(() => {})
+          updateDeliveryStatus(messageId, agentId, 'delivered').catch(() => {})
         }
       })
       .catch(() => {
