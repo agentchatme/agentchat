@@ -350,6 +350,20 @@ export class AgentChatClient {
   }
 
   /**
+   * Creator-only hard delete. Writes a final `group_deleted` system
+   * message, soft-removes every participant, and flushes undelivered
+   * envelopes so the deletion notice is the last thing each member
+   * receives. Cannot be undone. Throws 403 for non-creators, 410 (with
+   * DeletedGroupInfo in `details`) if the group was already deleted.
+   */
+  async deleteGroup(groupId: string) {
+    return this.request<{ deleted_at: string }>(
+      'DELETE',
+      `/v1/groups/${encodeURIComponent(groupId)}`,
+    )
+  }
+
+  /**
    * Add a member by handle. Admin-only. Depending on the target's
    * `group_invite_policy` and whether you're already in their contacts,
    * this either auto-adds them (`outcome: 'joined'`) or creates a
