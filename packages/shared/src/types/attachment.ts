@@ -28,10 +28,13 @@ export const AttachmentMime = z.enum(ALLOWED_ATTACHMENT_MIME)
 export type AttachmentMime = z.infer<typeof AttachmentMime>
 
 export const CreateUploadRequest = z.object({
-  // The recipient's handle. The upload is scoped to a sender+recipient pair,
-  // so only those two accounts can download the bytes. Groups are a future
-  // extension — widen to conversation_id when they land.
-  to: z.string().min(1),
+  // Direct target: recipient handle. The upload is scoped to a sender+
+  // recipient pair so only those two accounts can download the bytes.
+  to: z.string().min(1).optional(),
+  // Group target: an existing group conversation id. The caller must be
+  // an active member. Access is granted to every active member, including
+  // agents who join the group later — consistent with group messages.
+  conversation_id: z.string().min(1).optional(),
   // Original filename, echoed in Content-Disposition on download.
   filename: z.string().min(1).max(255),
   content_type: AttachmentMime,
@@ -39,7 +42,10 @@ export const CreateUploadRequest = z.object({
   // Lowercase hex sha256 of the file bytes. Stored for the recipient to
   // verify the downloaded payload matches what the sender claimed.
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
-})
+}).refine(
+  (r) => (r.to !== undefined) !== (r.conversation_id !== undefined),
+  { message: 'Exactly one of `to` or `conversation_id` must be provided' },
+)
 export type CreateUploadRequest = z.infer<typeof CreateUploadRequest>
 
 export const CreateUploadResponse = z.object({

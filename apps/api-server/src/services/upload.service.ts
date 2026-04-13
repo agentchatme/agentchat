@@ -5,6 +5,8 @@ import {
   findAgentByHandle,
   isBlockedEither,
   getSupabaseClient,
+  findGroupById,
+  getGroupParticipantRole,
   type AttachmentRow,
 } from '@agentchat/db'
 import type { CreateUploadRequest } from '@agentchat/shared'
@@ -38,25 +40,54 @@ const DOWNLOAD_URL_EXPIRES_IN = 300
  * a presigned upload URL that the client PUTs the bytes to directly. The
  * api-server never sees the file bytes — that's the whole point, otherwise
  * 25 MB × concurrency would eat the event loop.
+ *
+ * Two target modes (enforced exactly-one by the shared zod schema):
+ *   - Direct: `to` is a recipient handle → scoped to (uploader, recipient).
+ *   - Group: `conversation_id` is a group id → scoped to every active
+ *     member of the group, including future joiners.
  */
 export async function createUpload(uploaderId: string, req: CreateUploadRequest) {
-  const recipient = await findAgentByHandle(req.to.replace(/^@/, '').toLowerCase())
-  if (!recipient) {
-    throw new UploadError('AGENT_NOT_FOUND', `Account ${req.to} not found`, 404)
-  }
-  if (recipient.id === uploaderId) {
-    throw new UploadError(
-      'VALIDATION_ERROR',
-      'Cannot upload an attachment addressed to yourself',
-      400,
-    )
-  }
+  let recipientId: string | null = null
+  let conversationId: string | null = null
 
-  // Block check mirrors the message-send path. If either side has blocked
-  // the other, we refuse to even let the upload happen — no point giving
-  // the client a URL for bytes the recipient can never see.
-  if (await isBlockedEither(uploaderId, recipient.id)) {
-    throw new UploadError('BLOCKED', 'Messaging between these accounts is blocked', 403)
+  if (req.conversation_id !== undefined) {
+    // Group upload path. Group membership IS the consent — no block or
+    // inbox_mode checks apply, mirroring sendGroupMessage. We do require
+    // the group to exist and the caller to be an ACTIVE member (left_at
+    // IS NULL), so an ex-member can't dump files back into a group.
+    const group = await findGroupById(req.conversation_id)
+    if (!group) {
+      throw new UploadError('GROUP_NOT_FOUND', 'Group not found', 404)
+    }
+    const role = await getGroupParticipantRole(req.conversation_id, uploaderId)
+    if (!role) {
+      // Hide existence of the group from non-members — same 404 shape
+      // the message send path uses.
+      throw new UploadError('GROUP_NOT_FOUND', 'Group not found', 404)
+    }
+    conversationId = req.conversation_id
+  } else {
+    // Direct upload path (unchanged from pre-018 behaviour).
+    const rawTo = req.to as string
+    const recipient = await findAgentByHandle(rawTo.replace(/^@/, '').toLowerCase())
+    if (!recipient) {
+      throw new UploadError('AGENT_NOT_FOUND', `Account ${rawTo} not found`, 404)
+    }
+    if (recipient.id === uploaderId) {
+      throw new UploadError(
+        'VALIDATION_ERROR',
+        'Cannot upload an attachment addressed to yourself',
+        400,
+      )
+    }
+
+    // Block check mirrors the message-send path. If either side has blocked
+    // the other, we refuse to even let the upload happen — no point giving
+    // the client a URL for bytes the recipient can never see.
+    if (await isBlockedEither(uploaderId, recipient.id)) {
+      throw new UploadError('BLOCKED', 'Messaging between these accounts is blocked', 403)
+    }
+    recipientId = recipient.id
   }
 
   const attachmentId = generateId('att')
@@ -72,7 +103,8 @@ export async function createUpload(uploaderId: string, req: CreateUploadRequest)
     row = await createAttachment({
       id: attachmentId,
       uploader_id: uploaderId,
-      recipient_id: recipient.id,
+      recipient_id: recipientId,
+      conversation_id: conversationId,
       filename: req.filename,
       content_type: req.content_type,
       size: req.size,
@@ -111,11 +143,12 @@ export async function createUpload(uploaderId: string, req: CreateUploadRequest)
  *
  * Returns `null` when:
  *   - the attachment doesn't exist
- *   - the caller isn't the uploader or the recipient
+ *   - the caller is not authorized (direct: not uploader/recipient; group:
+ *     not an active member)
  *
- * Both cases should 404 — we don't distinguish "wrong attachment id" from
- * "wrong caller" because the id is unguessable and leaking existence to a
- * non-participant would hand them a way to probe for valid ids.
+ * Both cases collapse to 404 — we don't distinguish "wrong id" from "wrong
+ * caller" because the id is unguessable and leaking existence to a non-
+ * participant would hand them a way to probe for valid ids.
  */
 export async function getAttachmentDownload(
   attachmentId: string,
@@ -123,8 +156,20 @@ export async function getAttachmentDownload(
 ): Promise<{ url: string; filename: string; content_type: string } | null> {
   const row = await getAttachmentById(attachmentId)
   if (!row) return null
-  if (row.uploader_id !== callerId && row.recipient_id !== callerId) {
-    return null
+
+  // Uploader always retains access — they created the file and may want
+  // to render it in their own local preview even after leaving a group.
+  if (row.uploader_id !== callerId) {
+    if (row.conversation_id !== null) {
+      // Group attachment: caller must currently be an active member.
+      // If they've left or been kicked, the download is cut off, matching
+      // how the message fan-out treats them.
+      const role = await getGroupParticipantRole(row.conversation_id, callerId)
+      if (!role) return null
+    } else if (row.recipient_id !== callerId) {
+      // Direct attachment: only the declared recipient may download.
+      return null
+    }
   }
 
   const { data, error } = await getSupabaseClient()

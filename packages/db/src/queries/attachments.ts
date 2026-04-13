@@ -3,7 +3,14 @@ import { getSupabaseClient } from '../client.js'
 export interface AttachmentRow {
   id: string
   uploader_id: string
-  recipient_id: string
+  // Direct target: set when the attachment is addressed to a single
+  // recipient (1:1 conversation). NULL for group uploads.
+  recipient_id: string | null
+  // Group target: set when the attachment is addressed to a group
+  // conversation. NULL for direct uploads. A DB-level CHECK constraint
+  // (migration 018) guarantees exactly one of (recipient_id, conversation_id)
+  // is set.
+  conversation_id: string | null
   filename: string
   content_type: string
   size: number
@@ -15,7 +22,8 @@ export interface AttachmentRow {
 export async function createAttachment(row: {
   id: string
   uploader_id: string
-  recipient_id: string
+  recipient_id: string | null
+  conversation_id: string | null
   filename: string
   content_type: string
   size: number

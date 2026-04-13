@@ -22,6 +22,7 @@ import {
   getGroupParticipantRole,
   getGroupParticipantJoinedSeq,
   getGroupMembers,
+  getAttachmentById,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
@@ -30,6 +31,66 @@ import { fireWebhooks } from './webhook.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
 
 const MAX_PAYLOAD_BYTES = 32_768 // 32 KB — content + metadata combined
+
+/**
+ * Enforce that an attachment referenced by a message is scoped to the same
+ * conversation the message is being sent into, and was uploaded by the same
+ * sender. This closes three separate leaks that would otherwise be possible:
+ *
+ *   1. Hotlinking: sender references an attachment they didn't upload,
+ *      piggybacking on access control that was granted to a different pair.
+ *   2. Cross-conversation leakage: sender uploads a file to conversation A
+ *      and then references its id in a message to conversation B, where
+ *      the recipient set is different.
+ *   3. Mode mismatch: a direct-scoped attachment (recipient_id set) is
+ *      referenced inside a group message, or a group-scoped attachment
+ *      (conversation_id set) is referenced inside a direct message — in
+ *      both cases the download check would route to the wrong branch and
+ *      silently deny every intended recipient.
+ *
+ * Called from both sendDirectMessage and sendGroupMessage, before the
+ * atomic insert so a failed validation produces a clean 4xx with no side
+ * effects on the messages table.
+ */
+async function assertAttachmentScope(
+  attachmentId: string,
+  senderId: string,
+  target:
+    | { kind: 'direct'; counterpartyId: string }
+    | { kind: 'group'; conversationId: string },
+) {
+  const att = await getAttachmentById(attachmentId)
+  // Non-existent or sender-mismatch both collapse to the same 404. A sender
+  // has no legitimate reason to discover that someone else's attachment id
+  // exists, so we don't distinguish the two.
+  if (!att || att.uploader_id !== senderId) {
+    messagesSendRejected.inc({ reason: 'attachment_not_found' })
+    throw new MessageError(
+      'ATTACHMENT_NOT_FOUND',
+      'Referenced attachment does not exist or was not uploaded by you',
+      404,
+    )
+  }
+  if (target.kind === 'group') {
+    if (att.conversation_id !== target.conversationId) {
+      messagesSendRejected.inc({ reason: 'attachment_wrong_scope' })
+      throw new MessageError(
+        'ATTACHMENT_WRONG_SCOPE',
+        'Attachment is not scoped to this group',
+        400,
+      )
+    }
+  } else {
+    if (att.conversation_id !== null || att.recipient_id !== target.counterpartyId) {
+      messagesSendRejected.inc({ reason: 'attachment_wrong_scope' })
+      throw new MessageError(
+        'ATTACHMENT_WRONG_SCOPE',
+        'Attachment is not addressed to this recipient',
+        400,
+      )
+    }
+  }
+}
 
 export class MessageError extends Error {
   code: string
@@ -161,7 +222,22 @@ async function sendDirectMessage(
     }
   }
 
-  // 7. Atomically find or create conversation (safe against race conditions)
+  // 7. If the message references an attachment, enforce it belongs to this
+  //    sender AND is scoped to this direct pair. Do this BEFORE creating
+  //    the conversation so a cross-scope reference doesn't leave a dangling
+  //    conversation row behind on rejection.
+  const attachmentId =
+    typeof req.content === 'object' && req.content !== null
+      ? (req.content as { attachment_id?: unknown }).attachment_id
+      : undefined
+  if (typeof attachmentId === 'string') {
+    await assertAttachmentScope(attachmentId, senderId, {
+      kind: 'direct',
+      counterpartyId: recipient.id,
+    })
+  }
+
+  // 8. Atomically find or create conversation (safe against race conditions)
   const newConvId = generateId('conv')
   const { conversationId } = await findOrCreateDirectConversation(
     senderId,
@@ -169,7 +245,7 @@ async function sendDirectMessage(
     newConvId,
   )
 
-  // 8. If sender is NOT the initiator, mark conversation as established
+  // 9. If sender is NOT the initiator, mark conversation as established
   //    (recipient replying → mutual conversation, frees up initiator's rate limit slot)
   //    Also auto-add each other as contacts (organic contact formation)
   if (existingConvId) {
@@ -185,8 +261,8 @@ async function sendDirectMessage(
     }
   }
 
-  // 9. Store message via atomic RPC — idempotency fast-path, seq allocation,
-  //    and last_message_at update all happen inside send_message_atomic.
+  // 10. Store message via atomic RPC — idempotency fast-path, seq allocation,
+  //     and last_message_at update all happen inside send_message_atomic.
   const messageId = generateId('msg')
   const message = await atomicSendMessage({
     id: messageId,
@@ -276,6 +352,20 @@ async function sendGroupMessage(
       429,
       rateCheck.retryAfterMs,
     )
+  }
+
+  // Cross-check any referenced attachment is scoped to THIS group and was
+  // uploaded by the sender. Stops a sender from hotlinking a direct-scoped
+  // attachment (or someone else's group file) into a group message.
+  const attachmentId =
+    typeof req.content === 'object' && req.content !== null
+      ? (req.content as { attachment_id?: unknown }).attachment_id
+      : undefined
+  if (typeof attachmentId === 'string') {
+    await assertAttachmentScope(attachmentId, senderId, {
+      kind: 'group',
+      conversationId,
+    })
   }
 
   const messageId = generateId('msg')
