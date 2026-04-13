@@ -21,7 +21,7 @@ import {
   findGroupById,
   getGroupParticipantRole,
   getGroupParticipantJoinedSeq,
-  getGroupMembers,
+  getGroupPushRecipients,
   getAttachmentById,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
@@ -383,13 +383,18 @@ async function sendGroupMessage(
 
   if (!message.is_replay) {
     messagesSent.inc({ outcome: 'ok' })
-    // Async fan-out to all active members except sender. Fetch the
-    // recipient set fresh after the atomic insert so late joiners are
-    // included and just-departed members are excluded — consistent with
-    // the DB-side delivery envelope population done by send_message_atomic.
-    pushToGroup(conversationId, senderId, publicMessage).catch(() => {
-      // Push failed — DB state is durable, sync/WS reconnect recovers it
-    })
+    // Async fan-out to all active members except the sender. Recipient set
+    // is filtered by `joined_seq <= message.seq` so that a member who
+    // joined AFTER send_message_atomic committed (but before this async
+    // push fires) does not receive a ghost `message.new` event for a
+    // message their history cutoff would hide. The DB envelopes already
+    // exclude them — this query mirrors the same rule for the ephemeral
+    // push so the two stay consistent.
+    pushToGroup(conversationId, senderId, message.seq, publicMessage).catch(
+      () => {
+        // Push failed — DB state is durable, sync/WS reconnect recovers it
+      },
+    )
   } else {
     messagesSent.inc({ outcome: 'replay' })
   }
@@ -397,27 +402,28 @@ async function sendGroupMessage(
   return { message: publicMessage, isReplay: message.is_replay }
 }
 
-async function pushToGroup(
+// Exported for unit testing. Call site is local; nothing outside this
+// module should depend on the signature.
+export async function pushToGroup(
   conversationId: string,
   senderId: string,
+  messageSeq: number,
   message: Record<string, unknown>,
 ) {
-  const members = await getGroupMembers(conversationId)
-  if (members.length === 0) return
-
-  // getGroupMembers returns handles; we need the internal ids to route
-  // WS and webhook pushes. Resolve in one batch.
-  const handles = members.map((m) => m.handle)
-  const agents = await Promise.all(
-    handles.map((h) => findAgentByHandle(h.toLowerCase())),
+  // Single round-trip: active, non-departed, non-late-joiner, non-sender.
+  // Returns agent ids directly so we avoid the handle→agent N+1 roundtrip
+  // the previous implementation did through findAgentByHandle.
+  const recipientIds = await getGroupPushRecipients(
+    conversationId,
+    messageSeq,
+    senderId,
   )
-  for (const agent of agents) {
-    if (!agent || agent.id === senderId) continue
-    sendToAgent(agent.id, {
+  for (const agentId of recipientIds) {
+    sendToAgent(agentId, {
       type: 'message.new',
       payload: message,
     })
-    fireWebhooks(agent.id, 'message.new', message)
+    fireWebhooks(agentId, 'message.new', message)
   }
 }
 

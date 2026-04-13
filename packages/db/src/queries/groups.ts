@@ -186,6 +186,36 @@ export async function getGroupParticipantJoinedSeq(
   return (data.joined_seq as number | null) ?? 0
 }
 
+// Agent ids of members who should receive the ephemeral push (WS +
+// webhook) for a group message at `maxSeq`. Runs in one round-trip and
+// pre-filters to exactly the set that would see the message in history:
+//
+//   - Active members only (left_at IS NULL) — departed members had their
+//     envelopes flushed to 'delivered' on leave/kick, and the ephemeral
+//     push should match that.
+//   - joined_seq <= maxSeq — excludes members who joined AFTER this
+//     message's seq was allocated. Their history filter
+//     (`seq >= joined_seq`) would hide the message anyway, and without
+//     this cap a just-joined client would get a `message.new` event for
+//     a message it can neither refetch nor find in /sync. Consistent
+//     with the no-pre-join-leakage invariant from migration 017.
+//   - Sender is excluded so the caller doesn't echo its own write.
+export async function getGroupPushRecipients(
+  groupId: string,
+  maxSeq: number,
+  excludeAgentId: string,
+): Promise<string[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_participants')
+    .select('agent_id')
+    .eq('conversation_id', groupId)
+    .is('left_at', null)
+    .lte('joined_seq', maxSeq)
+    .neq('agent_id', excludeAgentId)
+  if (error) throw error
+  return (data ?? []).map((d) => d.agent_id as string)
+}
+
 // Active members only (left_at IS NULL). Joined with agents for handle
 // and display_name. Ordered by joined_at so the creator tends to come
 // first (tie-broken by agent_id for determinism under identical timestamps).
