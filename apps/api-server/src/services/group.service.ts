@@ -362,7 +362,9 @@ async function dbAddMemberAndEmit(
   senderId: string,
   targetHandle: string,
 ): Promise<'joined' | 'already_member'> {
-  const outcome = await addGroupMember(groupId, targetId, GROUP_MAX_MEMBERS)
+  const outcome = await runGroupRpc(groupId, () =>
+    addGroupMember(groupId, targetId, GROUP_MAX_MEMBERS),
+  )
   if (outcome.status === 'already_member') {
     return 'already_member'
   }
@@ -398,7 +400,10 @@ export async function acceptInvite(
     throw new GroupError('INVITE_NOT_FOUND', 'Invite not found', 404)
   }
 
-  const outcome = await dbAcceptInvite(inviteId, callerId, GROUP_MAX_MEMBERS)
+  const conversationId = invite.conversation_id as string
+  const outcome = await runGroupRpc(conversationId, () =>
+    dbAcceptInvite(inviteId, callerId, GROUP_MAX_MEMBERS),
+  )
   const target = await findAgentById(callerId)
   const targetHandle = target?.handle ?? 'unknown'
 
@@ -470,7 +475,7 @@ export async function leaveGroup(
   const caller = await findAgentById(callerId)
   const callerHandle = caller?.handle ?? 'unknown'
 
-  const result = await dbLeaveGroup(groupId, callerId)
+  const result = await runGroupRpc(groupId, () => dbLeaveGroup(groupId, callerId))
   if (!result.was_member) {
     // Lost the race to another concurrent leave/kick — treat as already-gone.
     throw new GroupError('GROUP_NOT_FOUND', 'Group not found', 404)
@@ -519,19 +524,17 @@ export async function kickMember(
     )
   }
 
+  let ok = false
   try {
-    const ok = await kickGroupMember(groupId, target.id)
-    if (!ok) {
-      throw new GroupError(
-        'NOT_MEMBER',
-        'Target is not an active member of this group',
-        404,
-      )
-    }
+    ok = await runGroupRpc(groupId, () => kickGroupMember(groupId, target.id))
   } catch (err) {
     // kick_member_atomic RAISEs a specific message when the target is the
     // creator — translate that to our domain error so the client gets a
-    // readable response instead of a raw Postgres error.
+    // readable response instead of a raw Postgres error. A 'group_deleted'
+    // race is already mapped to GroupError(410) by runGroupRpc above, so
+    // we re-throw any GroupError untouched and only match the 'creator'
+    // text on bare Postgres errors.
+    if (err instanceof GroupError) throw err
     if (err instanceof Error && /creator/i.test(err.message)) {
       throw new GroupError(
         'FORBIDDEN',
@@ -540,6 +543,14 @@ export async function kickMember(
       )
     }
     throw err
+  }
+
+  if (!ok) {
+    throw new GroupError(
+      'NOT_MEMBER',
+      'Target is not an active member of this group',
+      404,
+    )
   }
 
   const actor = await findAgentById(callerId)
@@ -557,7 +568,7 @@ export async function promoteAdmin(
 ): Promise<void> {
   await requireAdmin(groupId, callerId)
   const target = await loadAgentByHandleOrThrow(targetHandle)
-  const ok = await promoteGroupAdmin(groupId, target.id)
+  const ok = await runGroupRpc(groupId, () => promoteGroupAdmin(groupId, target.id))
   if (!ok) {
     throw new GroupError(
       'NOT_MEMBER',
@@ -580,7 +591,7 @@ export async function demoteAdmin(
 ): Promise<void> {
   await requireAdmin(groupId, callerId)
   const target = await loadAgentByHandleOrThrow(targetHandle)
-  const result = await demoteGroupAdmin(groupId, target.id)
+  const result = await runGroupRpc(groupId, () => demoteGroupAdmin(groupId, target.id))
   switch (result) {
     case 'ok':
       break
@@ -833,6 +844,46 @@ async function buildDeletedGroupInfo(
     group_id: groupId,
     deleted_by_handle: handle,
     deleted_at: deletedAt,
+  }
+}
+
+// Defensive wrapper for group-mutating RPC calls. Migration 020 added a
+// DB-level `deleted_at` guard to every atomic group RPC: on a deleted
+// group the RPC raises a named 'group_deleted' exception. This helper
+// catches that specific text, re-fetches the group for fresh metadata,
+// and throws a GroupError(410) so the client sees the same 410 shape as
+// the read-path resolveDeletedGroupInfoForCaller flow. Any non-matching
+// error is re-thrown unchanged.
+//
+// The service layer already pre-checks deleted_at before most of these
+// RPC calls — this wrapper is the backstop for the TOCTOU race where a
+// concurrent delete commits between the service-level read and the
+// RPC's FOR UPDATE lock acquisition (they run in separate MVCC
+// snapshots, so the pre-check alone isn't enough).
+async function runGroupRpc<T>(
+  groupId: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (err instanceof Error && /group_deleted/.test(err.message)) {
+      const refreshed = await findGroupById(groupId)
+      const info = refreshed
+        ? await buildDeletedGroupInfo(
+            groupId,
+            refreshed.deleted_by as string | null,
+            refreshed.deleted_at as string,
+          )
+        : undefined
+      throw new GroupError(
+        'GROUP_DELETED',
+        'Group has been deleted',
+        410,
+        info as unknown as Record<string, unknown>,
+      )
+    }
+    throw err
   }
 }
 

@@ -15,6 +15,7 @@ import {
   isContact,
   findOrCreateDirectConversation,
   isParticipant,
+  hasParticipantHistory,
   getConversation,
   markConversationEstablished,
   addContact,
@@ -412,6 +413,29 @@ async function sendGroupMessage(
     type: req.type ?? 'text',
     content: req.content as Record<string, unknown>,
     metadata: req.metadata as Record<string, unknown> | undefined,
+  }).catch(async (err: unknown): Promise<never> => {
+    // Migration 020 added a deleted_at guard on send_message_atomic. It
+    // fires when a concurrent delete committed between findGroupById above
+    // and the RPC acquiring its FOR UPDATE lock. Translate to the same
+    // 410 shape the pre-check returns so clients see one consistent error
+    // regardless of where in the race window the delete landed.
+    if (err instanceof Error && /group_deleted/.test(err.message)) {
+      const deletedCheck = await resolveDeletedGroupInfoForCaller(
+        conversationId,
+        senderId,
+      )
+      messagesSendRejected.inc({ reason: 'group_deleted' })
+      throw new MessageError(
+        'GROUP_DELETED',
+        'Group has been deleted',
+        410,
+        undefined,
+        deletedCheck?.kind === 'gone'
+          ? (deletedCheck.info as unknown as Record<string, unknown>)
+          : undefined,
+      )
+    }
+    throw err
   })
 
   const publicMessage = toPublicMessage(message, sender.handle)
@@ -677,8 +701,12 @@ export async function hideMessageForMe(messageId: string, agentId: string) {
   }
 
   const conversationId = message.conversation_id as string
-  const participant = await isParticipant(conversationId, agentId)
-  if (!participant) {
+  // hasParticipantHistory (not isParticipant) so former group members who
+  // were there when the message was sent can still clean it from their
+  // own hide list. isParticipant filters left_at IS NULL, which would
+  // lock out anyone who left or was kicked after receiving the message.
+  const hasHistory = await hasParticipantHistory(conversationId, agentId)
+  if (!hasHistory) {
     throw new MessageError(
       'FORBIDDEN',
       'You are not a participant in this conversation',

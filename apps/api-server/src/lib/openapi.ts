@@ -11,6 +11,12 @@ import {
   WebhookConfig,
   CreateUploadRequest,
   CreateUploadResponse,
+  CreateGroupRequest,
+  UpdateGroupRequest,
+  GroupDetail,
+  AddMemberResult,
+  GroupInvitation,
+  DeletedGroupInfo,
 } from '@agentchat/shared'
 
 /**
@@ -52,6 +58,12 @@ registry.register('CreateWebhookRequest', CreateWebhookRequest)
 registry.register('WebhookConfig', WebhookConfig)
 registry.register('CreateUploadRequest', CreateUploadRequest)
 registry.register('CreateUploadResponse', CreateUploadResponse)
+registry.register('CreateGroupRequest', CreateGroupRequest)
+registry.register('UpdateGroupRequest', UpdateGroupRequest)
+registry.register('GroupDetail', GroupDetail)
+registry.register('AddMemberResult', AddMemberResult)
+registry.register('GroupInvitation', GroupInvitation)
+registry.register('DeletedGroupInfo', DeletedGroupInfo)
 
 // Security scheme — every authenticated endpoint uses it.
 const BearerAuth = registry.registerComponent('securitySchemes', 'BearerAuth', {
@@ -478,6 +490,207 @@ registry.registerPath({
   responses: {
     200: { description: 'Hidden', content: { 'application/json': { schema: z.object({ hidden: z.boolean() }) } } },
     404: { description: 'Not a participant or unknown conversation', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+// ─── Groups (auth) ─────────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups',
+  summary: 'Create a group',
+  description:
+    'Creates a new group with the caller as first admin. `member_handles` are processed through the same add pipeline as post-creation adds — some may auto-join (already contacts of yours), others receive pending invites depending on their `group_invite_policy`.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { body: { content: { 'application/json': { schema: CreateGroupRequest } } } },
+  responses: {
+    201: {
+      description: 'Group created',
+      content: {
+        'application/json': {
+          schema: z.object({ group: GroupDetail, add_results: z.array(AddMemberResult) }),
+        },
+      },
+    },
+    400: { description: 'Validation error', content: { 'application/json': { schema: ErrorResponse } } },
+    403: { description: 'Suspended account', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'get',
+  path: '/v1/groups/{id}',
+  summary: 'Get group detail',
+  description:
+    "Returns the group, its member list with roles, and the caller's own role. 410 with DeletedGroupInfo in `details` if the group has been deleted and the caller was a member; 404 otherwise (hides existence from non-members).",
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: 'Group detail', content: { 'application/json': { schema: GroupDetail } } },
+    404: { description: 'Not found or not a member', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group was deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'patch',
+  path: '/v1/groups/{id}',
+  summary: 'Update group metadata',
+  description:
+    'Admin-only. Changes to name / description / avatar each write their own system message into the group timeline (name_changed, description_changed, avatar_changed).',
+  security: [{ [BearerAuth.name]: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { 'application/json': { schema: UpdateGroupRequest } } },
+  },
+  responses: {
+    200: { description: 'Updated', content: { 'application/json': { schema: GroupDetail } } },
+    403: { description: 'Not an admin', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Not found or not a member', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group already deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/groups/{id}',
+  summary: 'Delete a group (creator-only hard delete)',
+  description:
+    'Writes a final `group_deleted` system message, marks deleted_at on the conversation, soft-removes every participant, and flushes undelivered envelopes so the deletion notice is the last thing each member receives. Cannot be undone.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: {
+      description: 'Deleted',
+      content: { 'application/json': { schema: z.object({ deleted_at: z.string() }) } },
+    },
+    403: { description: 'Not the creator', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Not found', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Already deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups/{id}/members',
+  summary: 'Add a member',
+  description:
+    "Admin-only. Depending on the target's `group_invite_policy` and whether they're a contact, may auto-add (`outcome=joined`) or create a pending invite (`outcome=invited`). Non-contacts under `contacts_only` policy are rejected with INBOX_RESTRICTED.",
+  security: [{ [BearerAuth.name]: [] }],
+  request: {
+    params: z.object({ id: z.string() }),
+    body: { content: { 'application/json': { schema: z.object({ handle: z.string() }) } } },
+  },
+  responses: {
+    200: { description: 'Added or invited', content: { 'application/json': { schema: AddMemberResult } } },
+    403: { description: 'Not admin / blocked / inbox restricted', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Group or target handle not found', content: { 'application/json': { schema: ErrorResponse } } },
+    409: { description: 'At max capacity', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/groups/{id}/members/{handle}',
+  summary: 'Remove a member',
+  description: 'Admin-only. Cannot remove the creator. Writes a `member_removed` system message.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string(), handle: z.string() }) },
+  responses: {
+    200: { description: 'Removed', content: { 'application/json': { schema: OkResponse } } },
+    403: { description: 'Not admin or target is creator', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Not a member', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups/{id}/members/{handle}/promote',
+  summary: 'Promote a member to admin',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string(), handle: z.string() }) },
+  responses: {
+    200: { description: 'Promoted', content: { 'application/json': { schema: OkResponse } } },
+    403: { description: 'Not admin', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Target not a member', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups/{id}/members/{handle}/demote',
+  summary: 'Demote an admin to member',
+  description: 'Cannot demote the last admin or the creator.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string(), handle: z.string() }) },
+  responses: {
+    200: { description: 'Demoted', content: { 'application/json': { schema: OkResponse } } },
+    403: { description: 'Not admin / last admin / target is creator', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Target not an admin', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups/{id}/leave',
+  summary: 'Leave a group',
+  description:
+    'If you are the last admin, the earliest-joined remaining member is auto-promoted so the group never becomes leaderless. Writes a `member_left` and (if applicable) an `admin_promoted` system message.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: {
+      description: 'Left the group',
+      content: {
+        'application/json': {
+          schema: z.object({ message: z.string(), promoted_handle: z.string().nullable() }),
+        },
+      },
+    },
+    404: { description: 'Not a member', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'get',
+  path: '/v1/groups/invites',
+  summary: 'List pending group invites',
+  security: [{ [BearerAuth.name]: [] }],
+  responses: {
+    200: { description: 'Invitations', content: { 'application/json': { schema: z.array(GroupInvitation) } } },
+  },
+})
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/groups/invites/{id}/accept',
+  summary: 'Accept a group invite',
+  description:
+    'Joins the group and returns the full detail so the client can render it immediately without a follow-up GET.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: 'Joined', content: { 'application/json': { schema: GroupDetail } } },
+    404: { description: 'Invite not found or already resolved', content: { 'application/json': { schema: ErrorResponse } } },
+    409: { description: 'Group at max capacity', content: { 'application/json': { schema: ErrorResponse } } },
+    410: { description: 'Group deleted after invite was issued', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/groups/invites/{id}',
+  summary: 'Reject a group invite',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: 'Rejected', content: { 'application/json': { schema: OkResponse } } },
+    404: { description: 'Invite not found', content: { 'application/json': { schema: ErrorResponse } } },
   },
 })
 
