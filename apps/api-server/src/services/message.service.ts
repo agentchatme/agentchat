@@ -11,23 +11,18 @@ import {
   getUndeliveredMessages,
   ackDeliveries,
   hideMessageForAgent,
-  tombstoneMessageForEveryone,
   isBlockedEither,
   isContact,
   findOrCreateDirectConversation,
   isParticipant,
   getConversation,
-  getConversationParticipantIds,
   markConversationEstablished,
   addContact,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
-import { DELETE_FOR_EVERYONE_WINDOW_MS } from '@agentchat/shared'
-
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
 import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
-import { purgeAttachment } from './upload.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
 
 const MAX_CONTENT_BYTES = 32_768 // 32 KB
@@ -330,9 +325,17 @@ export async function ackDelivered(
 }
 
 /**
- * Delete-for-me. Hides the message from the caller's own view. Any
- * participant of the message's conversation may call this — sender OR
- * recipient, both are valid. The other side's view is untouched.
+ * Hide-for-me. Removes the message from the caller's own view only.
+ * Either side (sender OR recipient) may call this; the other side's
+ * copy is untouched and remains fully visible in their conversation
+ * history, sync drain, and any subsequent report-for-abuse flow.
+ *
+ * This is the ONLY message deletion path in AgentChat. There is no
+ * delete-for-everyone. The invariant exists so a malicious sender
+ * can't retract spam, scam, or phishing content after a recipient
+ * has seen it — the recipient's copy has to survive for moderation
+ * review even if the sender "deletes" the message from their own
+ * outbox.
  *
  * Idempotent: hiding an already-hidden message is a success no-op.
  */
@@ -353,91 +356,4 @@ export async function hideMessageForMe(messageId: string, agentId: string) {
   }
 
   await hideMessageForAgent(messageId, agentId)
-}
-
-/**
- * Delete-for-everyone. Sender-only, 48h window. Tombstones the message
- * in place (content blanked, deleted_at stamped), cascades the
- * attachment if one was referenced, and pushes a message.deleted event
- * to all participants via both WS and webhook paths.
- *
- * Idempotent: if already tombstoned, returns without error.
- */
-export async function deleteMessageForEveryone(messageId: string, agentId: string) {
-  const message = await getMessageById(messageId)
-  if (!message) {
-    throw new MessageError('MESSAGE_NOT_FOUND', 'Message not found', 404)
-  }
-
-  if ((message.sender_id as string) !== agentId) {
-    throw new MessageError(
-      'FORBIDDEN',
-      'Only the sender can delete a message for everyone',
-      403,
-    )
-  }
-
-  // Already tombstoned — idempotent success. Don't re-push the event,
-  // don't re-cascade the attachment. A retry from the client should be
-  // a cheap no-op, not a thundering herd.
-  if (message.deleted_at) {
-    return
-  }
-
-  // 48h window. The server clock is authoritative — a client fiddling
-  // with its local time can't bypass this because the service, not the
-  // client, owns "now" here. We compare to created_at as stored on the
-  // row, which was set by send_message_atomic's NOW() on insert.
-  const createdAtMs = new Date(message.created_at as string).getTime()
-  if (Number.isNaN(createdAtMs)) {
-    throw new MessageError('INTERNAL_ERROR', 'Message created_at is malformed', 500)
-  }
-  if (Date.now() - createdAtMs > DELETE_FOR_EVERYONE_WINDOW_MS) {
-    throw new MessageError(
-      'DELETE_WINDOW_EXPIRED',
-      'The 48-hour window for deleting this message for everyone has expired',
-      403,
-    )
-  }
-
-  // Tombstone in a single UPDATE guarded by (sender_id, deleted_at IS NULL).
-  // Returns null if a concurrent second call raced ahead — treat as an
-  // idempotent success, same as the pre-check above.
-  const tombstone = await tombstoneMessageForEveryone(messageId, agentId)
-  if (!tombstone) return
-
-  // Attachment cascade — best effort, logged. A leak in storage is much
-  // less harmful than erroring out the request when the tombstone has
-  // already committed. Dangling-attachment GC is a separate concern.
-  const originalContent = message.content as Record<string, unknown> | null
-  const attachmentId = typeof originalContent?.attachment_id === 'string'
-    ? (originalContent.attachment_id as string)
-    : undefined
-
-  if (attachmentId) {
-    purgeAttachment(attachmentId).catch((err) => {
-      console.error('[message.delete] attachment cascade failed:', err)
-    })
-  }
-
-  // Push message.deleted to every participant of the conversation
-  // (including the sender, so their other devices tombstone too).
-  // sendToAgent fans out via Redis pub/sub, fireWebhooks enqueues a
-  // durable delivery row per matching webhook — identical shape to the
-  // message.new path so agents process them the same way.
-  const conversationId = message.conversation_id as string
-  const participantIds = await getConversationParticipantIds(conversationId)
-  const sender = await findAgentById(agentId)
-  const payload = {
-    message_id: messageId,
-    conversation_id: conversationId,
-    deleted_at: tombstone.deleted_at,
-    deleted_by: sender?.handle ?? 'unknown',
-    scope: 'everyone' as const,
-  }
-
-  for (const participantId of participantIds) {
-    sendToAgent(participantId, { type: 'message.deleted', payload })
-    fireWebhooks(participantId, 'message.deleted', payload)
-  }
 }

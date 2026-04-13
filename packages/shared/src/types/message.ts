@@ -36,19 +36,12 @@ export const Message = z.object({
   client_msg_id: z.string(),
   seq: z.number().int().nonnegative(),
   type: MessageType,
-  // On tombstoned messages (deleted_at != null) content is replaced with
-  // `{}` by the server, so clients should check deleted_at before rendering
-  // and show a "message deleted" placeholder in place of the body.
-  content: z.record(z.unknown()),
+  content: MessageContent,
   metadata: z.record(z.unknown()).default({}),
   status: MessageStatus,
   created_at: z.string().datetime(),
   delivered_at: z.string().datetime().nullable(),
   read_at: z.string().datetime().nullable(),
-  // Set when the sender has deleted-for-everyone within the 48h window.
-  // When this is non-null, `content` has been cleared and clients should
-  // render a tombstone placeholder instead of the original body.
-  deleted_at: z.string().datetime().nullable().optional(),
 })
 export type Message = z.infer<typeof Message>
 

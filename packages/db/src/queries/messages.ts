@@ -301,9 +301,13 @@ export async function ackDeliveries(
 }
 
 /**
- * Delete-for-me. Inserts a hide row and, if the caller is a recipient with a
+ * Hide-for-me. Inserts a hide row and, if the caller is a recipient with a
  * pending delivery, advances the envelope to 'delivered' so the sync drain
  * path stops returning the hidden message. Idempotent — safe to call twice.
+ *
+ * This is the ONLY message deletion path in AgentChat. There is no
+ * delete-for-everyone, no tombstone, no content mutation — reported
+ * messages must always be retrievable as evidence for abuse accountability.
  *
  * Does NOT check participation: that's the service layer's job. At this
  * level we just trust the caller is authorized.
@@ -314,40 +318,6 @@ export async function hideMessageForAgent(messageId: string, agentId: string): P
     p_agent_id: agentId,
   })
   if (error) throw error
-}
-
-/**
- * Delete-for-everyone. Sender-only tombstone. Replaces content with {} and
- * stamps deleted_at in place — the row stays so seq ordering is preserved
- * and recipients get a "this message was deleted" placeholder in history.
- *
- * The WHERE clause guards against:
- *   - a non-sender calling this (sender_id check)
- *   - a double-tombstone racing (deleted_at IS NULL check)
- *
- * Returns the new deleted_at on success, null if no row was affected
- * (either not found, not the sender, or already tombstoned — callers
- * disambiguate by checking the pre-existing row).
- *
- * Does NOT enforce the 48h window: that's the service layer's job because
- * the wall-clock source of truth (process clock) lives there, not here.
- */
-export async function tombstoneMessageForEveryone(
-  messageId: string,
-  senderId: string,
-): Promise<{ deleted_at: string } | null> {
-  const deletedAt = new Date().toISOString()
-  const { data, error } = await getSupabaseClient()
-    .from('messages')
-    .update({ deleted_at: deletedAt, content: {} })
-    .eq('id', messageId)
-    .eq('sender_id', senderId)
-    .is('deleted_at', null)
-    .select('deleted_at')
-    .maybeSingle()
-
-  if (error) throw error
-  return (data as { deleted_at: string } | null) ?? null
 }
 
 // --- Internal helpers -------------------------------------------------------

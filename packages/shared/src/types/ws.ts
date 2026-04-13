@@ -1,9 +1,12 @@
 import { z } from 'zod'
 
+// There is intentionally NO 'message.deleted' event. AgentChat only
+// supports hide-for-me deletion (see project_agentchat_no_delete_for_everyone):
+// a hide never changes the recipient's view of a message, so there's
+// nothing to notify the other side about. Do not add it back.
 export const ServerEvent = z.enum([
   'message.new',
   'message.read',
-  'message.deleted',
   'presence.update',
   'group.message',
   'typing.start',

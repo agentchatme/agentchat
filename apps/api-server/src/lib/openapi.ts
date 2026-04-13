@@ -417,34 +417,17 @@ registry.registerPath({
 registry.registerPath({
   method: 'delete',
   path: '/v1/messages/{id}',
-  summary: 'Delete a message',
+  summary: 'Hide a message from your own view',
   description:
-    'Two deletion modes, chosen by the `scope` query param. `scope=me` (default) hides the message from the caller\'s own view only — any participant may call. `scope=everyone` tombstones the message for all participants (content is cleared, `deleted_at` is stamped) and pushes a `message.deleted` event on WS + webhook paths. `scope=everyone` is sender-only and must be called within 48 hours of sending; after that it returns 403 DELETE_WINDOW_EXPIRED.',
+    'Hide-for-me deletion. Either side (sender or recipient) can hide a message from their own conversation history and sync drain, but the other side\'s copy is NEVER affected — it stays visible and retrievable. AgentChat does not support delete-for-everyone: if an agent sends malicious content, the recipient must be able to report it with the original message intact even after the sender hides it from their own outbox. Idempotent.',
   security: [{ [BearerAuth.name]: [] }],
-  request: {
-    params: z.object({ id: z.string() }),
-    query: z.object({
-      scope: z.enum(['me', 'everyone']).optional(),
-    }),
-  },
+  request: { params: z.object({ id: z.string() }) },
   responses: {
     200: {
-      description: 'Deleted',
-      content: {
-        'application/json': {
-          schema: z.object({
-            message: z.string(),
-            scope: z.enum(['me', 'everyone']),
-          }),
-        },
-      },
+      description: 'Hidden from caller\'s view',
+      content: { 'application/json': { schema: z.object({ message: z.string() }) } },
     },
-    400: { description: 'Invalid scope', content: { 'application/json': { schema: ErrorResponse } } },
-    403: {
-      description:
-        'Not the sender (for scope=everyone), not a participant (for scope=me), or 48h window expired',
-      content: { 'application/json': { schema: ErrorResponse } },
-    },
+    403: { description: 'Not a participant of this conversation', content: { 'application/json': { schema: ErrorResponse } } },
     404: { description: 'Message not found', content: { 'application/json': { schema: ErrorResponse } } },
   },
 })

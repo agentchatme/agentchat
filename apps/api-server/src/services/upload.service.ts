@@ -2,7 +2,6 @@ import { generateId } from '../lib/id.js'
 import {
   createAttachment,
   getAttachmentById,
-  deleteAttachmentRow,
   findAgentByHandle,
   isBlockedEither,
   getSupabaseClient,
@@ -145,32 +144,5 @@ export async function getAttachmentDownload(
     url: data.signedUrl,
     filename: row.filename,
     content_type: row.content_type,
-  }
-}
-
-/**
- * Cascade-delete an attachment: drop the row, then drop the bytes from
- * storage. Called by the delete-for-everyone flow when the sender
- * tombstones a message that referenced this attachment.
- *
- * Order matters: we remove the row FIRST so no GET /v1/attachments/:id
- * can still succeed against dangling bytes after the call returns. If
- * the storage remove fails we log and continue — leaking a few bytes
- * in a bucket is far less harmful than a half-deleted attachment
- * still resolving from the API.
- *
- * Idempotent: if the row is already gone (or never existed), this is a
- * no-op.
- */
-export async function purgeAttachment(attachmentId: string): Promise<void> {
-  const row = await deleteAttachmentRow(attachmentId)
-  if (!row) return
-
-  const { error } = await getSupabaseClient()
-    .storage.from(env.ATTACHMENTS_BUCKET)
-    .remove([row.storage_path])
-
-  if (error) {
-    console.error('[upload.purge] storage remove failed:', error, 'path:', row.storage_path)
   }
 }

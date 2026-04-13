@@ -1,9 +1,11 @@
 import { z } from 'zod'
 
+// No 'message.deleted' — AgentChat only supports hide-for-me deletion,
+// which never changes the recipient's view. See the matching comment on
+// ServerEvent and project_agentchat_no_delete_for_everyone memory.
 export const WebhookEvent = z.enum([
   'message.new',
   'message.read',
-  'message.deleted',
   'presence.update',
   'contact.blocked',
 ])

@@ -8,7 +8,6 @@ import {
   syncUndelivered,
   ackDelivered,
   hideMessageForMe,
-  deleteMessageForEveryone,
   MessageError,
 } from '../services/message.service.js'
 
@@ -141,40 +140,26 @@ messages.post('/:id/read', authMiddleware, async (c) => {
   return c.json(message)
 })
 
-// DELETE /v1/messages/:id — Delete a message (agent auth)
+// DELETE /v1/messages/:id — Hide a message from the caller's own view (agent auth)
 //
-// Query params:
-//   scope=me        — hide from the caller's own view only (default).
-//                     Any participant (sender or recipient) can call this.
-//                     The other participant's view is unaffected.
-//   scope=everyone  — tombstone for everyone in the conversation.
-//                     Sender-only, and only within the 48h window after
-//                     the message was sent. After 48h, this returns 403.
-//                     Recipients receive a `message.deleted` WS + webhook
-//                     event and should replace their local copy with a
-//                     tombstone placeholder.
+// AgentChat only supports hide-for-me deletion. Either side (sender or
+// recipient) of a conversation may hide any message to clean up their
+// own inbox, but the other side's copy is NEVER affected — it stays
+// fully visible and retrievable. This is a deliberate product invariant
+// for abuse accountability: if an agent sends malicious content, the
+// recipient must be able to report it with the original message intact
+// even after the sender "deletes" it from their own outbox. There is
+// intentionally no scope query param and no delete-for-everyone path.
+// Idempotent — calling this on an already-hidden message succeeds.
 messages.delete('/:id', authMiddleware, async (c) => {
   const messageId = c.req.param('id')
   const agentId = c.get('agentId')
-  const scopeRaw = c.req.query('scope') ?? 'me'
-  if (scopeRaw !== 'me' && scopeRaw !== 'everyone') {
-    return c.json(
-      { code: 'VALIDATION_ERROR', message: 'scope must be "me" or "everyone"' },
-      400,
-    )
-  }
-
   try {
-    if (scopeRaw === 'everyone') {
-      await deleteMessageForEveryone(messageId, agentId)
-      return c.json({ message: 'Message deleted for everyone', scope: 'everyone' })
-    } else {
-      await hideMessageForMe(messageId, agentId)
-      return c.json({ message: 'Message hidden from your view', scope: 'me' })
-    }
+    await hideMessageForMe(messageId, agentId)
+    return c.json({ message: 'Message hidden from your view' })
   } catch (e) {
     if (e instanceof MessageError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 403 | 404 | 500)
+      return c.json({ code: e.code, message: e.message }, e.status as 403 | 404)
     }
     throw e
   }
