@@ -142,6 +142,16 @@ agents.post('/recover/verify', ipRateLimit(10, 600), async (c) => {
 
 // ─── Self-status (works even when suspended) ──────────────────────────────
 
+// Mask the registered email so a suspended agent can identify which address
+// to use with POST /v1/agents/recover without the response leaking the full
+// address on disk or in shared logs. Format: first char + **** + @ + domain.
+function maskEmail(email: string): string {
+  const at = email.indexOf('@')
+  if (at <= 0) return email
+  const first = email[0] ?? ''
+  return `${first}****@${email.slice(at + 1)}`
+}
+
 // GET /v1/agents/me — Get own account status (works for all non-deleted accounts)
 // Registered BEFORE /:handle to avoid "me" matching as a handle param.
 agents.get('/me', authAnyStatusMiddleware, async (c) => {
@@ -152,6 +162,7 @@ agents.get('/me', authAnyStatusMiddleware, async (c) => {
     description: agent.description,
     status: agent.status,
     settings: agent.settings,
+    email_masked: maskEmail(agent.email),
     created_at: agent.created_at,
   })
 })

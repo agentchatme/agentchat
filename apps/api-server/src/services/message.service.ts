@@ -25,7 +25,7 @@ import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
 
-const MAX_CONTENT_BYTES = 32_768 // 32 KB
+const MAX_PAYLOAD_BYTES = 32_768 // 32 KB — content + metadata combined
 
 export class MessageError extends Error {
   code: string
@@ -42,13 +42,17 @@ export class MessageError extends Error {
 }
 
 export async function sendMessage(senderId: string, req: SendMessageRequest) {
-  // 0. Validate content size
-  const contentSize = Buffer.byteLength(JSON.stringify(req.content), 'utf8')
-  if (contentSize > MAX_CONTENT_BYTES) {
+  // 0. Combined content+metadata cap. Both travel to the recipient and are
+  //    stored, so a misbehaving sender could otherwise bypass the limit by
+  //    stuffing a large blob into `metadata`.
+  const payloadSize =
+    Buffer.byteLength(JSON.stringify(req.content), 'utf8') +
+    (req.metadata ? Buffer.byteLength(JSON.stringify(req.metadata), 'utf8') : 0)
+  if (payloadSize > MAX_PAYLOAD_BYTES) {
     messagesSendRejected.inc({ reason: 'too_large' })
     throw new MessageError(
       'CONTENT_TOO_LARGE',
-      `Message content exceeds ${MAX_CONTENT_BYTES / 1024}KB limit`,
+      `Message content + metadata exceeds ${MAX_PAYLOAD_BYTES / 1024}KB limit`,
       413,
     )
   }

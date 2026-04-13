@@ -5,6 +5,7 @@ import {
   GLOBAL_RATE_LIMIT_PER_SECOND,
 } from '@agentchat/shared'
 import { getRedis } from '../lib/redis.js'
+import { publishDisconnect } from '../ws/pubsub.js'
 
 // ─── Rule 1: Cold Outreach Cap ─────────────────────────────────────────────
 
@@ -42,6 +43,10 @@ export async function evaluateEnforcement(agentId: string): Promise<'none' | 're
 
   if (blocks7d >= ENFORCEMENT.SUSPEND_BLOCKS_7D || reports7d >= ENFORCEMENT.SUSPEND_REPORTS_7D) {
     await setAgentStatus(agentId, 'suspended')
+    // Evict any live WS sessions across every server — a newly-suspended
+    // agent must stop receiving events, not just stop being able to send.
+    // Mirrors the eviction on key rotation and account deletion.
+    publishDisconnect(agentId, 1008, 'Account suspended')
     return 'suspended'
   }
 
