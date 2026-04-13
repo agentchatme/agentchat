@@ -6,8 +6,16 @@ export type AgentStatus = z.infer<typeof AgentStatus>
 export const InboxMode = z.enum(['open', 'contacts_only'])
 export type InboxMode = z.infer<typeof InboxMode>
 
+// Independent of inbox_mode: an agent may welcome DMs from anyone but
+// restrict who can pull them into groups, or vice versa. `open` means
+// non-contacts generate a pending invite the invitee must accept;
+// `contacts_only` means non-contact invites are rejected outright.
+export const GroupInvitePolicy = z.enum(['open', 'contacts_only'])
+export type GroupInvitePolicy = z.infer<typeof GroupInvitePolicy>
+
 export const AgentSettings = z.object({
   inbox_mode: InboxMode.default('open'),
+  group_invite_policy: GroupInvitePolicy.default('open'),
   discoverable: z.boolean().default(true),
 })
 export type AgentSettings = z.infer<typeof AgentSettings>

@@ -56,12 +56,21 @@ export async function atomicSendMessage(params: {
 
 /**
  * Fetch a conversation's messages ordered by seq DESC (latest first).
- * Composes per-message delivery state from the single delivery row that
- * exists per message in direct conversations (the non-sender's envelope).
  *
- * When group conversations arrive this will need a caller-scoped join so each
- * side sees only their own envelope, but for 1:1 there's exactly one row per
- * message and both sides converge on it.
+ * For direct conversations there is exactly one delivery row per message
+ * (the non-sender's envelope) and both sides see it — that's how the
+ * sender observes delivered/read state on their own sent message.
+ *
+ * For groups there are N-1 delivery rows per message (one per recipient),
+ * so the caller passes `scopeToRecipient: true` and we fetch only that
+ * recipient's envelope. The sender of a group message has no envelope of
+ * their own; they see `status: 'stored'` in the list view. Per-recipient
+ * read receipts for group messages are served by a separate aggregation
+ * (info pane), not this list endpoint.
+ *
+ * `joinedSeq` caps message visibility for new group members — only
+ * messages at `seq >= joinedSeq` are returned, so a member who joined
+ * after the fact does not see history from before their join.
  */
 export async function getConversationMessages(
   conversationId: string,
@@ -69,6 +78,7 @@ export async function getConversationMessages(
   limit = 50,
   beforeSeq?: number,
   hiddenAfter?: string | null,
+  opts: { joinedSeq?: number; scopeToRecipient?: boolean } = {},
 ) {
   let query = getSupabaseClient()
     .from('messages')
@@ -79,6 +89,10 @@ export async function getConversationMessages(
 
   if (beforeSeq !== undefined) {
     query = query.lt('seq', beforeSeq)
+  }
+
+  if (opts.joinedSeq !== undefined) {
+    query = query.gte('seq', opts.joinedSeq)
   }
 
   // Per-agent hide cutoff: messages at or before the hide timestamp are
@@ -104,7 +118,9 @@ export async function getConversationMessages(
   const visible = messages.filter((m) => !hiddenSet.has(m.id as string))
   if (visible.length === 0) return []
 
-  const deliveries = await fetchDeliveries(visible.map((m) => m.id as string))
+  const deliveries = opts.scopeToRecipient
+    ? await fetchDeliveriesForRecipient(agentId, visible.map((m) => m.id as string))
+    : await fetchDeliveries(visible.map((m) => m.id as string))
   return visible.map((m) => composeWithDelivery(m, deliveries.get(m.id as string)))
 }
 
@@ -343,8 +359,26 @@ async function fetchDeliveries(messageIds: string[]): Promise<Map<string, Delive
   const map = new Map<string, DeliveryRow>()
   for (const row of (data ?? []) as DeliveryRow[]) {
     // For 1:1 there's exactly one delivery per message. Last write wins if
-    // there are somehow duplicates; group-conv support will need a richer
-    // caller-scoped shape.
+    // there are somehow duplicates.
+    map.set(row.message_id, row)
+  }
+  return map
+}
+
+async function fetchDeliveriesForRecipient(
+  recipientAgentId: string,
+  messageIds: string[],
+): Promise<Map<string, DeliveryRow>> {
+  if (messageIds.length === 0) return new Map()
+  const { data, error } = await getSupabaseClient()
+    .from('message_deliveries')
+    .select('*')
+    .eq('recipient_agent_id', recipientAgentId)
+    .in('message_id', messageIds)
+
+  if (error) throw error
+  const map = new Map<string, DeliveryRow>()
+  for (const row of (data ?? []) as DeliveryRow[]) {
     map.set(row.message_id, row)
   }
   return map

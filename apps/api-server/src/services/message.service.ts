@@ -18,6 +18,10 @@ import {
   getConversation,
   markConversationEstablished,
   addContact,
+  findGroupById,
+  getGroupParticipantRole,
+  getGroupParticipantJoinedSeq,
+  getGroupMembers,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
@@ -57,12 +61,29 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
     )
   }
 
+  // SendMessageRequest enforces exactly-one-of(to, conversation_id) via
+  // its refine; at this point one is set. We branch on that to pick the
+  // right enforcement policy. Direct sends pay cold-outreach + block +
+  // inbox_mode costs; group sends pay only rate limit + size + idempotency
+  // because group membership already is the consent that would otherwise
+  // be enforced by those checks.
+  if (req.conversation_id !== undefined) {
+    return sendGroupMessage(senderId, req.conversation_id, req)
+  }
+  return sendDirectMessage(senderId, req.to as string, req)
+}
+
+async function sendDirectMessage(
+  senderId: string,
+  rawTo: string,
+  req: SendMessageRequest,
+) {
   // 1. Resolve recipient by handle (must be first — everything depends on recipient.id)
-  const recipient = await findAgentByHandle(req.to.replace(/^@/, '').toLowerCase())
+  const recipient = await findAgentByHandle(rawTo.replace(/^@/, '').toLowerCase())
 
   if (!recipient) {
     messagesSendRejected.inc({ reason: 'recipient_not_found' })
-    throw new MessageError('AGENT_NOT_FOUND', `Account ${req.to} not found`, 404)
+    throw new MessageError('AGENT_NOT_FOUND', `Account ${rawTo} not found`, 404)
   }
 
   if (recipient.id === senderId) {
@@ -194,6 +215,122 @@ export async function sendMessage(senderId: string, req: SendMessageRequest) {
   return { message: publicMessage, isReplay: message.is_replay }
 }
 
+// Group send path. Skips cold-outreach, block, and inbox_mode checks
+// because group membership IS the consent — those guardrails are spent
+// at group-invite time by the group service. We still enforce:
+//   - sender is an active participant (not just a former member)
+//   - sender is not suspended
+//   - per-second global rate limit
+//   - size / idempotency (already handled by the RPC)
+// Group membership of 100 means a single send fans out to 99 envelopes
+// + 99 WS publishes + 99 webhook enqueues; the rate limit is the knob
+// that keeps that fan-out bounded.
+async function sendGroupMessage(
+  senderId: string,
+  conversationId: string,
+  req: SendMessageRequest,
+) {
+  const group = await findGroupById(conversationId)
+  if (!group) {
+    // Could be a direct conversation id by mistake — reject with a
+    // specific error so the client knows to use `to` instead.
+    const conv = await getConversation(conversationId).catch(() => null)
+    if (conv && conv.type === 'direct') {
+      messagesSendRejected.inc({ reason: 'wrong_conv_type' })
+      throw new MessageError(
+        'VALIDATION_ERROR',
+        'Use `to` to send to a direct conversation',
+        400,
+      )
+    }
+    messagesSendRejected.inc({ reason: 'group_not_found' })
+    throw new MessageError('GROUP_NOT_FOUND', 'Group not found', 404)
+  }
+
+  const [sender, role] = await Promise.all([
+    findAgentById(senderId),
+    getGroupParticipantRole(conversationId, senderId),
+  ])
+
+  if (!sender) {
+    messagesSendRejected.inc({ reason: 'sender_not_found' })
+    throw new MessageError('AGENT_NOT_FOUND', 'Sender account not found', 404)
+  }
+  if (sender.status === 'suspended') {
+    messagesSendRejected.inc({ reason: 'suspended' })
+    throw new MessageError('SUSPENDED', 'Your account is suspended.', 403)
+  }
+  if (!role) {
+    // Hide existence of the group from non-members.
+    messagesSendRejected.inc({ reason: 'group_not_member' })
+    throw new MessageError('GROUP_NOT_FOUND', 'Group not found', 404)
+  }
+
+  const rateCheck = await checkGlobalRateLimit(senderId)
+  if (!rateCheck.allowed) {
+    rateLimitHits.inc({ rule: 'global' })
+    messagesSendRejected.inc({ reason: 'rate_limited' })
+    throw new MessageError(
+      'RATE_LIMITED',
+      'Too many messages per second',
+      429,
+      rateCheck.retryAfterMs,
+    )
+  }
+
+  const messageId = generateId('msg')
+  const message = await atomicSendMessage({
+    id: messageId,
+    conversation_id: conversationId,
+    sender_id: senderId,
+    client_msg_id: req.client_msg_id,
+    type: req.type ?? 'text',
+    content: req.content as Record<string, unknown>,
+    metadata: req.metadata as Record<string, unknown> | undefined,
+  })
+
+  const publicMessage = toPublicMessage(message, sender.handle)
+
+  if (!message.is_replay) {
+    messagesSent.inc({ outcome: 'ok' })
+    // Async fan-out to all active members except sender. Fetch the
+    // recipient set fresh after the atomic insert so late joiners are
+    // included and just-departed members are excluded — consistent with
+    // the DB-side delivery envelope population done by send_message_atomic.
+    pushToGroup(conversationId, senderId, publicMessage).catch(() => {
+      // Push failed — DB state is durable, sync/WS reconnect recovers it
+    })
+  } else {
+    messagesSent.inc({ outcome: 'replay' })
+  }
+
+  return { message: publicMessage, isReplay: message.is_replay }
+}
+
+async function pushToGroup(
+  conversationId: string,
+  senderId: string,
+  message: Record<string, unknown>,
+) {
+  const members = await getGroupMembers(conversationId)
+  if (members.length === 0) return
+
+  // getGroupMembers returns handles; we need the internal ids to route
+  // WS and webhook pushes. Resolve in one batch.
+  const handles = members.map((m) => m.handle)
+  const agents = await Promise.all(
+    handles.map((h) => findAgentByHandle(h.toLowerCase())),
+  )
+  for (const agent of agents) {
+    if (!agent || agent.id === senderId) continue
+    sendToAgent(agent.id, {
+      type: 'message.new',
+      payload: message,
+    })
+    fireWebhooks(agent.id, 'message.new', message)
+  }
+}
+
 /** Strip internal sender_id (and internal is_replay flag), replace sender_id
  *  with the public sender handle. */
 function toPublicMessage(msg: Record<string, unknown>, senderHandle: string) {
@@ -235,7 +372,10 @@ export async function getMessages(
   limit = 50,
   beforeSeq?: number,
 ) {
-  const participant = await isParticipant(conversationId, agentId)
+  // Resolve the conversation + participation in one shot so we can
+  // apply group-specific rules (joined_seq, per-recipient delivery
+  // scoping) without a second round-trip.
+  const participant = await getParticipantContext(conversationId, agentId)
   if (!participant) {
     throw new MessageError('FORBIDDEN', 'You are not a participant in this conversation', 403)
   }
@@ -250,8 +390,46 @@ export async function getMessages(
     limit,
     beforeSeq,
     hiddenAfter,
+    {
+      joinedSeq: participant.joinedSeq,
+      scopeToRecipient: participant.conversationType === 'group',
+    },
   )
   return mapSenderHandles(messages)
+}
+
+// Lightweight wrapper around conversations/conversation_participants that
+// returns just the fields message-history needs: whether the caller is
+// still active, the conversation type, and their joined_seq. Returns
+// null if they've never been a participant OR have left the conversation
+// — both cases should 403 the caller.
+async function getParticipantContext(
+  conversationId: string,
+  agentId: string,
+): Promise<
+  | {
+      conversationType: 'direct' | 'group'
+      joinedSeq: number
+    }
+  | null
+> {
+  const conv = await getConversation(conversationId).catch(() => null)
+  if (!conv) return null
+  const type = conv.type as 'direct' | 'group'
+
+  if (type === 'direct') {
+    const active = await isParticipant(conversationId, agentId)
+    if (!active) return null
+    // Direct conversations have no join cutoff — both parties see the
+    // full history. Using 0 as joinedSeq is a no-op filter.
+    return { conversationType: 'direct', joinedSeq: 0 }
+  }
+
+  // For groups we need the stored joined_seq so the caller only sees
+  // messages at or after their join point.
+  const joinedSeq = await getGroupParticipantJoinedSeq(conversationId, agentId)
+  if (joinedSeq === null) return null
+  return { conversationType: 'group', joinedSeq }
 }
 
 export async function markAsRead(messageId: string, agentId: string) {

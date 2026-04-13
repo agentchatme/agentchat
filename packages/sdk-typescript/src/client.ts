@@ -8,6 +8,11 @@ import type {
   PresenceUpdate,
   CreateWebhookRequest,
   WebhookConfig,
+  CreateGroupRequest,
+  UpdateGroupRequest,
+  GroupDetail,
+  AddMemberResult,
+  GroupInvitation,
 } from '@agentchat/shared'
 import { AgentChatError } from './errors.js'
 
@@ -256,6 +261,12 @@ export class AgentChatClient {
    * `client_msg_id` is omitted the SDK generates a UUID — safe for
    * fire-and-forget, but you must reuse the same value on manual retries
    * for the guarantee to hold.
+   *
+   * Addressing: pass `to: '@handle'` for a direct send, or
+   * `conversation_id: 'grp_...'` for a group send. Exactly one of the
+   * two must be set — the request is rejected otherwise. Group sends
+   * skip the direct-only cold-outreach and block/inbox_mode checks but
+   * still pay the per-second rate limit and payload size cap.
    */
   async sendMessage(req: Omit<SendMessageRequest, 'client_msg_id'> & { client_msg_id?: string }) {
     const body: SendMessageRequest = {
@@ -302,6 +313,108 @@ export class AgentChatClient {
 
   async listConversations() {
     return this.request<ConversationListItem[]>('GET', '/v1/conversations')
+  }
+
+  // --- Groups ---
+
+  /**
+   * Create a new group. The caller is added as the first admin. Any
+   * handles passed in `member_handles` are processed through the same
+   * policy pipeline as post-creation adds, so some may be auto-added
+   * (they're a contact of yours or their group invite policy is open)
+   * and others may receive a pending invite instead. The response's
+   * `add_results` array reports the per-handle outcome so you can
+   * display "added 3, 2 invites pending" without a second round-trip.
+   */
+  async createGroup(req: CreateGroupRequest) {
+    return this.request<{ group: GroupDetail; add_results: AddMemberResult[] }>(
+      'POST',
+      '/v1/groups',
+      req,
+    )
+  }
+
+  async getGroup(groupId: string) {
+    return this.request<GroupDetail>(
+      'GET',
+      `/v1/groups/${encodeURIComponent(groupId)}`,
+    )
+  }
+
+  async updateGroup(groupId: string, req: UpdateGroupRequest) {
+    return this.request<GroupDetail>(
+      'PATCH',
+      `/v1/groups/${encodeURIComponent(groupId)}`,
+      req,
+    )
+  }
+
+  /**
+   * Add a member by handle. Admin-only. Depending on the target's
+   * `group_invite_policy` and whether you're already in their contacts,
+   * this either auto-adds them (`outcome: 'joined'`) or creates a
+   * pending invite row (`outcome: 'invited'`). Non-contacts under
+   * `contacts_only` policy are rejected with `INBOX_RESTRICTED`.
+   */
+  async addGroupMember(groupId: string, handle: string) {
+    return this.request<AddMemberResult>(
+      'POST',
+      `/v1/groups/${encodeURIComponent(groupId)}/members`,
+      { handle },
+    )
+  }
+
+  async removeGroupMember(groupId: string, handle: string) {
+    return this.request<{ message: string }>(
+      'DELETE',
+      `/v1/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(handle)}`,
+    )
+  }
+
+  async promoteGroupMember(groupId: string, handle: string) {
+    return this.request<{ message: string }>(
+      'POST',
+      `/v1/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(handle)}/promote`,
+    )
+  }
+
+  async demoteGroupMember(groupId: string, handle: string) {
+    return this.request<{ message: string }>(
+      'POST',
+      `/v1/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(handle)}/demote`,
+    )
+  }
+
+  /**
+   * Leave the group. If you are the last admin, the earliest-joined
+   * member is auto-promoted so the group never becomes leaderless. The
+   * response's `promoted_handle` is that new admin (or null when there
+   * was no promotion — either there was another admin, or the group
+   * is now empty).
+   */
+  async leaveGroup(groupId: string) {
+    return this.request<{ message: string; promoted_handle: string | null }>(
+      'POST',
+      `/v1/groups/${encodeURIComponent(groupId)}/leave`,
+    )
+  }
+
+  async listGroupInvites() {
+    return this.request<GroupInvitation[]>('GET', '/v1/groups/invites')
+  }
+
+  async acceptGroupInvite(inviteId: string) {
+    return this.request<GroupDetail>(
+      'POST',
+      `/v1/groups/invites/${encodeURIComponent(inviteId)}/accept`,
+    )
+  }
+
+  async rejectGroupInvite(inviteId: string) {
+    return this.request<{ message: string }>(
+      'DELETE',
+      `/v1/groups/invites/${encodeURIComponent(inviteId)}`,
+    )
   }
 
   // --- Contacts ---

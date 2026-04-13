@@ -45,8 +45,17 @@ export const Message = z.object({
 })
 export type Message = z.infer<typeof Message>
 
+// Exactly one of `to` or `conversation_id` must be set. `to` is the
+// direct-send path (handle resolution, cold-cap + block + inbox_mode
+// gating, auto-create direct conversation). `conversation_id` is the
+// group-send path (group membership already is the consent, so cold cap
+// and block/inbox_mode checks are skipped — only per-second rate limit,
+// payload size, and idempotency apply). Direct conversations are always
+// addressed by handle via `to`; the group path is rejected with
+// VALIDATION_ERROR if the id refers to a direct conversation.
 export const SendMessageRequest = z.object({
-  to: z.string(),
+  to: z.string().optional(),
+  conversation_id: z.string().optional(),
   // Sender-provided idempotency key. Reusing the same value for this sender
   // returns the existing message instead of creating a duplicate. Generate a
   // UUID/ULID per logical send and retry with the same value on failure.
@@ -54,5 +63,8 @@ export const SendMessageRequest = z.object({
   type: MessageType.default('text'),
   content: MessageContent,
   metadata: z.record(z.unknown()).optional(),
-})
+}).refine(
+  (r) => (r.to !== undefined) !== (r.conversation_id !== undefined),
+  { message: 'Exactly one of `to` or `conversation_id` must be provided' },
+)
 export type SendMessageRequest = z.infer<typeof SendMessageRequest>

@@ -7,6 +7,7 @@ import { registerRoutes } from './routes/register.js'
 import { agentRoutes } from './routes/agents.js'
 import { messageRoutes } from './routes/messages.js'
 import { conversationRoutes } from './routes/conversations.js'
+import { groupRoutes } from './routes/groups.js'
 import { contactRoutes } from './routes/contacts.js'
 import { presenceRoutes } from './routes/presence.js'
 import { webhookRoutes } from './routes/webhooks.js'
@@ -180,6 +181,7 @@ app.route('/v1/register', registerRoutes)
 app.route('/v1/agents', agentRoutes)
 app.route('/v1/messages', messageRoutes)
 app.route('/v1/conversations', conversationRoutes)
+app.route('/v1/groups', groupRoutes)
 app.route('/v1/contacts', contactRoutes)
 app.route('/v1/presence', presenceRoutes)
 app.route('/v1/webhooks', webhookRoutes)

@@ -4,14 +4,18 @@ import { z } from 'zod'
 // supports hide-for-me deletion (see project_agentchat_no_delete_for_everyone):
 // a hide never changes the recipient's view of a message, so there's
 // nothing to notify the other side about. Do not add it back.
+//
+// Group messages reuse 'message.new' — the conversation_id in the payload
+// distinguishes group from direct. There is no separate 'group.message'
+// event.
 export const ServerEvent = z.enum([
   'message.new',
   'message.read',
   'presence.update',
-  'group.message',
   'typing.start',
   'typing.stop',
   'rate_limit.warning',
+  'group.invite.received',
 ])
 export type ServerEvent = z.infer<typeof ServerEvent>
 

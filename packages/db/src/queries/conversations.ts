@@ -28,16 +28,27 @@ export async function findOrCreateDirectConversation(
   }
 }
 
+// List conversations this agent is actively part of. Departed group members
+// (left_at IS NOT NULL) are filtered out here so a left/kicked group no
+// longer appears in the list — the past messages are still readable via
+// the direct /v1/messages/:id endpoint for audit if the caller still has
+// the conversation id, but it no longer clutters the timeline.
+//
+// The shape is shared between direct and group conversations. For direct
+// conversations we resolve the counterparty's handle; for groups we return
+// the group name/avatar and active member count instead. Clients render
+// using `type` to choose which fields to show.
 export async function getAgentConversations(agentId: string, limit = 50) {
   const { data, error } = await getSupabaseClient()
     .from('conversation_participants')
     .select('conversation_id')
     .eq('agent_id', agentId)
+    .is('left_at', null)
 
   if (error) throw error
   if (!data || data.length === 0) return []
 
-  const convIds = data.map((d) => d.conversation_id)
+  const convIds = data.map((d) => d.conversation_id as string)
 
   // Load this agent's hide rows in parallel with the conversation fetch.
   // A conversation is hidden for this agent iff there's a hide row AND
@@ -49,7 +60,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     await Promise.all([
       getSupabaseClient()
         .from('conversations')
-        .select('id, type, created_at, updated_at, last_message_at')
+        .select('id, type, name, avatar_url, created_at, updated_at, last_message_at')
         .in('id', convIds)
         .order('last_message_at', { ascending: false, nullsFirst: false }),
       getSupabaseClient()
@@ -77,7 +88,105 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     return last > hiddenAt
   })
 
-  return visible.slice(0, limit)
+  const capped = visible.slice(0, limit)
+  if (capped.length === 0) return []
+
+  const directIds = capped.filter((c) => c.type === 'direct').map((c) => c.id as string)
+  const groupIds = capped.filter((c) => c.type === 'group').map((c) => c.id as string)
+
+  // Direct conversations: resolve the counterparty handle. For groups:
+  // count active members. Run both in parallel; both are bounded by the
+  // page size (default 50).
+  const [directParticipantsRes, groupCountsRes] = await Promise.all([
+    directIds.length === 0
+      ? Promise.resolve({ data: [] as Array<{
+          conversation_id: string
+          agent_id: string
+        }>, error: null })
+      : getSupabaseClient()
+          .from('conversation_participants')
+          .select('conversation_id, agent_id')
+          .in('conversation_id', directIds)
+          .neq('agent_id', agentId)
+          .is('left_at', null),
+    groupIds.length === 0
+      ? Promise.resolve(new Map<string, number>())
+      : (async () => {
+          const counts = new Map<string, number>()
+          await Promise.all(
+            groupIds.map(async (gid) => {
+              const { count, error: cErr } = await getSupabaseClient()
+                .from('conversation_participants')
+                .select('*', { count: 'exact', head: true })
+                .eq('conversation_id', gid)
+                .is('left_at', null)
+              if (cErr) throw cErr
+              counts.set(gid, count ?? 0)
+            }),
+          )
+          return counts
+        })(),
+  ])
+
+  if (directParticipantsRes.error) throw directParticipantsRes.error
+  const counterpartyIds = [
+    ...new Set((directParticipantsRes.data ?? []).map((r) => r.agent_id as string)),
+  ]
+  const { data: counterpartyAgents, error: agentErr } =
+    counterpartyIds.length === 0
+      ? { data: [] as Array<{ id: string; handle: string; display_name: string | null }>, error: null }
+      : await getSupabaseClient()
+          .from('agents')
+          .select('id, handle, display_name')
+          .in('id', counterpartyIds)
+  if (agentErr) throw agentErr
+  const agentMap = new Map(
+    (counterpartyAgents ?? []).map((a) => [a.id as string, a]),
+  )
+
+  // Map direct conv id → counterparty handle/display_name. A direct conv
+  // always has exactly one other participant in Phase 1, but we tolerate
+  // zero (other side purged) by leaving participants empty.
+  const directParticipantMap = new Map<
+    string,
+    { handle: string; display_name: string | null }
+  >()
+  for (const row of directParticipantsRes.data ?? []) {
+    const agent = agentMap.get(row.agent_id as string)
+    if (!agent) continue
+    directParticipantMap.set(row.conversation_id as string, {
+      handle: agent.handle as string,
+      display_name: (agent.display_name as string | null) ?? null,
+    })
+  }
+
+  return capped.map((conv) => {
+    const id = conv.id as string
+    const type = conv.type as 'direct' | 'group'
+    if (type === 'group') {
+      return {
+        id,
+        type,
+        participants: [] as Array<{ handle: string; display_name: string | null }>,
+        group_name: (conv.name as string | null) ?? null,
+        group_avatar_url: (conv.avatar_url as string | null) ?? null,
+        group_member_count: groupCountsRes.get(id) ?? 0,
+        last_message_at: (conv.last_message_at as string | null) ?? null,
+        updated_at: conv.updated_at as string,
+      }
+    }
+    const counterparty = directParticipantMap.get(id)
+    return {
+      id,
+      type,
+      participants: counterparty ? [counterparty] : [],
+      group_name: null,
+      group_avatar_url: null,
+      group_member_count: null,
+      last_message_at: (conv.last_message_at as string | null) ?? null,
+      updated_at: conv.updated_at as string,
+    }
+  })
 }
 
 /**
@@ -132,15 +241,20 @@ export async function updateConversationLastMessage(conversationId: string) {
   if (error) throw error
 }
 
+// Active participation only. A departed group member is no longer a
+// participant for authorization purposes: they can't send, read new
+// messages, or see the conversation in their list. Their past messages
+// remain in place (soft-remove via left_at).
 export async function isParticipant(conversationId: string, agentId: string): Promise<boolean> {
   const { data } = await getSupabaseClient()
     .from('conversation_participants')
-    .select('agent_id')
+    .select('agent_id, left_at')
     .eq('conversation_id', conversationId)
     .eq('agent_id', agentId)
-    .single()
+    .maybeSingle()
 
-  return !!data
+  if (!data) return false
+  return data.left_at === null
 }
 
 export async function getConversationParticipants(conversationId: string) {
@@ -148,11 +262,11 @@ export async function getConversationParticipants(conversationId: string) {
     .from('conversation_participants')
     .select('agent_id')
     .eq('conversation_id', conversationId)
+    .is('left_at', null)
 
   if (error) throw error
   if (!data || data.length === 0) return []
 
-  // Resolve agent IDs to handles
   const agentIds = data.map((d) => d.agent_id)
   const { data: agents, error: agentError } = await getSupabaseClient()
     .from('agents')

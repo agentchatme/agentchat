@@ -3,6 +3,7 @@ import {
   COLD_OUTREACH_DAILY_CAP,
   ENFORCEMENT,
   GLOBAL_RATE_LIMIT_PER_SECOND,
+  GROUP_INVITES_PER_DAY,
 } from '@agentchat/shared'
 import { getRedis } from '../lib/redis.js'
 import { publishDisconnect } from '../ws/pubsub.js'
@@ -92,5 +93,48 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
     // than to block all messages because the rate limiter is unavailable.
     console.error('[rate-limit] Redis unavailable — failing open')
     return { allowed: true }
+  }
+}
+
+// ─── Rule 4: Group invite cap ───────────────────────────────────────────────
+
+/**
+ * Per-sender rolling 24h cap on group invites. Counts both auto-added
+ * and pending invites — the cap exists to bound nuisance attention cost
+ * on recipients, and both outcomes pull on that budget equally.
+ *
+ * Implemented as a fixed 24h expiring counter in Redis (not a true
+ * sliding window — sliding would require ZSET machinery we don't need
+ * at Phase 1 scale). The counter resets 24h after its first entry in
+ * the current window, which means a burst-and-wait attacker could
+ * theoretically push slightly over the cap at window rollover. That's
+ * acceptable — the cap is a coarse nuisance guardrail, not a precise
+ * anti-abuse bound (the real wall is the per-agent
+ * group_invite_policy + block + report enforcement).
+ *
+ * Fails open on Redis unavailability, mirroring the other rate limits:
+ * degrading to "no invite cap" is less bad than freezing the group
+ * feature entirely.
+ */
+export async function checkGroupInviteCap(agentId: string): Promise<{
+  allowed: boolean
+  current: number
+  limit: number
+}> {
+  const limit = GROUP_INVITES_PER_DAY
+  try {
+    const redis = getRedis()
+    const key = `ratelimit:groupinvites:24h:${agentId}`
+    const current = await redis.incr(key)
+    if (current === 1) {
+      await redis.expire(key, 24 * 60 * 60)
+    }
+    if (current > limit) {
+      return { allowed: false, current, limit }
+    }
+    return { allowed: true, current, limit }
+  } catch {
+    console.error('[group-invite-cap] Redis unavailable — failing open')
+    return { allowed: true, current: 0, limit }
   }
 }
