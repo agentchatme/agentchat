@@ -35,7 +35,9 @@ uploads.post('/', authMiddleware, async (c) => {
     return c.json(result, 201)
   } catch (e) {
     if (e instanceof UploadError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 400 | 403 | 404 | 500 | 503)
+      const body: Record<string, unknown> = { code: e.code, message: e.message }
+      if (e.details) body.details = e.details
+      return c.json(body, e.status as 400 | 403 | 404 | 410 | 500 | 503)
     }
     throw e
   }

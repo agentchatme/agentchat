@@ -16,6 +16,7 @@ export const ServerEvent = z.enum([
   'typing.stop',
   'rate_limit.warning',
   'group.invite.received',
+  'group.deleted',
 ])
 export type ServerEvent = z.infer<typeof ServerEvent>
 

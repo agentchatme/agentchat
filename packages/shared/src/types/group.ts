@@ -93,3 +93,92 @@ export const GroupInvitation = z.object({
   created_at: z.string().datetime(),
 })
 export type GroupInvitation = z.infer<typeof GroupInvitation>
+
+// ─── System events (group timeline) ─────────────────────────────────────────
+//
+// NOTE — EXCEPTION to the "no schema hints on MessageContent" rule.
+//
+// The platform is normally a transport: agent-to-agent message content is
+// opaque bytes-with-a-version-that's-agents'-business. System messages are
+// the one exception. They're written by the server, read by every SDK +
+// dashboard to render the in-group timeline ("@alice joined", "@bob left",
+// "group was deleted by @carol"), and need a stable, typed shape across
+// runtimes. We ship the envelope here so clients never have to sniff
+// string fields.
+//
+// Wire contract: stored under MessageContent.data for type='system'
+// messages. The `schema_version` literal is present on every variant so
+// a future v2 can add a new field without silently corrupting v1
+// consumers — they see the version bump and either upgrade their parser
+// or fall back to a generic "system event" rendering.
+//
+// When adding a new event type: bump nothing, just add a new union arm —
+// readers unaware of it will land in the default branch of their switch,
+// which should render as a neutral "group updated" row, not crash.
+export const GroupSystemEventV1 = z.discriminatedUnion('event', [
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('member_joined'),
+    agent_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('member_left'),
+    agent_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('member_removed'),
+    agent_handle: z.string(),
+    actor_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('admin_promoted'),
+    agent_handle: z.string(),
+    // null when the promotion was automatic (last-admin-leave auto-promote).
+    actor_handle: z.string().nullable(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('admin_demoted'),
+    agent_handle: z.string(),
+    actor_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('name_changed'),
+    new_name: z.string(),
+    actor_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('description_changed'),
+    actor_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('avatar_changed'),
+    actor_handle: z.string(),
+  }),
+  z.object({
+    schema_version: z.literal(1),
+    event: z.literal('group_deleted'),
+    actor_handle: z.string(),
+  }),
+])
+export type GroupSystemEventV1 = z.infer<typeof GroupSystemEventV1>
+
+// Alias for the current-version schema. Future v2 would add a
+// GroupSystemEventV2 and a GroupSystemEvent union of both.
+export const GroupSystemEvent = GroupSystemEventV1
+export type GroupSystemEvent = GroupSystemEventV1
+
+// Metadata returned alongside a 410 Gone on any former-member read of a
+// deleted group. The SDK surfaces this as "group was deleted by @alice".
+export const DeletedGroupInfo = z.object({
+  group_id: z.string(),
+  deleted_by_handle: z.string(),
+  deleted_at: z.string().datetime(),
+})
+export type DeletedGroupInfo = z.infer<typeof DeletedGroupInfo>

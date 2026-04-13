@@ -15,22 +15,27 @@ import {
   getGroupMembers,
   getGroupMemberCount,
   getGroupParticipantRole,
+  getGroupPushRecipients,
   createGroupInvitation,
   findGroupInvitation,
   deleteGroupInvitation,
   listGroupInvitationsForAgent,
   isInviteeAlreadyInvited,
   updateGroupMetadata,
+  deleteGroupAtomic,
+  hasParticipantHistory,
   atomicSendMessage,
 } from '@agentchat/db'
 import {
   GROUP_MAX_MEMBERS,
+  GroupSystemEvent,
   type CreateGroupRequest,
   type UpdateGroupRequest,
   type GroupDetail,
   type GroupMember,
   type AddMemberResult,
   type GroupInvitation,
+  type DeletedGroupInfo,
 } from '@agentchat/shared'
 import { checkGroupInviteCap } from './enforcement.service.js'
 import { sendToAgent } from '../ws/events.js'
@@ -39,11 +44,23 @@ import { fireWebhooks } from './webhook.service.js'
 export class GroupError extends Error {
   code: string
   status: number
-  constructor(code: string, message: string, status: number) {
+  // Arbitrary structured payload surfaced on the wire alongside code +
+  // message. Used by GROUP_DELETED (410) to ship DeletedGroupInfo so
+  // the SDK can render "group was deleted by @alice" without a second
+  // round-trip. Kept open-ended so future errors (e.g. rate-limit with
+  // reset_at) can attach their own details without another subclass.
+  details?: Record<string, unknown>
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'GroupError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
@@ -154,6 +171,18 @@ export async function getGroup(
   callerId: string,
   groupId: string,
 ): Promise<GroupDetail> {
+  // 410 path: former members of a deleted group see DeletedGroupInfo
+  // instead of a blank 404, so the dashboard/SDK can render "group was
+  // deleted by @alice". Non-members still get 404 via requireActiveMember.
+  const deletedCheck = await resolveDeletedGroupInfoForCaller(groupId, callerId)
+  if (deletedCheck?.kind === 'gone') {
+    throw new GroupError(
+      'GROUP_DELETED',
+      'Group has been deleted',
+      410,
+      deletedCheck.info as unknown as Record<string, unknown>,
+    )
+  }
   await requireActiveMember(groupId, callerId)
   return assembleGroupDetail(groupId, callerId)
 }
@@ -588,30 +617,297 @@ export async function demoteAdmin(
   })
 }
 
+// ─── Group deletion (soft / disband) ────────────────────────────────────────
+//
+// Deletion is always creator-initiated when the creator is a healthy
+// account (status 'active' or 'restricted'). If the creator's account is
+// suspended or deleted, the delete authority passes to any active admin
+// of the group — symmetric with the last-admin auto-promote rule in
+// leave_group_atomic. This keeps a group from being permanently undead
+// when a creator's account goes away.
+//
+// Everything runs inside delete_group_atomic (migration 019), which
+// writes the final 'group_deleted' system message, sets deleted_at,
+// soft-leaves all members, flushes their remaining envelopes, and
+// cancels pending invites — all under a single FOR UPDATE lock on the
+// conversation row. This function does the pre-check for existence,
+// captures the recipient set BEFORE the RPC soft-leaves everyone, and
+// then fires the post-delete WS / webhook fan-out.
+
+export async function deleteGroup(
+  callerId: string,
+  groupId: string,
+): Promise<{ deleted_at: string }> {
+  const [group, actor] = await Promise.all([
+    findGroupById(groupId),
+    findAgentById(callerId),
+  ])
+  if (!group) {
+    // Non-existent → masked 404 so non-members can't probe.
+    throw new GroupError('GROUP_NOT_FOUND', 'Group not found', 404)
+  }
+  if (!actor) {
+    throw new GroupError('AGENT_NOT_FOUND', 'Caller not found', 404)
+  }
+
+  // Idempotent replay: a creator who already deleted gets the same 410
+  // former-members would see, including the metadata needed to render
+  // "the group was deleted by @alice". The idempotency middleware will
+  // typically short-circuit before we get here on real client retries;
+  // this branch is the fallback for headerless retries.
+  if (group.deleted_at) {
+    const info = await buildDeletedGroupInfo(
+      groupId,
+      group.deleted_by as string | null,
+      group.deleted_at as string,
+    )
+    throw new GroupError(
+      'GROUP_DELETED',
+      'Group has been deleted',
+      410,
+      info as unknown as Record<string, unknown>,
+    )
+  }
+
+  // Pre-check: mask existence of the group from non-members. The RPC
+  // would raise 'forbidden' for them anyway, but translating that to a
+  // 403 here would leak existence. Force a 404 instead.
+  const role = await getGroupParticipantRole(groupId, callerId)
+  const isCreator = (group.created_by as string | null) === callerId
+  if (!role) {
+    throw new GroupError('GROUP_NOT_FOUND', 'Group not found', 404)
+  }
+  // Active members who are neither the creator nor an admin get a clean
+  // 403 instead of being forwarded to the RPC (which would reach the
+  // same conclusion, but via a cryptic error).
+  if (!isCreator && role !== 'admin') {
+    throw new GroupError(
+      'FORBIDDEN',
+      'Only the group creator (or an admin when the creator is suspended) can delete a group',
+      403,
+    )
+  }
+
+  // Pre-capture the fan-out recipient list. After the RPC runs,
+  // getGroupPushRecipients returns [] because every member is
+  // left_at != NULL. We still want to hit the WS + webhook paths for
+  // their final in-group event.
+  const recipientIds = await getGroupPushRecipients(
+    groupId,
+    Number.MAX_SAFE_INTEGER,
+    callerId,
+  )
+
+  // Build the system event payload. We pass the inner union member
+  // (without `data` wrapper) as p_system_content — the RPC wraps it in
+  // `{ data: <payload> }` to match the MessageContent shape before
+  // inserting into messages.content.
+  const systemEvent = {
+    schema_version: 1 as const,
+    event: 'group_deleted' as const,
+    actor_handle: actor.handle,
+  }
+  // Sanity-check against the shared schema before we ship it to the DB.
+  const parsed = GroupSystemEvent.safeParse(systemEvent)
+  if (!parsed.success) {
+    throw new GroupError('INTERNAL_ERROR', 'Failed to build system event', 500)
+  }
+
+  const systemMsgId = generateId('msg')
+  const systemClientMsgId = `sys_${systemMsgId}`
+
+  let outcome
+  try {
+    outcome = await deleteGroupAtomic({
+      group_id: groupId,
+      actor_id: callerId,
+      system_msg_id: systemMsgId,
+      system_client_msg_id: systemClientMsgId,
+      system_content: parsed.data as unknown as Record<string, unknown>,
+    })
+  } catch (err) {
+    // The RPC raises one of a small set of named exceptions; translate
+    // them back into domain errors so the HTTP layer gets a clean code.
+    // Anything unrecognized re-throws so it surfaces as a 500.
+    const msg = err instanceof Error ? err.message : ''
+    if (/group_not_found/.test(msg)) {
+      throw new GroupError('GROUP_NOT_FOUND', 'Group not found', 404)
+    }
+    if (/already_deleted/.test(msg)) {
+      // Lost the race to a concurrent delete — surface as 410 with
+      // freshly-re-fetched metadata (the winning transaction has already
+      // committed, so `group` below is guaranteed to be deleted_at != null).
+      const refreshed = await findGroupById(groupId)
+      const info = refreshed
+        ? await buildDeletedGroupInfo(
+            groupId,
+            refreshed.deleted_by as string | null,
+            refreshed.deleted_at as string,
+          )
+        : {
+            group_id: groupId,
+            deleted_by_handle: actor.handle,
+            deleted_at: new Date().toISOString(),
+          }
+      throw new GroupError(
+        'GROUP_DELETED',
+        'Group has been deleted',
+        410,
+        info as unknown as Record<string, unknown>,
+      )
+    }
+    if (/forbidden_not_admin|forbidden/.test(msg)) {
+      throw new GroupError(
+        'FORBIDDEN',
+        'You are not authorized to delete this group',
+        403,
+      )
+    }
+    throw err
+  }
+
+  // Fan-out. Each recipient gets:
+  //   1. message.new — the final 'group_deleted' system message so the
+  //      in-group timeline renders one last row before the group
+  //      disappears. Mirrors how every other system event behaves.
+  //   2. group.deleted — a dedicated event so SDKs can pop the group out
+  //      of their conversation list immediately without waiting to
+  //      parse the content.data.event string out of the message.new.
+  const systemMessagePayload = {
+    id: systemMsgId,
+    conversation_id: groupId,
+    sender: actor.handle,
+    client_msg_id: systemClientMsgId,
+    seq: outcome.seq,
+    type: 'system' as const,
+    content: { data: parsed.data },
+    metadata: {},
+    created_at: outcome.deleted_at,
+  }
+
+  const deletedPayload: DeletedGroupInfo = {
+    group_id: groupId,
+    deleted_by_handle: actor.handle,
+    deleted_at: outcome.deleted_at,
+  }
+
+  for (const recipientId of recipientIds) {
+    sendToAgent(recipientId, {
+      type: 'message.new',
+      payload: systemMessagePayload as unknown as Record<string, unknown>,
+    })
+    sendToAgent(recipientId, {
+      type: 'group.deleted',
+      payload: deletedPayload as unknown as Record<string, unknown>,
+    })
+    fireWebhooks(
+      recipientId,
+      'message.new',
+      systemMessagePayload as unknown as Record<string, unknown>,
+    )
+    fireWebhooks(
+      recipientId,
+      'group.deleted',
+      deletedPayload as unknown as Record<string, unknown>,
+    )
+  }
+
+  return { deleted_at: outcome.deleted_at }
+}
+
+// Build the DeletedGroupInfo payload a former member gets when they hit
+// any still-live read path on a deleted group. Non-members never see this
+// — routes call resolveDeletedGroupInfoForCaller (below) which also does
+// the membership check.
+async function buildDeletedGroupInfo(
+  groupId: string,
+  deletedById: string | null,
+  deletedAt: string,
+): Promise<DeletedGroupInfo> {
+  let handle = 'unknown'
+  if (deletedById) {
+    const deleter = await findAgentById(deletedById)
+    if (deleter) handle = deleter.handle
+  }
+  return {
+    group_id: groupId,
+    deleted_by_handle: handle,
+    deleted_at: deletedAt,
+  }
+}
+
+// Helper for other services (message, upload) to check whether a group
+// is deleted AND the caller was a former member. Returns:
+//   - null             — group is not deleted (caller should proceed)
+//   - { kind: 'gone' } — deleted AND caller has participant history →
+//                        throw 410 with the returned DeletedGroupInfo
+//   - { kind: 'hide' } — deleted but caller was never a member →
+//                        throw 404 (existence masked)
+//
+// The caller owns the throwing so they can translate to their own
+// service-local error class (MessageError / UploadError / GroupError)
+// without a cross-service dependency.
+export type DeletedGroupCheck =
+  | null
+  | { kind: 'gone'; info: DeletedGroupInfo }
+  | { kind: 'hide' }
+
+export async function resolveDeletedGroupInfoForCaller(
+  groupId: string,
+  callerId: string,
+): Promise<DeletedGroupCheck> {
+  const group = await findGroupById(groupId)
+  if (!group || !group.deleted_at) return null
+  const hasHistory = await hasParticipantHistory(groupId, callerId)
+  if (!hasHistory) return { kind: 'hide' }
+  const info = await buildDeletedGroupInfo(
+    groupId,
+    group.deleted_by as string | null,
+    group.deleted_at as string,
+  )
+  return { kind: 'gone', info }
+}
+
 // ─── System messages ────────────────────────────────────────────────────────
 
-type GroupSystemEvent =
-  | { event: 'member_joined'; agent_handle: string }
-  | { event: 'member_left'; agent_handle: string }
-  | { event: 'member_removed'; agent_handle: string; actor_handle: string }
-  | {
-      event: 'admin_promoted'
-      agent_handle: string
-      actor_handle: string | null
-    }
-  | { event: 'admin_demoted'; agent_handle: string; actor_handle: string }
-  | { event: 'name_changed'; new_name: string; actor_handle: string }
-  | { event: 'description_changed'; actor_handle: string }
-  | { event: 'avatar_changed'; actor_handle: string }
+// Local "without schema_version" helper so callsites don't have to repeat
+// `schema_version: 1` on every emit. We stamp the version inside
+// emitSystemEvent and validate the stamped payload against the shared
+// schema, which is the single source of truth that the SDK and dashboard
+// also parse against.
+//
+// Omit doesn't distribute across a discriminated union on its own —
+// using the distributive conditional here so every arm gets its
+// schema_version stripped independently, preserving the discriminant.
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never
+type GroupSystemEventInput = DistributiveOmit<GroupSystemEvent, 'schema_version'>
 
 // Emit a group system message via the same atomic pipeline as agent
 // messages. Fan-out goes to all active participants except the sender
 // (by construction — see send_message_atomic in migration 017).
+//
+// We validate against the shared Zod schema before writing so a typo in a
+// new event variant (missing field, wrong name) surfaces in dev instead of
+// landing in the database as an unrenderable blob. System messages are
+// the one exception to "no schema hints on MessageContent" — see the
+// long comment on GroupSystemEventV1 in packages/shared.
 async function emitSystemEvent(
   groupId: string,
   senderAgentId: string,
-  payload: GroupSystemEvent,
+  payload: GroupSystemEventInput,
 ) {
+  const stamped = { schema_version: 1 as const, ...payload }
+  const parsed = GroupSystemEvent.safeParse(stamped)
+  if (!parsed.success) {
+    console.error(
+      '[group] system event failed validation:',
+      parsed.error.flatten(),
+      stamped,
+    )
+    return
+  }
   const messageId = generateId('msg')
   // client_msg_id for system messages is derived from the id so repeat
   // calls in the same RPC won't collide with the sender's own idempotency
@@ -624,7 +920,7 @@ async function emitSystemEvent(
       sender_id: senderAgentId,
       client_msg_id: clientMsgId,
       type: 'system',
-      content: { data: payload as unknown as Record<string, unknown> },
+      content: { data: parsed.data as unknown as Record<string, unknown> },
     })
   } catch (err) {
     // System messages are best-effort — a DB hiccup here shouldn't fail

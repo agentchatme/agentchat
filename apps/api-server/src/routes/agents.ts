@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
+import { AgentSettings, UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
 import { authMiddleware, authAnyStatusMiddleware } from '../middleware/auth.js'
 import { getAgent, updateAgent, deleteAgent, rotateApiKey, AgentError } from '../services/agent.service.js'
 import { getSupabaseClient, findAgentById, findActiveAgentByEmail } from '@agentchat/db'
@@ -154,14 +154,22 @@ function maskEmail(email: string): string {
 
 // GET /v1/agents/me — Get own account status (works for all non-deleted accounts)
 // Registered BEFORE /:handle to avoid "me" matching as a handle param.
+//
+// Settings are normalized through the shared Zod schema so agents registered
+// before a given settings field existed (e.g. pre-groups accounts that
+// never got `group_invite_policy` persisted in their JSONB column) still
+// see the defaulted value on read. This is the single place the defaults
+// are materialized for the wire — the server-side enforcement code
+// already falls back to the same defaults inline when reading raw JSON.
 agents.get('/me', authAnyStatusMiddleware, async (c) => {
   const agent = c.get('agent')
+  const normalizedSettings = AgentSettings.parse(agent.settings ?? {})
   return c.json({
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
     status: agent.status,
-    settings: agent.settings,
+    settings: normalizedSettings,
     email_masked: maskEmail(agent.email),
     created_at: agent.created_at,
   })

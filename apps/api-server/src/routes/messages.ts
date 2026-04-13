@@ -38,10 +38,12 @@ messages.post('/', authMiddleware, async (c) => {
       if (e.retryAfter) {
         headers['Retry-After'] = String(Math.ceil(e.retryAfter / 1000))
       }
-      return c.json(
-        { code: e.code, message: e.message },
-        { status: e.status as 400 | 403 | 404 | 429, headers },
-      )
+      const body: Record<string, unknown> = { code: e.code, message: e.message }
+      if (e.details) body.details = e.details
+      return c.json(body, {
+        status: e.status as 400 | 403 | 404 | 410 | 429,
+        headers,
+      })
     }
     throw e
   }
@@ -127,7 +129,9 @@ messages.get('/:conversation_id', authMiddleware, async (c) => {
     return c.json(msgs)
   } catch (e) {
     if (e instanceof MessageError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 403)
+      const body: Record<string, unknown> = { code: e.code, message: e.message }
+      if (e.details) body.details = e.details
+      return c.json(body, e.status as 403 | 410)
     }
     throw e
   }

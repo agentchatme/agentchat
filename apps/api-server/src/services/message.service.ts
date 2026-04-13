@@ -29,6 +29,7 @@ import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.servic
 import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
+import { resolveDeletedGroupInfoForCaller } from './group.service.js'
 
 const MAX_PAYLOAD_BYTES = 32_768 // 32 KB — content + metadata combined
 
@@ -96,13 +97,24 @@ export class MessageError extends Error {
   code: string
   status: number
   retryAfter?: number
+  // Optional structured payload. Mirrors GroupError.details — used for
+  // GROUP_DELETED (410) on the group send + history paths so the SDK can
+  // render "group was deleted by @alice" with no extra round-trip.
+  details?: Record<string, unknown>
 
-  constructor(code: string, message: string, status: number, retryAfter?: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    retryAfter?: number,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'MessageError'
     this.code = code
     this.status = status
     this.retryAfter = retryAfter
+    this.details = details
   }
 }
 
@@ -323,6 +335,29 @@ async function sendGroupMessage(
     throw new MessageError('GROUP_NOT_FOUND', 'Group not found', 404)
   }
 
+  // Deleted-group check: former members get a 410 with DeletedGroupInfo
+  // so the client can render "group was deleted by @alice" instead of a
+  // confusing "not found". Non-members fall through to the role check
+  // below and get the usual masked 404.
+  if (group.deleted_at) {
+    const deletedCheck = await resolveDeletedGroupInfoForCaller(
+      conversationId,
+      senderId,
+    )
+    if (deletedCheck?.kind === 'gone') {
+      messagesSendRejected.inc({ reason: 'group_deleted' })
+      throw new MessageError(
+        'GROUP_DELETED',
+        'Group has been deleted',
+        410,
+        undefined,
+        deletedCheck.info as unknown as Record<string, unknown>,
+      )
+    }
+    messagesSendRejected.inc({ reason: 'group_not_found' })
+    throw new MessageError('GROUP_NOT_FOUND', 'Group not found', 404)
+  }
+
   const [sender, role] = await Promise.all([
     findAgentById(senderId),
     getGroupParticipantRole(conversationId, senderId),
@@ -468,6 +503,24 @@ export async function getMessages(
   limit = 50,
   beforeSeq?: number,
 ) {
+  // Deleted-group short-circuit: former members read as 410 with
+  // DeletedGroupInfo so the client can render "group was deleted by
+  // @alice" on the detail screen they're still on. Non-members fall
+  // through to the participant check below, which will 403 them.
+  const deletedCheck = await resolveDeletedGroupInfoForCaller(
+    conversationId,
+    agentId,
+  )
+  if (deletedCheck?.kind === 'gone') {
+    throw new MessageError(
+      'GROUP_DELETED',
+      'Group has been deleted',
+      410,
+      undefined,
+      deletedCheck.info as unknown as Record<string, unknown>,
+    )
+  }
+
   // Resolve the conversation + participation in one shot so we can
   // apply group-specific rules (joined_seq, per-recipient delivery
   // scoping) without a second round-trip.

@@ -1,6 +1,6 @@
 import { randomBytes, createHash } from 'node:crypto'
 import { getSupabaseClient, findAgentById, findAgentByHandle } from '@agentchat/db'
-import type { UpdateAgentRequest } from '@agentchat/shared'
+import { AgentSettings, type UpdateAgentRequest } from '@agentchat/shared'
 import { publishDisconnect } from '../ws/pubsub.js'
 
 export class AgentError extends Error {
@@ -67,10 +67,19 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
     updates.settings = { ...agent.settings, ...req.settings }
   }
 
+  // Normalizing helper: materialize the full settings shape (with defaults
+  // for fields that were never persisted on older rows) so the PATCH
+  // response matches what GET /me returns. A Zod parse is cheaper than
+  // an extra DB round-trip and mirrors the /me normalization step.
+  const withNormalizedSettings = <T extends { settings?: unknown }>(row: T) => ({
+    ...row,
+    settings: AgentSettings.parse(row.settings ?? {}),
+  })
+
   // No fields to update — return current state
   if (Object.keys(updates).length === 0) {
     const { api_key_hash: _, id: _id, email: _email, ...safeData } = agent
-    return safeData
+    return withNormalizedSettings(safeData)
   }
 
   const { data, error } = await getSupabaseClient()
@@ -82,7 +91,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
   if (error) throw error
   const { api_key_hash: _, id: _id, email: _email, ...safeData } = data
-  return safeData
+  return withNormalizedSettings(safeData)
 }
 
 export async function deleteAgent(id: string, agentId: string) {

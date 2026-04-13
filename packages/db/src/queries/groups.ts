@@ -393,6 +393,57 @@ export async function isInviteeAlreadyInvited(
   return (data?.id as string | undefined) ?? null
 }
 
+// --- Group deletion (soft) ---
+
+export interface DeleteGroupOutcome {
+  seq: number
+  deleted_at: string
+}
+
+// Wraps delete_group_atomic from migration 019. The service layer pre-
+// generates the ids + content payload for the final 'group_deleted' system
+// message so this RPC can write it inline without double-locking the
+// conversation row.
+export async function deleteGroupAtomic(params: {
+  group_id: string
+  actor_id: string
+  system_msg_id: string
+  system_client_msg_id: string
+  system_content: Record<string, unknown>
+}): Promise<DeleteGroupOutcome> {
+  const { data, error } = await getSupabaseClient().rpc('delete_group_atomic', {
+    p_group_id: params.group_id,
+    p_actor_id: params.actor_id,
+    p_system_msg_id: params.system_msg_id,
+    p_system_client_msg_id: params.system_client_msg_id,
+    p_system_content: params.system_content,
+  })
+  if (error) throw error
+  const row = Array.isArray(data) ? data[0] : data
+  return {
+    seq: Number(row.seq),
+    deleted_at: row.deleted_at as string,
+  }
+}
+
+// Whether the caller still has a participant row (even if left_at != NULL)
+// for a given conversation. Used by the 410-vs-404 distinction on deleted
+// groups: former members (any row) get 410 with metadata; non-members
+// (no row at all) get 404 with existence masked.
+export async function hasParticipantHistory(
+  conversationId: string,
+  agentId: string,
+): Promise<boolean> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_participants')
+    .select('agent_id')
+    .eq('conversation_id', conversationId)
+    .eq('agent_id', agentId)
+    .maybeSingle()
+  if (error) throw error
+  return data !== null
+}
+
 // Update mutable group metadata (admin-only, authorization enforced at
 // the service layer). Only non-undefined fields are written, so partial
 // updates don't clobber existing values.

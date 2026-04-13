@@ -18,6 +18,7 @@ import {
   acceptInvite,
   rejectInvite,
   listInvites,
+  deleteGroup,
   GroupError,
 } from '../services/group.service.js'
 
@@ -25,9 +26,11 @@ const groups = new Hono()
 
 function handleError(e: unknown) {
   if (e instanceof GroupError) {
+    const body: Record<string, unknown> = { code: e.code, message: e.message }
+    if (e.details) body.details = e.details
     return {
-      body: { code: e.code, message: e.message },
-      status: e.status as 400 | 403 | 404 | 429,
+      body,
+      status: e.status as 400 | 403 | 404 | 410 | 429,
     }
   }
   return null
@@ -226,6 +229,27 @@ groups.post('/:id/members/:handle/demote', authMiddleware, idempotencyMiddleware
     const agentId = c.get('agentId')
     await demoteAdmin(agentId, groupId, handle)
     return c.json({ message: 'Admin demoted to member' })
+  } catch (e) {
+    const mapped = handleError(e)
+    if (mapped) return c.json(mapped.body, mapped.status)
+    throw e
+  }
+})
+
+// DELETE /v1/groups/:id — Disband the entire group (creator-only; an
+// admin may delete when the creator's account is suspended/deleted).
+// Soft-delete: conversations.deleted_at is set, every active member is
+// soft-left, pending invites are cancelled, and a final 'group_deleted'
+// system message is written via the atomic RPC. Former members get a
+// 410 Gone with DeletedGroupInfo on any subsequent read so the SDK can
+// render "group was deleted by @alice"; non-members still see a masked
+// 404 so they can't probe existence.
+groups.delete('/:id', authMiddleware, idempotencyMiddleware, async (c) => {
+  const groupId = c.req.param('id')
+  try {
+    const agentId = c.get('agentId')
+    const result = await deleteGroup(agentId, groupId)
+    return c.json({ message: 'Group deleted', deleted_at: result.deleted_at })
   } catch (e) {
     const mapped = handleError(e)
     if (mapped) return c.json(mapped.body, mapped.status)

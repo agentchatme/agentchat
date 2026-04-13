@@ -9,6 +9,7 @@ export const WebhookEvent = z.enum([
   'presence.update',
   'contact.blocked',
   'group.invite.received',
+  'group.deleted',
 ])
 export type WebhookEvent = z.infer<typeof WebhookEvent>
 

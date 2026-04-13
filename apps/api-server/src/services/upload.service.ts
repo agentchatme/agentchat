@@ -11,16 +11,27 @@ import {
 } from '@agentchat/db'
 import type { CreateUploadRequest } from '@agentchat/shared'
 import { env } from '../env.js'
+import { resolveDeletedGroupInfoForCaller } from './group.service.js'
 
 export class UploadError extends Error {
   code: string
   status: number
+  // Mirrors GroupError/MessageError.details — populated for GROUP_DELETED
+  // (410) on the group upload + download paths so the SDK can surface
+  // "group was deleted by @alice" without a second round-trip.
+  details?: Record<string, unknown>
 
-  constructor(code: string, message: string, status: number) {
+  constructor(
+    code: string,
+    message: string,
+    status: number,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'UploadError'
     this.code = code
     this.status = status
+    this.details = details
   }
 }
 
@@ -57,6 +68,24 @@ export async function createUpload(uploaderId: string, req: CreateUploadRequest)
     // IS NULL), so an ex-member can't dump files back into a group.
     const group = await findGroupById(req.conversation_id)
     if (!group) {
+      throw new UploadError('GROUP_NOT_FOUND', 'Group not found', 404)
+    }
+    // Deleted-group check: former members get a 410 with metadata so
+    // the SDK can render "group was deleted by @alice"; non-members
+    // still get the masked 404 below.
+    if (group.deleted_at) {
+      const deletedCheck = await resolveDeletedGroupInfoForCaller(
+        req.conversation_id,
+        uploaderId,
+      )
+      if (deletedCheck?.kind === 'gone') {
+        throw new UploadError(
+          'GROUP_DELETED',
+          'Group has been deleted',
+          410,
+          deletedCheck.info as unknown as Record<string, unknown>,
+        )
+      }
       throw new UploadError('GROUP_NOT_FOUND', 'Group not found', 404)
     }
     const role = await getGroupParticipantRole(req.conversation_id, uploaderId)
@@ -161,8 +190,25 @@ export async function getAttachmentDownload(
   // to render it in their own local preview even after leaving a group.
   if (row.uploader_id !== callerId) {
     if (row.conversation_id !== null) {
-      // Group attachment: caller must currently be an active member.
-      // If they've left or been kicked, the download is cut off, matching
+      // Group attachment. If the group is deleted and the caller was a
+      // former member, surface a 410 with DeletedGroupInfo so the SDK
+      // can show "the group was deleted by @alice" instead of a blank
+      // 404 on the download link. Non-members still get the null→404
+      // mask below.
+      const deletedCheck = await resolveDeletedGroupInfoForCaller(
+        row.conversation_id,
+        callerId,
+      )
+      if (deletedCheck?.kind === 'gone') {
+        throw new UploadError(
+          'GROUP_DELETED',
+          'Group has been deleted',
+          410,
+          deletedCheck.info as unknown as Record<string, unknown>,
+        )
+      }
+      // Caller must currently be an active member (or former member of
+      // a non-deleted group, in which case access is cut off). Matches
       // how the message fan-out treats them.
       const role = await getGroupParticipantRole(row.conversation_id, callerId)
       if (!role) return null
