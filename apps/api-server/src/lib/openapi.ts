@@ -417,12 +417,35 @@ registry.registerPath({
 registry.registerPath({
   method: 'delete',
   path: '/v1/messages/{id}',
-  summary: 'Delete a message (sender only)',
+  summary: 'Delete a message',
+  description:
+    'Two deletion modes, chosen by the `scope` query param. `scope=me` (default) hides the message from the caller\'s own view only — any participant may call. `scope=everyone` tombstones the message for all participants (content is cleared, `deleted_at` is stamped) and pushes a `message.deleted` event on WS + webhook paths. `scope=everyone` is sender-only and must be called within 48 hours of sending; after that it returns 403 DELETE_WINDOW_EXPIRED.',
   security: [{ [BearerAuth.name]: [] }],
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string() }),
+    query: z.object({
+      scope: z.enum(['me', 'everyone']).optional(),
+    }),
+  },
   responses: {
-    200: { description: 'Deleted', content: { 'application/json': { schema: z.object({ message: z.string() }) } } },
-    404: { description: 'Not found or not the sender', content: { 'application/json': { schema: ErrorResponse } } },
+    200: {
+      description: 'Deleted',
+      content: {
+        'application/json': {
+          schema: z.object({
+            message: z.string(),
+            scope: z.enum(['me', 'everyone']),
+          }),
+        },
+      },
+    },
+    400: { description: 'Invalid scope', content: { 'application/json': { schema: ErrorResponse } } },
+    403: {
+      description:
+        'Not the sender (for scope=everyone), not a participant (for scope=me), or 48h window expired',
+      content: { 'application/json': { schema: ErrorResponse } },
+    },
+    404: { description: 'Message not found', content: { 'application/json': { schema: ErrorResponse } } },
   },
 })
 

@@ -65,6 +65,7 @@ export async function atomicSendMessage(params: {
  */
 export async function getConversationMessages(
   conversationId: string,
+  agentId: string,
   limit = 50,
   beforeSeq?: number,
   hiddenAfter?: string | null,
@@ -93,8 +94,18 @@ export async function getConversationMessages(
   if (error) throw error
   if (!messages || messages.length === 0) return []
 
-  const deliveries = await fetchDeliveries(messages.map((m) => m.id as string))
-  return messages.map((m) => composeWithDelivery(m, deliveries.get(m.id as string)))
+  // Per-message hide filter (delete-for-me). Scoped to the fetched
+  // message ids so the query stays a PK lookup. Tombstoned messages
+  // (deleted_at != null) are still returned — the recipient sees a
+  // placeholder for those, mirroring WhatsApp's behavior. Only
+  // hide-for-me actually removes the row from the caller's history.
+  const messageIds = messages.map((m) => m.id as string)
+  const hiddenSet = await fetchHiddenIds(agentId, messageIds)
+  const visible = messages.filter((m) => !hiddenSet.has(m.id as string))
+  if (visible.length === 0) return []
+
+  const deliveries = await fetchDeliveries(visible.map((m) => m.id as string))
+  return visible.map((m) => composeWithDelivery(m, deliveries.get(m.id as string)))
 }
 
 export async function getMessageById(messageId: string) {
@@ -231,9 +242,15 @@ export async function getUndeliveredMessages(
   if (msgError) throw msgError
   if (!messages) return []
 
+  // Hide-for-me is a safety net here: hide_message_for_agent already advances
+  // the envelope to 'delivered', so hidden messages normally fall out via the
+  // status='stored' filter above. This extra pass covers the edge case where
+  // a hide row exists but the envelope bump was skipped (legacy rows, manual
+  // DB fixups, future migrations).
+  const hiddenSet = await fetchHiddenIds(agentId, messageIds)
   const mmap = new Map(messages.map((m) => [m.id as string, m]))
   return deliveries
-    .filter((d) => mmap.has(d.message_id as string))
+    .filter((d) => mmap.has(d.message_id as string) && !hiddenSet.has(d.message_id as string))
     .map((d) => composeWithDelivery(mmap.get(d.message_id as string)!, d as DeliveryRow))
 }
 
@@ -283,17 +300,54 @@ export async function ackDeliveries(
   return data?.length ?? 0
 }
 
-export async function deleteMessage(messageId: string, agentId: string): Promise<boolean> {
-  // Only the sender can delete their own message. Deliveries cascade via FK.
+/**
+ * Delete-for-me. Inserts a hide row and, if the caller is a recipient with a
+ * pending delivery, advances the envelope to 'delivered' so the sync drain
+ * path stops returning the hidden message. Idempotent — safe to call twice.
+ *
+ * Does NOT check participation: that's the service layer's job. At this
+ * level we just trust the caller is authorized.
+ */
+export async function hideMessageForAgent(messageId: string, agentId: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('hide_message_for_agent', {
+    p_message_id: messageId,
+    p_agent_id: agentId,
+  })
+  if (error) throw error
+}
+
+/**
+ * Delete-for-everyone. Sender-only tombstone. Replaces content with {} and
+ * stamps deleted_at in place — the row stays so seq ordering is preserved
+ * and recipients get a "this message was deleted" placeholder in history.
+ *
+ * The WHERE clause guards against:
+ *   - a non-sender calling this (sender_id check)
+ *   - a double-tombstone racing (deleted_at IS NULL check)
+ *
+ * Returns the new deleted_at on success, null if no row was affected
+ * (either not found, not the sender, or already tombstoned — callers
+ * disambiguate by checking the pre-existing row).
+ *
+ * Does NOT enforce the 48h window: that's the service layer's job because
+ * the wall-clock source of truth (process clock) lives there, not here.
+ */
+export async function tombstoneMessageForEveryone(
+  messageId: string,
+  senderId: string,
+): Promise<{ deleted_at: string } | null> {
+  const deletedAt = new Date().toISOString()
   const { data, error } = await getSupabaseClient()
     .from('messages')
-    .delete()
+    .update({ deleted_at: deletedAt, content: {} })
     .eq('id', messageId)
-    .eq('sender_id', agentId)
-    .select('id')
+    .eq('sender_id', senderId)
+    .is('deleted_at', null)
+    .select('deleted_at')
+    .maybeSingle()
 
   if (error) throw error
-  return (data?.length ?? 0) > 0
+  return (data as { deleted_at: string } | null) ?? null
 }
 
 // --- Internal helpers -------------------------------------------------------
@@ -324,6 +378,23 @@ async function fetchDeliveries(messageIds: string[]): Promise<Map<string, Delive
     map.set(row.message_id, row)
   }
   return map
+}
+
+/**
+ * Point-lookup of "which of these message ids has this agent hidden". The
+ * composite PK on message_hides(message_id, agent_id) makes this an index
+ * scan regardless of how many messages the agent has hidden globally.
+ */
+async function fetchHiddenIds(agentId: string, messageIds: string[]): Promise<Set<string>> {
+  if (messageIds.length === 0) return new Set()
+  const { data, error } = await getSupabaseClient()
+    .from('message_hides')
+    .select('message_id')
+    .eq('agent_id', agentId)
+    .in('message_id', messageIds)
+
+  if (error) throw error
+  return new Set(((data ?? []) as Array<{ message_id: string }>).map((r) => r.message_id))
 }
 
 function composeWithDelivery(

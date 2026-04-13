@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const WebhookEvent = z.enum([
   'message.new',
   'message.read',
+  'message.deleted',
   'presence.update',
   'contact.blocked',
 ])

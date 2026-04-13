@@ -3,6 +3,7 @@ import { z } from 'zod'
 export const ServerEvent = z.enum([
   'message.new',
   'message.read',
+  'message.deleted',
   'presence.update',
   'group.message',
   'typing.start',

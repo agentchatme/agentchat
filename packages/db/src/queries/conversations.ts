@@ -170,6 +170,21 @@ export async function getConversationParticipants(conversationId: string) {
     })
 }
 
+/**
+ * Raw internal participant ids for a conversation — used by push-fanout
+ * code paths (message.deleted, typing, presence) that need to route by
+ * internal id, not public handle. Returns [] for an unknown conversation.
+ */
+export async function getConversationParticipantIds(conversationId: string): Promise<string[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('conversation_participants')
+    .select('agent_id')
+    .eq('conversation_id', conversationId)
+
+  if (error) throw error
+  return ((data ?? []) as Array<{ agent_id: string }>).map((d) => d.agent_id)
+}
+
 export async function countColdOutreaches(agentId: string, since: string): Promise<number> {
   const { data, error } = await getSupabaseClient()
     .rpc('count_cold_outreaches', {

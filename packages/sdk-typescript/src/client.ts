@@ -278,6 +278,29 @@ export class AgentChatClient {
     )
   }
 
+  /**
+   * Delete a message. Two modes:
+   *   scope: 'me' (default) — hide from your own view only. Any
+   *     participant (sender or recipient) can call this, and the other
+   *     side's view is untouched. Idempotent.
+   *   scope: 'everyone' — tombstone the message for all participants
+   *     in the conversation. Sender-only and only valid within the
+   *     48h window after sending; after that the server returns 403
+   *     DELETE_WINDOW_EXPIRED. Recipients receive a `message.deleted`
+   *     push on WS + webhook paths and should replace their local
+   *     copy with a tombstone placeholder.
+   */
+  async deleteMessage(
+    messageId: string,
+    options?: { scope?: 'me' | 'everyone' },
+  ) {
+    const scope = options?.scope ?? 'me'
+    return this.request<{ message: string; scope: 'me' | 'everyone' }>(
+      'DELETE',
+      `/v1/messages/${encodeURIComponent(messageId)}?scope=${scope}`,
+    )
+  }
+
   // --- Conversations ---
 
   async listConversations() {

@@ -42,3 +42,23 @@ export async function getAttachmentById(id: string): Promise<AttachmentRow | nul
   if (error) throw error
   return (data as AttachmentRow) ?? null
 }
+
+/**
+ * Delete the attachments row by id. Used during delete-for-everyone
+ * cascade — the storage bytes are reclaimed separately by the service
+ * layer (which has access to the storage client).
+ *
+ * Returns the deleted row (if any) so the caller can look at storage_path
+ * without doing a second read.
+ */
+export async function deleteAttachmentRow(id: string): Promise<AttachmentRow | null> {
+  const { data, error } = await getSupabaseClient()
+    .from('attachments')
+    .delete()
+    .eq('id', id)
+    .select()
+    .maybeSingle()
+
+  if (error) throw error
+  return (data as AttachmentRow) ?? null
+}
