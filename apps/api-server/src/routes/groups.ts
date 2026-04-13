@@ -5,6 +5,7 @@ import {
   AddMemberRequest,
 } from '@agentchat/shared'
 import { authMiddleware } from '../middleware/auth.js'
+import { idempotencyMiddleware } from '../middleware/idempotency.js'
 import {
   createGroup,
   getGroup,
@@ -36,7 +37,7 @@ function handleError(e: unknown) {
 // initial member handles are run through the same auto-add vs pending
 // path as subsequent adds, so individual failures don't abort the whole
 // create.
-groups.post('/', authMiddleware, async (c) => {
+groups.post('/', authMiddleware, idempotencyMiddleware, async (c) => {
   let body: unknown
   try {
     body = await c.req.json()
@@ -76,7 +77,7 @@ groups.get('/invites', authMiddleware, async (c) => {
 // POST /v1/groups/invites/:invite_id/accept — Accept a pending invite.
 // Server-side verification: the RPC enforces that the caller owns the
 // invite row, so a guessed/leaked invite id can't be used by a stranger.
-groups.post('/invites/:invite_id/accept', authMiddleware, async (c) => {
+groups.post('/invites/:invite_id/accept', authMiddleware, idempotencyMiddleware, async (c) => {
   const inviteId = c.req.param('invite_id')
   try {
     const agentId = c.get('agentId')
@@ -120,7 +121,7 @@ groups.get('/:id', authMiddleware, async (c) => {
 
 // PATCH /v1/groups/:id — Update group metadata (admin-only). Emits one
 // system message per changed field so the timeline shows discrete events.
-groups.patch('/:id', authMiddleware, async (c) => {
+groups.patch('/:id', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   let body: unknown
   try {
@@ -153,7 +154,7 @@ groups.patch('/:id', authMiddleware, async (c) => {
 // POST /v1/groups/:id/members — Add a single member (admin-only). The
 // response carries per-handle outcome so the SDK can show "joined" vs
 // "invited" without a second round-trip.
-groups.post('/:id/members', authMiddleware, async (c) => {
+groups.post('/:id/members', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   let body: unknown
   try {
@@ -186,7 +187,7 @@ groups.post('/:id/members', authMiddleware, async (c) => {
 // DELETE /v1/groups/:id/members/:handle — Kick a member (admin-only).
 // The creator cannot be kicked — it's the only way out for them to
 // leave is POST /v1/groups/:id/leave.
-groups.delete('/:id/members/:handle', authMiddleware, async (c) => {
+groups.delete('/:id/members/:handle', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   const handle = c.req.param('handle')
   try {
@@ -201,7 +202,7 @@ groups.delete('/:id/members/:handle', authMiddleware, async (c) => {
 })
 
 // POST /v1/groups/:id/members/:handle/promote — Promote to admin (admin-only).
-groups.post('/:id/members/:handle/promote', authMiddleware, async (c) => {
+groups.post('/:id/members/:handle/promote', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   const handle = c.req.param('handle')
   try {
@@ -218,7 +219,7 @@ groups.post('/:id/members/:handle/promote', authMiddleware, async (c) => {
 // POST /v1/groups/:id/members/:handle/demote — Demote admin to member
 // (admin-only). Returns a specific error when trying to demote the last
 // admin or the creator, so the client can show the right guidance.
-groups.post('/:id/members/:handle/demote', authMiddleware, async (c) => {
+groups.post('/:id/members/:handle/demote', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   const handle = c.req.param('handle')
   try {
@@ -236,7 +237,7 @@ groups.post('/:id/members/:handle/demote', authMiddleware, async (c) => {
 // the last remaining admin, the earliest-joined member is auto-promoted;
 // the response carries the new admin's handle so the client can show a
 // sensible "ownership transferred" nudge.
-groups.post('/:id/leave', authMiddleware, async (c) => {
+groups.post('/:id/leave', authMiddleware, idempotencyMiddleware, async (c) => {
   const groupId = c.req.param('id')
   try {
     const agentId = c.get('agentId')

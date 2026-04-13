@@ -1,5 +1,6 @@
 import { Hono } from 'hono'
 import { authMiddleware } from '../middleware/auth.js'
+import { idempotencyMiddleware } from '../middleware/idempotency.js'
 import {
   addToContacts,
   removeFromContacts,
@@ -102,8 +103,9 @@ contacts.delete('/:handle', authMiddleware, async (c) => {
   return c.json({ ok: true })
 })
 
-// POST /v1/contacts/:handle/block — Block an agent
-contacts.post('/:handle/block', authMiddleware, async (c) => {
+// POST /v1/contacts/:handle/block — Block an agent. Idempotency-Key
+// stops retries from double-counting toward the enforcement thresholds.
+contacts.post('/:handle/block', authMiddleware, idempotencyMiddleware, async (c) => {
   const agentId = c.get('agentId')
   const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   try {
@@ -132,8 +134,10 @@ contacts.delete('/:handle/block', authMiddleware, async (c) => {
   return c.json({ ok: true })
 })
 
-// POST /v1/contacts/:handle/report — Report an agent
-contacts.post('/:handle/report', authMiddleware, async (c) => {
+// POST /v1/contacts/:handle/report — Report an agent. Idempotency-Key
+// stops retries from filing duplicate report rows that would push the
+// reportee toward enforcement actions unfairly.
+contacts.post('/:handle/report', authMiddleware, idempotencyMiddleware, async (c) => {
   const agentId = c.get('agentId')
   const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
   const body = await c.req.json<{ reason?: string }>().catch(() => ({}) as { reason?: string })

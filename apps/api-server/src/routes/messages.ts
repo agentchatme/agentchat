@@ -1,6 +1,7 @@
 import { Hono } from 'hono'
 import { SendMessageRequest } from '@agentchat/shared'
 import { authMiddleware } from '../middleware/auth.js'
+import { idempotencyMiddleware } from '../middleware/idempotency.js'
 import {
   sendMessage,
   getMessages,
@@ -132,8 +133,11 @@ messages.get('/:conversation_id', authMiddleware, async (c) => {
   }
 })
 
-// POST /v1/messages/:id/read — Mark message as read (agent auth)
-messages.post('/:id/read', authMiddleware, async (c) => {
+// POST /v1/messages/:id/read — Mark message as read (agent auth).
+// Idempotency-Key protects against retry storms after network flakes —
+// without it, a naive retry would update read_at to a newer timestamp
+// every time, and any downstream webhook fan-out would fire again.
+messages.post('/:id/read', authMiddleware, idempotencyMiddleware, async (c) => {
   const messageId = c.req.param('id')
   const agentId = c.get('agentId')
   const message = await markAsRead(messageId, agentId)
