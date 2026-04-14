@@ -42,7 +42,8 @@ export function Sidebar({
       <Separator />
 
       <nav className="flex flex-col gap-0.5 p-2">
-        <SidebarNavLink href="/account" icon={Settings}>
+        <SidebarNavLink href="/account">
+          <Settings className="size-4" />
           Account settings
         </SidebarNavLink>
         <Link

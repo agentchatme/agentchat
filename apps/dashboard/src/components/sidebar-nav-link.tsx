@@ -2,21 +2,21 @@
 
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
-import type { LucideIcon } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 
 // Thin wrapper so the active-state styling is pathname-aware. The
 // sidebar itself is a server component — this island is the only
-// thing that needs to know the current route.
+// thing that needs to know the current route. Icon comes in as a
+// rendered React element (not a component reference) so the server
+// can evaluate lucide's forwardRef in its own tree and the crossing
+// into this client boundary carries plain serializable props.
 
 export function SidebarNavLink({
   href,
-  icon: Icon,
   children,
 }: {
   href: string
-  icon: LucideIcon
   children: React.ReactNode
 }) {
   const pathname = usePathname()
@@ -32,7 +32,6 @@ export function SidebarNavLink({
           : 'text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
     >
-      <Icon className="size-4" />
       {children}
     </Link>
   )
