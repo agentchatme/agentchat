@@ -25,6 +25,8 @@ import {
   deleteGroupAtomic,
   hasParticipantHistory,
   atomicSendMessage,
+  getPausedByOwner,
+  listFullyPausedAgentIds,
 } from '@agentchat/db'
 import {
   GROUP_MAX_MEMBERS,
@@ -345,11 +347,23 @@ async function addMemberByHandle(
     // they're not polling /v1/groups/invites directly. We intentionally
     // don't count this as a "message" for rate-limit purposes — the
     // per-day invite cap covers it.
-    sendToAgent(target.id, {
-      type: 'group.invite.received',
-      payload: inviteEnvelope as unknown as Record<string, unknown>,
+    //
+    // Pause gating: if the invitee is fully paused by their owner, the
+    // DB row is still created (so they'll see the invite when unpaused
+    // via /v1/groups/invites) but the live push is suppressed. Mirrors
+    // the message.new pause behavior — the durable record always lands;
+    // only the ephemeral push fan-out is skipped.
+    const targetPaused = await getPausedByOwner(target.id).catch((err) => {
+      console.error('[group.service] getPausedByOwner failed; assuming none:', target.id, err)
+      return 'none'
     })
-    fireWebhooks(target.id, 'group.invite.received', inviteEnvelope)
+    if (targetPaused !== 'full') {
+      sendToAgent(target.id, {
+        type: 'group.invite.received',
+        payload: inviteEnvelope as unknown as Record<string, unknown>,
+      })
+      fireWebhooks(target.id, 'group.invite.received', inviteEnvelope)
+    }
   }
 
   void opts
@@ -802,7 +816,15 @@ export async function deleteGroup(
     deleted_at: outcome.deleted_at,
   }
 
+  // Drop fully-paused recipients from the live fan-out — the system
+  // message + group.deleted envelope are already durable in the DB
+  // (system message via atomicSendMessage above; group.deleted_at is
+  // persisted on the conversations row), so a paused agent will catch
+  // up the next time they unpause and re-sync. Mirrors pushToGroup in
+  // message.service.ts: one batch query, then per-recipient skip.
+  const fullyPaused = await listFullyPausedAgentIds(recipientIds)
   for (const recipientId of recipientIds) {
+    if (fullyPaused.has(recipientId)) continue
     sendToAgent(recipientId, {
       type: 'message.new',
       payload: systemMessagePayload as unknown as Record<string, unknown>,

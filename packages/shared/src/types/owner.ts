@@ -5,13 +5,17 @@ import { z } from 'zod'
 // One Owner maps 1:1 to a Supabase auth.users row. Owner email is
 // strictly disjoint from any active agent email — enforced at three
 // layers (app guards, partial unique index, DB trigger).
+//
+// Wire shape intentionally omits the internal owners.id (which mirrors
+// auth.users.id). The dashboard browser never sees that UUID — owners
+// are addressed by email everywhere in the UI. Mirrors the same rule
+// applied to ClaimedAgent below: no internal row ids on the wire.
 
 export const Owner = z.object({
-  id: z.string().uuid(),
   email: z.string().email(),
   display_name: z.string().nullable(),
   created_at: z.string().datetime(),
-  updated_at: z.string().datetime(),
+  updated_at: z.string().datetime().optional(),
 })
 export type Owner = z.infer<typeof Owner>
 

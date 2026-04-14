@@ -73,14 +73,18 @@ export async function listFullyPausedAgentIds(ids: string[]): Promise<Set<string
 }
 
 /** Fetch just the paused_by_owner column for one agent. Used by the
- *  WS reconnect drain to decide whether to flush the unread batch. */
+ *  WS reconnect drain to decide whether to flush the unread batch.
+ *  Throws on DB error — the WS handler logs and treats it as 'none'.
+ *  We deliberately do NOT swallow errors here so a higher layer can
+ *  see the failure and decide its own failover. */
 export async function getPausedByOwner(id: string): Promise<string> {
   const { data, error } = await getSupabaseClient()
     .from('agents')
     .select('paused_by_owner')
     .eq('id', id)
     .single()
-  if (error || !data) return 'none'
+  if (error) throw error
+  if (!data) return 'none'
   return (data.paused_by_owner as string | null) ?? 'none'
 }
 

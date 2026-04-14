@@ -11,9 +11,28 @@ import {
   hasReported,
   reportAgent,
   findAgentByHandle,
+  getPausedByOwner,
 } from '@agentchat/db'
 import { fireWebhooks } from './webhook.service.js'
 import { evaluateEnforcement } from './enforcement.service.js'
+
+// ─── Push gating helper ────────────────────────────────────────────────────
+// Skip non-message push events when the recipient is fully paused by their
+// owner. Mirrors the same rule applied to message.new fan-out in
+// message.service.ts (pushToRecipient / pushToGroup). Without this, contact
+// blocked/report webhooks slip through the dashboard pause guard.
+//
+// Failure mode: if the pause lookup itself errors, we LOG and proceed as
+// 'none' so a transient DB blip doesn't suppress legitimate events. The
+// drainUndelivered handler in ws/handler.ts uses the same failover policy.
+async function isFullyPaused(agentId: string): Promise<boolean> {
+  try {
+    return (await getPausedByOwner(agentId)) === 'full'
+  } catch (err) {
+    console.error('[contact.service] getPausedByOwner failed; assuming none:', agentId, err)
+    return false
+  }
+}
 
 export class ContactError extends Error {
   code: string
@@ -85,10 +104,14 @@ export async function block(agentId: string, targetHandle: string) {
     console.error('[enforcement] Failed to evaluate after block:', err)
   })
 
-  // Fire webhook so blocked agent knows (best-effort)
-  fireWebhooks(target.id, 'contact.blocked', {
-    blocked_by: targetHandle,
-  })
+  // Fire webhook so blocked agent knows (best-effort). Suppress entirely
+  // when the target is fully paused by their owner — pause is supposed to
+  // be a total silence for incoming push events.
+  if (!(await isFullyPaused(target.id))) {
+    fireWebhooks(target.id, 'contact.blocked', {
+      blocked_by: targetHandle,
+    })
+  }
 }
 
 export async function unblock(agentId: string, targetHandle: string) {
@@ -126,10 +149,15 @@ export async function report(agentId: string, targetHandle: string, reason?: str
     console.error('[enforcement] Failed to evaluate after report:', err)
   })
 
-  // Fire webhook so blocked agent knows
-  fireWebhooks(target.id, 'contact.blocked', {
-    blocked_by: targetHandle,
-  })
+  // Same pause gating as block(): suppress the target's webhook entirely
+  // if their owner has them in 'full' pause. The auto-block + report row
+  // still land in the DB so moderation tooling sees them; only the live
+  // push to the (frozen) target is skipped.
+  if (!(await isFullyPaused(target.id))) {
+    fireWebhooks(target.id, 'contact.blocked', {
+      blocked_by: targetHandle,
+    })
+  }
 }
 
 export { isBlocked }

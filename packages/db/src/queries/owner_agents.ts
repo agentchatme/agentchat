@@ -38,22 +38,12 @@ export async function findOwnerAgent(ownerId: string, agentId: string) {
   return data
 }
 
-export async function findClaimByAgentId(agentId: string) {
-  const { data, error } = await getSupabaseClient()
-    .from('owner_agents')
-    .select('*')
-    .eq('agent_id', agentId)
-    .single()
-  if (error) return null
-  return data
-}
-
 /**
  * List every agent an owner has claimed, joined with the agent row so the
  * dashboard list view can render status + pause state + profile in one
- * round trip. Excludes deleted agents from the result — a deleted agent
- * cascades away from owner_agents anyway, but we also guard at query
- * time so a status='deleted' (soft delete) doesn't leak through.
+ * round trip. Soft-deleted agents (status='deleted') are filtered out
+ * by the service layer in listAgentsForOwner — this raw query returns
+ * everything the embed yields, including deleted rows.
  */
 export async function listClaimedAgents(ownerId: string) {
   const { data, error } = await getSupabaseClient()

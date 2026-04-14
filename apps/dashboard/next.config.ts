@@ -17,6 +17,60 @@ import type { NextConfig } from 'next'
 // D1 local dev, the rewrite below is enough.
 
 const apiBase = process.env['API_BASE'] ?? 'http://localhost:3000'
+const isProd = process.env.NODE_ENV === 'production'
+
+// Hardened security headers applied to every dashboard response. The
+// dashboard is browser-facing so each header here mitigates a specific
+// class of attack:
+//
+//   Strict-Transport-Security: forces HTTPS for a year + preload — set
+//     only in prod because dev runs over localhost http.
+//   X-Frame-Options + frame-ancestors 'none': defense-in-depth against
+//     clickjacking. The CSP directive is the modern enforcement; XFO is
+//     kept as a fallback for old browsers / WebView contexts.
+//   X-Content-Type-Options: prevents MIME-type sniffing — blocks the
+//     'image actually executes as JS' style of attack on user uploads.
+//   Referrer-Policy: don't leak the dashboard's URL to outbound links.
+//   Permissions-Policy: explicitly disable browser features the dashboard
+//     never asks for (camera, mic, geolocation, payment) so a future XSS
+//     cannot exfiltrate over those channels.
+//   CSP: tightest practical for a Next.js 15 RSC app. We allow inline
+//     scripts/styles because Next's bootstrap requires it without nonces;
+//     adding nonce-based CSP is a follow-up that needs a middleware.
+//     connect-src is 'self' because the API is same-origin via the rewrite
+//     above. frame-ancestors 'none' kills any iframe embedding.
+const securityHeaders = [
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  {
+    key: 'Permissions-Policy',
+    value: 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+  },
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join('; '),
+  },
+  ...(isProd
+    ? [
+        {
+          key: 'Strict-Transport-Security',
+          value: 'max-age=31536000; includeSubDomains; preload',
+        },
+      ]
+    : []),
+]
 
 const nextConfig: NextConfig = {
   async rewrites() {
@@ -24,6 +78,14 @@ const nextConfig: NextConfig = {
       {
         source: '/dashboard/:path*',
         destination: `${apiBase}/dashboard/:path*`,
+      },
+    ]
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: securityHeaders,
       },
     ]
   },

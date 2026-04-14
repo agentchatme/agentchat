@@ -659,7 +659,17 @@ export async function markAsRead(messageId: string, agentId: string) {
     throw new MessageError('MESSAGE_NOT_FOUND', 'Message not found', 404)
   }
 
-  const reader = await findAgentById(agentId)
+  const senderId = message.sender_id as string
+  // Resolve reader + sender in parallel. Sender's paused_by_owner gates
+  // the live read-receipt fan-out: a fully-paused sender should not see
+  // any push events at all (matches the pause spec — push fan-out and
+  // reconnect drain are suppressed). The read row is still durable in
+  // message_deliveries so the sender will see it when they next read
+  // the message via /v1/messages/:id.
+  const [reader, senderAgent] = await Promise.all([
+    findAgentById(agentId),
+    findAgentById(senderId),
+  ])
   const readerHandle = reader?.handle ?? 'unknown'
   const readPayload = {
     message_id: messageId,
@@ -667,12 +677,13 @@ export async function markAsRead(messageId: string, agentId: string) {
     read_at: delivery.read_at,
   }
 
-  const senderId = message.sender_id as string
-  // Route internally via sender_id, but payload uses handles only
-  sendToAgent(senderId, { type: 'message.read', payload: readPayload })
-  fireWebhooks(senderId, 'message.read', readPayload)
+  const senderFullyPaused =
+    (senderAgent?.paused_by_owner as string | null) === 'full'
+  if (!senderFullyPaused) {
+    sendToAgent(senderId, { type: 'message.read', payload: readPayload })
+    fireWebhooks(senderId, 'message.read', readPayload)
+  }
 
-  const senderAgent = await findAgentById(senderId)
   const composed = {
     ...message,
     status: delivery.status,

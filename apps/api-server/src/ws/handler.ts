@@ -51,7 +51,17 @@ async function drainUndelivered(agentId: string, ws: WSContext) {
   // first reconnect after the pause is lifted (or via /v1/messages/sync
   // which the agent can call itself to force a drain). Send-only pause
   // does NOT suppress the drain — the agent can still receive.
-  const pausedMode = await getPausedByOwner(agentId).catch(() => 'none')
+  //
+  // Failover: if the pause lookup itself errors (DB blip mid-reconnect)
+  // we log and proceed as 'none' so a transient outage doesn't block all
+  // real-time delivery. The previous behaviour silently swallowed the
+  // error which made DB issues invisible in this code path.
+  let pausedMode: string = 'none'
+  try {
+    pausedMode = await getPausedByOwner(agentId)
+  } catch (err) {
+    console.error('[ws-drain] getPausedByOwner failed; assuming none:', agentId, err)
+  }
   if (pausedMode === 'full') return
 
   let batch = await syncUndelivered(agentId)
