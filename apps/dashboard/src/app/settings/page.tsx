@@ -30,10 +30,6 @@ export default async function SettingsPage() {
               <span className="label">Account created</span>
               <code>{new Date(me.created_at).toLocaleString()}</code>
             </div>
-            <div>
-              <span className="label">Owner ID</span>
-              <code>{me.id}</code>
-            </div>
           </div>
         </div>
       </main>

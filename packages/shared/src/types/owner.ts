@@ -49,9 +49,11 @@ export const ClaimAgentRequest = z.object({
 export type ClaimAgentRequest = z.infer<typeof ClaimAgentRequest>
 
 // ─── Claimed agent summary (what the dashboard list returns) ───────────────
+// The wire shape intentionally identifies every agent by @handle — the
+// internal agent row id is never surfaced to the dashboard browser.
+// See dashboard.service.ts for the server-side enforcement.
 
 export const ClaimedAgent = z.object({
-  id: z.string(),
   handle: z.string(),
   display_name: z.string().nullable(),
   description: z.string().nullable(),

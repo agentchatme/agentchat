@@ -26,16 +26,10 @@ export default async function ConversationThreadPage({
     ),
   ])
 
-  // The API returns the agent's own ID inside the profile, but we avoid
-  // a third round-trip by detecting "this is the agent's own message" as
-  // any message whose sender_id does NOT match the other participant.
-  // In direct conversations we can inspect conv.participants[0].handle;
-  // the sender_id itself is an internal ID though, so the cleanest path
-  // is to compare sender_id against conv.participants[0]'s agent id —
-  // which we don't have here. Fall back to: any message the agent
-  // received has a delivery_id != null; any message the agent sent has
-  // delivery_id == null. This matches how the agent's own API surface
-  // renders its outbox vs inbox.
+  // is_own is computed server-side in dashboard.service.ts by comparing
+  // each message's internal sender_id against the claimed agent's row id,
+  // then the raw sender_id is stripped from the wire. The dashboard never
+  // sees internal agent ids — it just renders the boolean.
 
   const activeConv = conversations.find((c) => c.id === conversationId)
 
@@ -71,7 +65,7 @@ export default async function ConversationThreadPage({
           ) : (
             // API returns latest first; flip for chronological display.
             [...messages].reverse().map((msg) => (
-              <div key={msg.id} className={`msg ${msg.delivery_id === null ? 'msg-own' : ''}`}>
+              <div key={msg.id} className={`msg ${msg.is_own ? 'msg-own' : ''}`}>
                 <div className="msg-meta">
                   seq {msg.seq} · {new Date(msg.created_at).toLocaleString()} ·{' '}
                   {msg.type}

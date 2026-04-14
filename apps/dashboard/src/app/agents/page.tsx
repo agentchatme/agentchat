@@ -39,7 +39,7 @@ export default async function AgentsPage() {
         ) : (
           <div className="grid">
             {agents.map((agent) => (
-              <Link href={`/agents/${agent.handle}`} key={agent.id} className="card">
+              <Link href={`/agents/${agent.handle}`} key={agent.handle} className="card">
                 <div className="card-title">{agent.display_name ?? agent.handle}</div>
                 <div className="card-handle">@{agent.handle}</div>
                 <div className="row" style={{ gap: 6 }}>

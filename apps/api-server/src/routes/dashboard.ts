@@ -236,9 +236,10 @@ dashboard.post('/auth/otp/verify', ipRateLimit(10, 600), async (c) => {
     maxAge: 3600,
   })
 
+  // owner.id is the Supabase auth user UUID — internal, never surfaced
+  // on the wire. The owner is addressed by email everywhere in the UI.
   return c.json({
     owner: {
-      id: owner.id,
       email: owner.email,
       display_name: owner.display_name,
       created_at: owner.created_at,
@@ -256,7 +257,6 @@ dashboard.post('/auth/logout', async (c) => {
 dashboard.get('/me', dashboardAuthMiddleware, async (c) => {
   const owner = c.get('owner')
   return c.json({
-    id: owner.id,
     email: owner.email,
     display_name: owner.display_name,
     created_at: owner.created_at,
@@ -266,7 +266,12 @@ dashboard.get('/me', dashboardAuthMiddleware, async (c) => {
 // ─── Claim flow ────────────────────────────────────────────────────────────
 
 // POST /dashboard/agents/claim — Paste API key, claim the agent
-dashboard.post('/agents/claim', dashboardAuthMiddleware, async (c) => {
+// Rate limit: 20 attempts per IP per 10 minutes. An API key is 256 bits
+// of entropy so brute forcing is infeasible regardless, but this caps
+// DoS against the SHA-256 + DB lookup path and blunts any timing-oracle
+// probing (e.g. distinguishing 404 INVALID_API_KEY vs 409 ALREADY_CLAIMED
+// response times to enumerate valid prefixes).
+dashboard.post('/agents/claim', ipRateLimit(20, 600), dashboardAuthMiddleware, async (c) => {
   let body: unknown
   try {
     body = await c.req.json()

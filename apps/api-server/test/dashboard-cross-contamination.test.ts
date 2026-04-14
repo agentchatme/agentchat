@@ -199,11 +199,18 @@ describe('dashboard.service — owner A happy path', () => {
 
   it('getAgentProfile returns masked email + core fields for the owning owner', async () => {
     const profile = await getAgentProfile(OWNER_A, 'alice')
-    expect(profile.id).toBe(AGENT.id)
     expect(profile.handle).toBe('alice')
     expect(profile.paused_by_owner).toBe('none')
     // First char + **** + domain.
     expect(profile.email_masked).toBe('a****@example.com')
+  })
+
+  it('getAgentProfile must NOT expose internal agent.id on the wire', async () => {
+    const profile = await getAgentProfile(OWNER_A, 'alice')
+    // The dashboard addresses every agent by @handle. Internal row ids
+    // are stripped in dashboard.service.ts — guard that at the unit level
+    // so a regression here gets caught before shipping.
+    expect((profile as Record<string, unknown>)['id']).toBeUndefined()
   })
 
   it('pauseAgent writes mode + emits agent.paused with mode metadata', async () => {
@@ -283,6 +290,89 @@ describe('dashboard.service — owner A happy path', () => {
     )
   })
 
+  it('getAgentMessagesForOwner strips sender_id and replaces with is_own', async () => {
+    // The DB layer returns raw rows with sender_id (internal agent id).
+    // The dashboard wire must NOT include sender_id — the service maps
+    // it to is_own against the claimed agent, then deletes the field.
+    isParticipant.mockResolvedValue(true)
+    getConversation.mockResolvedValue({ id: 'conv_ok', type: 'direct' })
+    getConversationHide.mockResolvedValue(null)
+    getConversationMessages.mockResolvedValue([
+      {
+        id: 'msg_self',
+        conversation_id: 'conv_ok',
+        sender_id: AGENT.id,
+        seq: 1,
+        type: 'text',
+        content: { text: 'hi' },
+        metadata: {},
+        created_at: '2026-01-03T00:00:00Z',
+      },
+      {
+        id: 'msg_other',
+        conversation_id: 'conv_ok',
+        sender_id: 'agt_someone_else',
+        seq: 2,
+        type: 'text',
+        content: { text: 'hello' },
+        metadata: {},
+        created_at: '2026-01-03T00:01:00Z',
+      },
+    ])
+    const result = await getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_ok')
+    expect(result).toHaveLength(2)
+    for (const m of result) {
+      expect((m as Record<string, unknown>)['sender_id']).toBeUndefined()
+    }
+    expect((result[0] as Record<string, unknown>)['is_own']).toBe(true)
+    expect((result[1] as Record<string, unknown>)['is_own']).toBe(false)
+  })
+
+  it('getAgentEventsForOwner strips actor_id/target_id and filters metadata to a whitelist', async () => {
+    listEventsForTarget.mockResolvedValue([
+      {
+        id: 'evt_1',
+        actor_type: 'owner',
+        actor_id: OWNER_A, // internal — must be stripped
+        action: 'agent.paused',
+        target_id: AGENT.id, // internal — must be stripped
+        metadata: { mode: 'full', secret: 'leak' }, // 'secret' not whitelisted
+        created_at: '2026-01-03T00:00:00Z',
+      },
+      {
+        id: 'evt_2',
+        actor_type: 'system',
+        actor_id: 'system',
+        action: 'agent.claim_revoked',
+        target_id: AGENT.id,
+        metadata: { owner_id: 'ownX_leak', reason: 'key_rotated' },
+        created_at: '2026-01-03T00:01:00Z',
+      },
+      {
+        id: 'evt_3',
+        actor_type: 'owner',
+        actor_id: OWNER_A,
+        action: 'agent.claimed',
+        target_id: AGENT.id,
+        metadata: {},
+        created_at: '2026-01-03T00:02:00Z',
+      },
+    ])
+    const events = await getAgentEventsForOwner(OWNER_A, 'alice')
+    expect(events).toHaveLength(3)
+    for (const e of events) {
+      const rec = e as Record<string, unknown>
+      expect(rec['actor_id']).toBeUndefined()
+      expect(rec['target_id']).toBeUndefined()
+    }
+    // agent.paused keeps mode, drops secret.
+    expect((events[0] as Record<string, unknown>)['metadata']).toEqual({ mode: 'full' })
+    // agent.claim_revoked keeps reason, drops owner_id.
+    expect((events[1] as Record<string, unknown>)['metadata']).toEqual({ reason: 'key_rotated' })
+    // agent.claimed starts with empty metadata and stays empty.
+    expect((events[2] as Record<string, unknown>)['metadata']).toEqual({})
+  })
+
   it('getAgentMessagesForOwner sets scopeToRecipient=true for group conversations', async () => {
     isParticipant.mockResolvedValue(true)
     getConversation.mockResolvedValue({ id: 'grp_x', type: 'group' })
@@ -350,9 +440,11 @@ describe('dashboard.service — claimAgent', () => {
       action: 'agent.claimed',
       targetId: AGENT.id,
     })
-    expect(claimed.id).toBe(AGENT.id)
     expect(claimed.handle).toBe('alice')
     expect(claimed.paused_by_owner).toBe('none')
+    // Same no-internal-ids guard as getAgentProfile — claimAgent must
+    // never leak the internal agent row id on the wire.
+    expect((claimed as Record<string, unknown>)['id']).toBeUndefined()
   })
 
   it('sha-256 hashes the API key before the DB lookup — not the raw key', async () => {

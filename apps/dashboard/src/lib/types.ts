@@ -3,19 +3,22 @@
 // intended to stay a standalone Next app with no workspace runtime dep on
 // the Zod schemas. Keeping these as plain TypeScript interfaces also
 // prevents client bundles from accidentally shipping Zod.
+//
+// Internal row ids (agent.id, sender_id) are never exposed on the wire —
+// every agent is addressed by @handle, every message ownership is
+// surfaced as is_own. The server strips the internal fields in
+// dashboard.service.ts.
 
 export type PauseMode = 'none' | 'send' | 'full'
 export type AgentStatus = 'active' | 'restricted' | 'suspended' | 'deleted'
 
 export interface Owner {
-  id: string
   email: string
   display_name: string | null
   created_at: string
 }
 
 export interface ClaimedAgent {
-  id: string
   handle: string
   display_name: string | null
   description: string | null
@@ -26,7 +29,6 @@ export interface ClaimedAgent {
 }
 
 export interface AgentProfile {
-  id: string
   handle: string
   display_name: string | null
   description: string | null
@@ -50,7 +52,7 @@ export interface ConversationSummary {
 export interface DashboardMessage {
   id: string
   conversation_id: string
-  sender_id: string
+  is_own: boolean
   seq: number
   type: string
   content: Record<string, unknown>
@@ -65,9 +67,7 @@ export interface DashboardMessage {
 export interface AgentEvent {
   id: string
   actor_type: 'owner' | 'agent' | 'system'
-  actor_id: string
   action: string
-  target_id: string
   metadata: Record<string, unknown>
   created_at: string
 }

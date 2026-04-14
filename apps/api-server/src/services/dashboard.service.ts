@@ -88,8 +88,11 @@ export async function claimAgent(ownerId: string, apiKey: string) {
     targetId: agent.id,
   })
 
+  // Wire shape intentionally omits agent.id — the dashboard identifies
+  // every agent by @handle. Internal row ids are never surfaced to the
+  // browser. Same rule applies to listAgentsForOwner / getAgentProfile
+  // / pauseAgent / unpauseAgent below.
   return {
-    id: agent.id,
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
@@ -132,7 +135,6 @@ export async function listAgentsForOwner(ownerId: string) {
       const status = agent.status as string
       if (status === 'deleted') return null
       return {
-        id: agent.id as string,
         handle: agent.handle as string,
         display_name: (agent.display_name as string | null) ?? null,
         description: (agent.description as string | null) ?? null,
@@ -148,7 +150,6 @@ export async function listAgentsForOwner(ownerId: string) {
 export async function getAgentProfile(ownerId: string, handle: string) {
   const agent = await requireOwnedAgent(ownerId, handle)
   return {
-    id: agent.id,
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
@@ -203,7 +204,7 @@ export async function getAgentMessagesForOwner(
     throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
   }
   const hiddenAfter = await getConversationHide(agent.id as string, conversationId)
-  return getConversationMessages(
+  const rows = await getConversationMessages(
     conversationId,
     agent.id as string,
     MSG_LIMIT,
@@ -211,9 +212,48 @@ export async function getAgentMessagesForOwner(
     hiddenAfter,
     { scopeToRecipient: conv.type === 'group' },
   )
+  // Strip internal sender_id from the wire and replace with is_own so the
+  // dashboard can render the outgoing/incoming split without ever seeing
+  // the raw agent row id. Same rule applies as for agent.id above.
+  const myId = agent.id as string
+  return rows.map((m) => {
+    const row = m as Record<string, unknown>
+    const { sender_id: _sender_id, ...rest } = row
+    return { ...rest, is_own: _sender_id === myId }
+  })
 }
 
 // ─── Events ────────────────────────────────────────────────────────────────
+// Events come off the wire with actor_id and target_id (internal row ids)
+// plus a free-form metadata bag that upstream emitters populate. We
+// whitelist per-action before returning to the dashboard:
+//   * actor_id / target_id are stripped entirely — the target is always
+//     the agent the dashboard is viewing, and the actor is surfaced via
+//     actor_type only (owner | agent | system).
+//   * metadata is filtered to a fixed key-set per action. Unknown actions
+//     get an empty object, fail-closed.
+
+const EVENT_METADATA_WHITELIST: Record<string, ReadonlySet<string>> = {
+  'agent.paused': new Set(['mode']),
+  'agent.claim_revoked': new Set(['reason']),
+}
+
+function sanitizeEvent(raw: Record<string, unknown>) {
+  const action = raw['action'] as string
+  const allowed = EVENT_METADATA_WHITELIST[action] ?? new Set<string>()
+  const rawMeta = (raw['metadata'] as Record<string, unknown> | null) ?? {}
+  const cleanMeta: Record<string, unknown> = {}
+  for (const key of Object.keys(rawMeta)) {
+    if (allowed.has(key)) cleanMeta[key] = rawMeta[key]
+  }
+  return {
+    id: raw['id'],
+    actor_type: raw['actor_type'],
+    action,
+    metadata: cleanMeta,
+    created_at: raw['created_at'],
+  }
+}
 
 export async function getAgentEventsForOwner(
   ownerId: string,
@@ -221,7 +261,8 @@ export async function getAgentEventsForOwner(
   beforeCreatedAt?: string,
 ) {
   const agent = await requireOwnedAgent(ownerId, handle)
-  return listEventsForTarget(agent.id as string, 50, beforeCreatedAt)
+  const rows = await listEventsForTarget(agent.id as string, 50, beforeCreatedAt)
+  return rows.map((r) => sanitizeEvent(r as Record<string, unknown>))
 }
 
 // ─── Pause / unpause ───────────────────────────────────────────────────────
@@ -241,7 +282,6 @@ export async function pauseAgent(
     metadata: { mode },
   })
   return {
-    id: agent.id,
     handle: agent.handle,
     paused_by_owner: mode,
   }
@@ -257,7 +297,6 @@ export async function unpauseAgent(ownerId: string, handle: string) {
     targetId: agent.id as string,
   })
   return {
-    id: agent.id,
     handle: agent.handle,
     paused_by_owner: 'none' as const,
   }

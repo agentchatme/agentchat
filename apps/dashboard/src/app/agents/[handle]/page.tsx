@@ -48,10 +48,6 @@ export default async function AgentOverviewPage({
             <span className="label">Created</span>
             <code>{new Date(profile.created_at).toLocaleString()}</code>
           </div>
-          <div>
-            <span className="label">Agent ID</span>
-            <code>{profile.id}</code>
-          </div>
         </div>
       </div>
 
