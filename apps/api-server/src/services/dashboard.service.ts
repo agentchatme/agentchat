@@ -1,0 +1,264 @@
+import { createHash } from 'node:crypto'
+import {
+  findAgentByApiKeyHash,
+  findAgentByHandle,
+  findOwnerAgent,
+  insertOwnerAgent,
+  listClaimedAgents,
+  deleteOwnerAgent,
+  setPausedByOwner,
+  getAgentConversations,
+  getConversationMessages,
+  getConversation,
+  getConversationHide,
+  isParticipant,
+  listEventsForTarget,
+} from '@agentchat/db'
+import { emitEvent } from './events.service.js'
+
+// ─── Dashboard service errors ──────────────────────────────────────────────
+// The dashboard API uses 404 for "you don't own this agent" cases to avoid
+// leaking existence. The service layer raises DashboardError with a code and
+// status; the route maps it to a response. See plan §11.6.
+
+export class DashboardError extends Error {
+  code: string
+  status: number
+
+  constructor(code: string, message: string, status: number) {
+    super(message)
+    this.name = 'DashboardError'
+    this.code = code
+    this.status = status
+  }
+}
+
+// ─── Shared scope check ────────────────────────────────────────────────────
+// Every per-agent dashboard route starts by resolving the :handle param to
+// the agent row AND verifying the caller's owner_agents claim. If either
+// the agent doesn't exist OR the caller hasn't claimed it, return 404 —
+// not 403 — so a curious owner can't enumerate other owners' agents.
+
+async function requireOwnedAgent(ownerId: string, handle: string) {
+  const agent = await findAgentByHandle(handle)
+  if (!agent) {
+    throw new DashboardError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
+  }
+  const claim = await findOwnerAgent(ownerId, agent.id)
+  if (!claim) {
+    throw new DashboardError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
+  }
+  return agent
+}
+
+// ─── Claim ─────────────────────────────────────────────────────────────────
+// Owner pastes an API key → we hash it → look up the agent → insert the
+// claim. Returns 404 INVALID_API_KEY if the hash doesn't match any live
+// agent. Returns 409 ALREADY_CLAIMED on a second claim (enforced by the
+// agent_id PK on owner_agents — unique-violation maps here).
+
+export async function claimAgent(ownerId: string, apiKey: string) {
+  const hash = createHash('sha256').update(apiKey).digest('hex')
+  const agent = await findAgentByApiKeyHash(hash)
+  if (!agent) {
+    throw new DashboardError('INVALID_API_KEY', 'No agent matches that API key', 404)
+  }
+  if (agent.status === 'deleted') {
+    throw new DashboardError('INVALID_API_KEY', 'No agent matches that API key', 404)
+  }
+
+  try {
+    await insertOwnerAgent({ owner_id: ownerId, agent_id: agent.id })
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('owner_agents_pkey')) {
+      throw new DashboardError(
+        'ALREADY_CLAIMED',
+        'This agent is already claimed by another dashboard owner',
+        409,
+      )
+    }
+    throw e
+  }
+
+  await emitEvent({
+    actorType: 'owner',
+    actorId: ownerId,
+    action: 'agent.claimed',
+    targetId: agent.id,
+  })
+
+  return {
+    id: agent.id,
+    handle: agent.handle,
+    display_name: agent.display_name,
+    description: agent.description,
+    status: agent.status,
+    paused_by_owner: agent.paused_by_owner ?? 'none',
+    claimed_at: new Date().toISOString(),
+    created_at: agent.created_at,
+  }
+}
+
+// ─── Release ───────────────────────────────────────────────────────────────
+// Drops the owner_agents row. Does NOT delete the agent or rotate its key
+// — release is cosmetic from the agent's perspective. Idempotent-ish: a
+// release that finds no claim surfaces 404 so the frontend can react.
+
+export async function releaseClaim(ownerId: string, handle: string) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  const deleted = await deleteOwnerAgent(ownerId, agent.id)
+  if (!deleted) {
+    throw new DashboardError('CLAIM_NOT_FOUND', 'Claim not found', 404)
+  }
+  await emitEvent({
+    actorType: 'owner',
+    actorId: ownerId,
+    action: 'agent.released',
+    targetId: agent.id,
+  })
+}
+
+// ─── List / profile ────────────────────────────────────────────────────────
+
+export async function listAgentsForOwner(ownerId: string) {
+  const rows = await listClaimedAgents(ownerId)
+  // PostgREST returns the embedded `agents` row; flatten + normalize so
+  // the wire shape matches ClaimedAgent.
+  return rows
+    .map((r) => {
+      const agent = Array.isArray(r.agents) ? r.agents[0] : r.agents
+      if (!agent) return null
+      const status = agent.status as string
+      if (status === 'deleted') return null
+      return {
+        id: agent.id as string,
+        handle: agent.handle as string,
+        display_name: (agent.display_name as string | null) ?? null,
+        description: (agent.description as string | null) ?? null,
+        status,
+        paused_by_owner: (agent.paused_by_owner as string | null) ?? 'none',
+        claimed_at: r.claimed_at as string,
+        created_at: agent.created_at as string,
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+}
+
+export async function getAgentProfile(ownerId: string, handle: string) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  return {
+    id: agent.id,
+    handle: agent.handle,
+    display_name: agent.display_name,
+    description: agent.description,
+    status: agent.status,
+    paused_by_owner: agent.paused_by_owner ?? 'none',
+    email_masked: maskEmail(agent.email as string),
+    created_at: agent.created_at,
+  }
+}
+
+function maskEmail(email: string): string {
+  const at = email.indexOf('@')
+  if (at <= 0) return email
+  const first = email[0] ?? ''
+  return `${first}****@${email.slice(at + 1)}`
+}
+
+// ─── Conversations + messages ──────────────────────────────────────────────
+// Dashboard is a lurker: we reuse the same queries the agent's own API
+// surface uses, passing the agent's id as the "caller". This means the
+// dashboard sees exactly what the agent itself would see — hide-for-me
+// rows are filtered out, joined_seq caps apply, etc. The owner can still
+// see the other side of any conversation because hide is subjective:
+// hiding a message on agent A's side leaves agent B's copy intact.
+//
+// We do NOT accept agent-side query params that would let the owner
+// mutate state (mark-read, hide). Only reads.
+
+const CONV_LIMIT = 50
+const MSG_LIMIT = 50
+
+export async function getAgentConversationsForOwner(ownerId: string, handle: string) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  return getAgentConversations(agent.id as string, CONV_LIMIT)
+}
+
+export async function getAgentMessagesForOwner(
+  ownerId: string,
+  handle: string,
+  conversationId: string,
+  beforeSeq?: number,
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  // Scope check: the claimed agent must actually be in this conversation.
+  // Without this a crafted conversation_id could read arbitrary history.
+  const isMember = await isParticipant(conversationId, agent.id as string)
+  if (!isMember) {
+    throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
+  }
+  const conv = await getConversation(conversationId)
+  if (!conv) {
+    throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
+  }
+  const hiddenAfter = await getConversationHide(agent.id as string, conversationId)
+  return getConversationMessages(
+    conversationId,
+    agent.id as string,
+    MSG_LIMIT,
+    beforeSeq,
+    hiddenAfter,
+    { scopeToRecipient: conv.type === 'group' },
+  )
+}
+
+// ─── Events ────────────────────────────────────────────────────────────────
+
+export async function getAgentEventsForOwner(
+  ownerId: string,
+  handle: string,
+  beforeCreatedAt?: string,
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  return listEventsForTarget(agent.id as string, 50, beforeCreatedAt)
+}
+
+// ─── Pause / unpause ───────────────────────────────────────────────────────
+
+export async function pauseAgent(
+  ownerId: string,
+  handle: string,
+  mode: 'send' | 'full',
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  await setPausedByOwner(agent.id as string, mode)
+  await emitEvent({
+    actorType: 'owner',
+    actorId: ownerId,
+    action: 'agent.paused',
+    targetId: agent.id as string,
+    metadata: { mode },
+  })
+  return {
+    id: agent.id,
+    handle: agent.handle,
+    paused_by_owner: mode,
+  }
+}
+
+export async function unpauseAgent(ownerId: string, handle: string) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  await setPausedByOwner(agent.id as string, 'none')
+  await emitEvent({
+    actorType: 'owner',
+    actorId: ownerId,
+    action: 'agent.unpaused',
+    targetId: agent.id as string,
+  })
+  return {
+    id: agent.id,
+    handle: agent.handle,
+    paused_by_owner: 'none' as const,
+  }
+}

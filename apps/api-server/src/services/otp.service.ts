@@ -122,7 +122,7 @@ export async function releaseOtpSendSlot(email: string): Promise<void> {
  */
 export async function registerOtpVerifyAttempt(
   pendingId: string,
-  pendingPrefix: 'pending:' | 'recover:' | 'rotate:',
+  pendingPrefix: 'pending:' | 'recover:' | 'rotate:' | 'dashboard:',
 ): Promise<void> {
   const redis = getRedis()
   const key = `otp:attempts:${pendingId}`

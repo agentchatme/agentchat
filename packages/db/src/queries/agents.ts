@@ -84,6 +84,23 @@ export async function getPausedByOwner(id: string): Promise<string> {
   return (data.paused_by_owner as string | null) ?? 'none'
 }
 
+/**
+ * Flip the pause state. Used by the dashboard pause/unpause routes.
+ * No status checks here — the service layer is expected to have already
+ * verified ownership (via owner_agents) before calling this. The write
+ * is a single UPDATE with the new enum value.
+ */
+export async function setPausedByOwner(
+  id: string,
+  mode: 'none' | 'send' | 'full',
+): Promise<void> {
+  const { error } = await getSupabaseClient()
+    .from('agents')
+    .update({ paused_by_owner: mode })
+    .eq('id', id)
+  if (error) throw error
+}
+
 export async function insertAgent(agent: {
   id: string
   handle: string

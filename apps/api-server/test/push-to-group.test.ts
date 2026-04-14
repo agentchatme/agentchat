@@ -17,6 +17,10 @@ const getGroupPushRecipientsMock = vi.fn<
 
 vi.mock('@agentchat/db', () => ({
   getGroupPushRecipients: getGroupPushRecipientsMock,
+  // Full-pause filter. Default to "nobody is paused" so existing
+  // assertions about which recipients get a push still hold. Individual
+  // tests can override this via mockResolvedValue(new Set([...])).
+  listFullyPausedAgentIds: vi.fn().mockResolvedValue(new Set<string>()),
   // The service module imports many other symbols from @agentchat/db at
   // top level. Stub them as no-ops so the import graph resolves — we
   // only exercise pushToGroup here, which touches just one DB call.
