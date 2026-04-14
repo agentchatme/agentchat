@@ -63,6 +63,14 @@ messages.post('/', authMiddleware, async (c) => {
 // This must be before /:conversation_id to avoid route conflict.
 messages.get('/sync', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
+  // Full-pause freezes the receive path entirely — mirrors the WS drain
+  // suppression in handler.ts. Return an empty batch rather than 403 so
+  // well-behaved clients don't hammer-retry during the pause window; the
+  // messages stay durable in message_deliveries and will flush on the
+  // next /sync call after the pause is lifted.
+  if (c.get('agent').paused_by_owner === 'full') {
+    return c.json([])
+  }
   const after = c.req.query('after')
   const limitRaw = c.req.query('limit')
   const limit = limitRaw !== undefined && limitRaw !== '' ? Number(limitRaw) : undefined
@@ -89,6 +97,13 @@ messages.get('/sync', authMiddleware, async (c) => {
 // /:conversation_id history route.
 messages.post('/sync/ack', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
+  // Mirror the /sync suppression: a full-paused agent can't receive, so
+  // there's nothing to ack. Silent no-op — the client's cursor stays
+  // where it is, and the real deliveries will flush on the next ack
+  // after unpause. 403 would just make clients loop-retry.
+  if (c.get('agent').paused_by_owner === 'full') {
+    return c.json({ acked: 0 })
+  }
   let body: unknown
   try {
     body = await c.req.json()
