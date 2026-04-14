@@ -54,6 +54,36 @@ export async function findActiveAgentByEmail(email: string) {
   return data
 }
 
+/**
+ * Return the subset of agent ids whose paused_by_owner = 'full'.
+ * Used by the group fan-out to drop fully-paused recipients before
+ * pushing WS + webhook events. The caller already holds a candidate
+ * id set from getGroupPushRecipients; this is a single IN query that
+ * adds one round-trip to the fan-out path regardless of group size.
+ */
+export async function listFullyPausedAgentIds(ids: string[]): Promise<Set<string>> {
+  if (ids.length === 0) return new Set()
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('id')
+    .in('id', ids)
+    .eq('paused_by_owner', 'full')
+  if (error) throw error
+  return new Set((data ?? []).map((r) => r.id as string))
+}
+
+/** Fetch just the paused_by_owner column for one agent. Used by the
+ *  WS reconnect drain to decide whether to flush the unread batch. */
+export async function getPausedByOwner(id: string): Promise<string> {
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('paused_by_owner')
+    .eq('id', id)
+    .single()
+  if (error || !data) return 'none'
+  return (data.paused_by_owner as string | null) ?? 'none'
+}
+
 export async function insertAgent(agent: {
   id: string
   handle: string

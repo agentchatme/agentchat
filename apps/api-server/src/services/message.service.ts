@@ -24,6 +24,7 @@ import {
   getGroupParticipantJoinedSeq,
   getGroupPushRecipients,
   getAttachmentById,
+  listFullyPausedAgentIds,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
@@ -119,6 +120,27 @@ export class MessageError extends Error {
   }
 }
 
+/**
+ * Reject the send if the sender's owner has paused the agent. Both
+ * pause modes ('send' and 'full') block outbound messaging — the
+ * modes differ only on the receive-side fan-out, which is handled
+ * separately in pushToRecipient / pushToGroup / the WS reconnect
+ * drain. Called from both sendDirectMessage and sendGroupMessage
+ * right after the sender is fetched, before the rate limit spends
+ * a bucket slot on a message that's about to be rejected anyway.
+ */
+function assertNotPausedByOwner(sender: { paused_by_owner?: string | null }) {
+  const mode = sender.paused_by_owner ?? 'none'
+  if (mode !== 'none') {
+    messagesSendRejected.inc({ reason: 'paused_by_owner' })
+    throw new MessageError(
+      'AGENT_PAUSED_BY_OWNER',
+      'Your account is paused by the owner. Messaging is temporarily disabled.',
+      403,
+    )
+  }
+}
+
 export async function sendMessage(senderId: string, req: SendMessageRequest) {
   // 0. Combined content+metadata cap. Both travel to the recipient and are
   //    stored, so a misbehaving sender could otherwise bypass the limit by
@@ -181,6 +203,7 @@ async function sendDirectMessage(
     messagesSendRejected.inc({ reason: 'suspended' })
     throw new MessageError('SUSPENDED', 'Your account is suspended.', 403)
   }
+  assertNotPausedByOwner(sender)
   if (blocked) {
     messagesSendRejected.inc({ reason: 'blocked' })
     throw new MessageError('BLOCKED', 'Messaging between these accounts is blocked', 403)
@@ -292,11 +315,18 @@ async function sendDirectMessage(
 
   // 10. ASYNC PUSH — only fire on first write, not on idempotent replay.
   //    Replaying a delivered message would double-deliver to the recipient.
+  //    Also suppresses real-time push when the recipient is in 'full' pause:
+  //    the message is still durable in message_deliveries and will drain
+  //    naturally once the owner unpauses, but no WS / webhook fires now.
   if (!message.is_replay) {
     messagesSent.inc({ outcome: 'ok' })
-    pushToRecipient(recipient.id, publicMessage).catch(() => {
-      // Push failed — that's fine, message is safe in DB
-    })
+    const recipientFullyPaused =
+      (recipient.paused_by_owner as string | null) === 'full'
+    if (!recipientFullyPaused) {
+      pushToRecipient(recipient.id, publicMessage).catch(() => {
+        // Push failed — that's fine, message is safe in DB
+      })
+    }
   } else {
     messagesSent.inc({ outcome: 'replay' })
   }
@@ -372,6 +402,7 @@ async function sendGroupMessage(
     messagesSendRejected.inc({ reason: 'suspended' })
     throw new MessageError('SUSPENDED', 'Your account is suspended.', 403)
   }
+  assertNotPausedByOwner(sender)
   if (!role) {
     // Hide existence of the group from non-members.
     messagesSendRejected.inc({ reason: 'group_not_member' })
@@ -477,7 +508,13 @@ export async function pushToGroup(
     messageSeq,
     senderId,
   )
+  // Drop any recipients whose owner has full-paused them. The DB envelopes
+  // in message_deliveries still exist, so the message drains normally once
+  // the pause lifts — we only skip the real-time fan-out for now. One
+  // extra IN-query per fan-out regardless of group size.
+  const fullyPaused = await listFullyPausedAgentIds(recipientIds)
   for (const agentId of recipientIds) {
+    if (fullyPaused.has(agentId)) continue
     sendToAgent(agentId, {
       type: 'message.new',
       payload: message,

@@ -1,7 +1,8 @@
 import { randomBytes, createHash } from 'node:crypto'
-import { getSupabaseClient, findAgentById, findAgentByHandle } from '@agentchat/db'
+import { getSupabaseClient, findAgentById, findAgentByHandle, rotateApiKeyAtomic } from '@agentchat/db'
 import { AgentSettings, type UpdateAgentRequest } from '@agentchat/shared'
 import { publishDisconnect } from '../ws/pubsub.js'
+import { generateId } from '../lib/id.js'
 
 export class AgentError extends Error {
   code: string
@@ -129,12 +130,17 @@ export async function rotateApiKey(id: string, agentId: string) {
   const newApiKey = `ac_${randomBytes(32).toString('base64url')}`
   const newHash = createHash('sha256').update(newApiKey).digest('hex')
 
-  const { error } = await getSupabaseClient()
-    .from('agents')
-    .update({ api_key_hash: newHash })
-    .eq('id', id)
-
-  if (error) throw error
+  // Atomic: UPDATE api_key_hash + DELETE any dashboard claim + emit
+  // agent.key_rotated (+ agent.claim_revoked if a claim existed).
+  // Ensures a leaked key that gets rotated cannot leave a stale dashboard
+  // claim behind. Event IDs are pre-generated so the RPC stays
+  // deterministic and the caller could log them if needed.
+  await rotateApiKeyAtomic({
+    agent_id: id,
+    new_hash: newHash,
+    rotated_event_id: generateId('evt'),
+    revoked_event_id: generateId('evt'),
+  })
 
   // Evict any live WS sessions across every server. A socket that was
   // authenticated with the old key is no longer a valid session — the

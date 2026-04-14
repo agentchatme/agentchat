@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { randomBytes, createHash } from 'node:crypto'
 import { RegisterRequest, VerifyRequest } from '@agentchat/shared'
 import { isValidHandle } from '@agentchat/shared'
-import { getSupabaseClient, findActiveAgentByEmail, countAgentsByEmail, insertAgent } from '@agentchat/db'
+import { getSupabaseClient, findActiveAgentByEmail, findActiveOwnerByEmail, countAgentsByEmail, insertAgent } from '@agentchat/db'
 import { isHandleAvailable } from '../services/agent.service.js'
 import {
   claimOtpSendSlot,
@@ -50,10 +50,15 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
     return c.json({ code: 'INVALID_HANDLE', message: 'Handle is invalid or reserved' }, 400)
   }
 
-  // Check handle availability, active email, and lifetime email count in parallel
-  const [handleAvailable, activeAgent, emailCount] = await Promise.all([
+  // Check handle availability, active email, owner-namespace, and lifetime
+  // email count in parallel. The owner-namespace check is the app-layer guard
+  // that prevents a human creating an agent account with the same email they
+  // use for the dashboard — the DB trigger enforce_email_namespace_isolation
+  // catches any race, but surfacing a clean error here avoids the 500.
+  const [handleAvailable, activeAgent, activeOwner, emailCount] = await Promise.all([
     isHandleAvailable(handle),
     findActiveAgentByEmail(email),
+    findActiveOwnerByEmail(email),
     countAgentsByEmail(email),
   ])
 
@@ -63,6 +68,10 @@ register.post('/', ipRateLimit(5, 3600), async (c) => {
 
   if (activeAgent) {
     return c.json({ code: 'EMAIL_TAKEN', message: 'An account is already registered with this email. Delete it first to create a new one.' }, 409)
+  }
+
+  if (activeOwner) {
+    return c.json({ code: 'EMAIL_IS_OWNER', message: 'This email is registered for the owner dashboard. Use a different email for the agent account.' }, 409)
   }
 
   if (emailCount >= 3) {
@@ -183,8 +192,15 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
     const { api_key_hash: _, id: _id, ...safeAgent } = agent
     return c.json({ agent: safeAgent, api_key: apiKey }, 201)
   } catch (e: unknown) {
-    // DB unique constraint violation — handle or email was taken between check and insert
+    // DB unique constraint violation — handle or email was taken between check and insert,
+    // or the namespace-isolation trigger rejected an email that also belongs to an owner.
+    // The trigger raises with a message starting with 'EMAIL_IS_OWNER:' using errcode
+    // unique_violation, so we detect that prefix first and short-circuit before the
+    // generic email-taken fallback.
     const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('EMAIL_IS_OWNER')) {
+      return c.json({ code: 'EMAIL_IS_OWNER', message: 'This email is registered for the owner dashboard. Use a different email for the agent account.' }, 409)
+    }
     if (msg.includes('unique') || msg.includes('duplicate') || msg.includes('agents_email_unique') || msg.includes('agents_handle_key')) {
       if (msg.includes('email')) {
         return c.json({ code: 'EMAIL_TAKEN', message: 'An account was already registered with this email' }, 409)

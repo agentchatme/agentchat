@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { WebSocket } from 'ws'
-import { findAgentByApiKeyHash } from '@agentchat/db'
+import { findAgentByApiKeyHash, getPausedByOwner } from '@agentchat/db'
 import { addConnection, removeConnection } from './registry.js'
 import { syncUndelivered } from '../services/message.service.js'
 import { deliverToSocket } from './pubsub.js'
@@ -46,6 +46,14 @@ const MAX_DRAIN_ITERATIONS = 50 // 50 × 200 = 10,000 messages max per reconnect
 const DRAIN_BATCH_SIZE = 200
 
 async function drainUndelivered(agentId: string, ws: WSContext) {
+  // If the owner has fully paused this agent, skip the drain entirely.
+  // The messages are durable in message_deliveries and will flush on the
+  // first reconnect after the pause is lifted (or via /v1/messages/sync
+  // which the agent can call itself to force a drain). Send-only pause
+  // does NOT suppress the drain — the agent can still receive.
+  const pausedMode = await getPausedByOwner(agentId).catch(() => 'none')
+  if (pausedMode === 'full') return
+
   let batch = await syncUndelivered(agentId)
   let iterations = 0
   while (batch.length > 0 && iterations < MAX_DRAIN_ITERATIONS) {

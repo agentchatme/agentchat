@@ -8,6 +8,8 @@ export * from './types/presence.js'
 export * from './types/webhook.js'
 export * from './types/ws.js'
 export * from './types/attachment.js'
+export * from './types/owner.js'
+export * from './types/event.js'
 
 // Constants
 export * from './constants/enforcement.js'

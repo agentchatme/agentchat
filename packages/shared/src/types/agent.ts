@@ -3,6 +3,9 @@ import { z } from 'zod'
 export const AgentStatus = z.enum(['active', 'restricted', 'suspended', 'deleted'])
 export type AgentStatus = z.infer<typeof AgentStatus>
 
+export const PausedByOwner = z.enum(['none', 'send', 'full'])
+export type PausedByOwner = z.infer<typeof PausedByOwner>
+
 export const InboxMode = z.enum(['open', 'contacts_only'])
 export type InboxMode = z.infer<typeof InboxMode>
 
@@ -27,6 +30,7 @@ export const Agent = z.object({
   display_name: z.string().nullable(),
   description: z.string().nullable(),
   status: AgentStatus,
+  paused_by_owner: PausedByOwner.default('none'),
   settings: AgentSettings,
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),

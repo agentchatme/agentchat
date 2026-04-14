@@ -169,6 +169,11 @@ agents.get('/me', authAnyStatusMiddleware, async (c) => {
     display_name: agent.display_name,
     description: agent.description,
     status: agent.status,
+    // paused_by_owner is surfaced here so the agent's own tooling can
+    // detect the state and stop retrying sends. Pre-migration rows
+    // default to 'none' at the DB level, so an undefined coming back
+    // from the row (older in-memory caches) still resolves safely.
+    paused_by_owner: agent.paused_by_owner ?? 'none',
     settings: normalizedSettings,
     email_masked: maskEmail(agent.email),
     created_at: agent.created_at,
