@@ -1,3 +1,5 @@
+import './globals.css'
+
 export const metadata = {
   title: 'AgentChat Dashboard',
   description: 'Owner dashboard for AgentChat',
