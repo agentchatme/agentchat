@@ -1,378 +1,159 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Tailwind v4 is CSS-first — the `@theme inline` block below is how
+ * shadcn/ui's token set gets wired into utility classes like
+ * `bg-background` and `text-foreground`. The two layers below it
+ * (`:root` and `.dark`) are the actual token values; `@theme inline`
+ * just aliases them. Dark is the default (`<html class="dark">` in
+ * RootLayout); light is toggleable via next-themes.
+ *
+ * Colors are OKLCH so shadcn's theme-aware adjustments compose
+ * correctly (hover lifts, ring alpha, etc.). Base palette is zinc —
+ * neutral grayscale, no colored accent on admin chrome.
+ *
+ * The --chat-* tokens at the bottom are the ONLY colored surface in
+ * the product. They are deliberately scoped to the chat panel so the
+ * messenger styling (§3.1.2) does not leak into the rest of the
+ * admin UI. iMessage-reference: incoming bubbles are neutral, the
+ * claimed agent's outgoing bubbles are the accent blue.
+ */
+
+@custom-variant dark (&:is(.dark *));
+
 :root {
-  --bg: #0a0a0a;
-  --bg-elev: #111113;
-  --fg: #e5e5e5;
-  --fg-muted: #8a8a8f;
-  --border: #27272a;
-  --border-hover: #3f3f46;
-  --accent: #f59e0b;
-  --accent-hover: #fbbf24;
-  --danger: #ef4444;
-  --ok: #22c55e;
+  --radius: 0.625rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.141 0.005 285.823);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.141 0.005 285.823);
+
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.141 0.005 285.823);
+
+  --primary: oklch(0.21 0.006 285.885);
+  --primary-foreground: oklch(0.985 0 0);
+
+  --secondary: oklch(0.967 0.001 286.375);
+  --secondary-foreground: oklch(0.21 0.006 285.885);
+
+  --muted: oklch(0.967 0.001 286.375);
+  --muted-foreground: oklch(0.552 0.016 285.938);
+
+  --accent: oklch(0.967 0.001 286.375);
+  --accent-foreground: oklch(0.21 0.006 285.885);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.92 0.004 286.32);
+  --input: oklch(0.92 0.004 286.32);
+  --ring: oklch(0.705 0.015 286.067);
+
+  /* Chat panel tokens — scoped, do not reuse anywhere else in the UI.
+   * In light mode, incoming messages are pale zinc and the claimed
+   * agent's outgoing are iMessage blue. */
+  --chat-bg: oklch(0.985 0 0);
+  --chat-incoming-bg: oklch(0.94 0.002 286.32);
+  --chat-incoming-fg: oklch(0.141 0.005 285.823);
+  --chat-outgoing-bg: oklch(0.62 0.19 255);
+  --chat-outgoing-fg: oklch(1 0 0);
+  --chat-meta: oklch(0.552 0.016 285.938);
 }
 
-* {
-  box-sizing: border-box;
+.dark {
+  --background: oklch(0.141 0.005 285.823);
+  --foreground: oklch(0.985 0 0);
+
+  --card: oklch(0.18 0.006 285.885);
+  --card-foreground: oklch(0.985 0 0);
+
+  --popover: oklch(0.18 0.006 285.885);
+  --popover-foreground: oklch(0.985 0 0);
+
+  --primary: oklch(0.985 0 0);
+  --primary-foreground: oklch(0.21 0.006 285.885);
+
+  --secondary: oklch(0.225 0.006 285.885);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.225 0.006 285.885);
+  --muted-foreground: oklch(0.705 0.015 286.067);
+
+  --accent: oklch(0.225 0.006 285.885);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.552 0.016 285.938);
+
+  /* Dark-mode chat palette: deeper incoming gray + same iMessage blue. */
+  --chat-bg: oklch(0.141 0.005 285.823);
+  --chat-incoming-bg: oklch(0.225 0.006 285.885);
+  --chat-incoming-fg: oklch(0.985 0 0);
+  --chat-outgoing-bg: oklch(0.54 0.18 255);
+  --chat-outgoing-fg: oklch(1 0 0);
+  --chat-meta: oklch(0.705 0.015 286.067);
 }
 
-html,
-body {
-  margin: 0;
-  padding: 0;
-  background: var(--bg);
-  color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-chat-bg: var(--chat-bg);
+  --color-chat-incoming-bg: var(--chat-incoming-bg);
+  --color-chat-incoming-fg: var(--chat-incoming-fg);
+  --color-chat-outgoing-bg: var(--chat-outgoing-bg);
+  --color-chat-outgoing-fg: var(--chat-outgoing-fg);
+  --color-chat-meta: var(--chat-meta);
 }
 
-a {
-  color: var(--fg);
-  text-decoration: none;
-}
-
-a:hover {
-  color: var(--accent-hover);
-}
-
-h1,
-h2,
-h3 {
-  margin: 0 0 12px;
-  font-weight: 600;
-}
-
-h1 {
-  font-size: 24px;
-}
-
-h2 {
-  font-size: 18px;
-}
-
-h3 {
-  font-size: 15px;
-}
-
-code {
-  font-family: 'SFMono-Regular', ui-monospace, 'Menlo', monospace;
-  background: var(--bg-elev);
-  padding: 2px 6px;
-  border-radius: 3px;
-  font-size: 12px;
-}
-
-/* Layout primitives */
-
-.container {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 32px 24px;
-}
-
-.nav {
-  display: flex;
-  gap: 24px;
-  align-items: center;
-  padding: 14px 24px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-elev);
-}
-
-.nav-brand {
-  font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.02em;
-}
-
-.nav-spacer {
-  flex: 1;
-}
-
-.nav a {
-  color: var(--fg-muted);
-  font-size: 13px;
-}
-
-.nav a:hover,
-.nav a.active {
-  color: var(--fg);
-}
-
-.sub-nav {
-  display: flex;
-  gap: 16px;
-  padding: 0 0 16px;
-  margin-bottom: 24px;
-  border-bottom: 1px solid var(--border);
-}
-
-.sub-nav a {
-  color: var(--fg-muted);
-  padding: 6px 2px;
-  font-size: 13px;
-  border-bottom: 2px solid transparent;
-}
-
-.sub-nav a:hover {
-  color: var(--fg);
-}
-
-.sub-nav a.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-/* Card */
-
-.card {
-  background: var(--bg-elev);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-}
-
-.card:hover {
-  border-color: var(--border-hover);
-}
-
-.card-title {
-  font-size: 15px;
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-
-.card-handle {
-  font-size: 12px;
-  color: var(--fg-muted);
-  margin-bottom: 12px;
-}
-
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
-
-/* Buttons */
-
-.btn {
-  background: var(--accent);
-  color: #0a0a0a;
-  padding: 8px 16px;
-  border-radius: 4px;
-  border: 0;
-  font-weight: 600;
-  font-size: 13px;
-  cursor: pointer;
-  font-family: inherit;
-}
-
-.btn:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--fg);
-  border: 1px solid var(--border);
-}
-
-.btn-ghost:hover:not(:disabled) {
-  background: var(--bg-elev);
-  border-color: var(--border-hover);
-}
-
-.btn-danger {
-  background: transparent;
-  color: var(--danger);
-  border: 1px solid var(--border);
-}
-
-.btn-danger:hover:not(:disabled) {
-  background: rgba(239, 68, 68, 0.1);
-  border-color: var(--danger);
-}
-
-/* Input */
-
-.input {
-  background: var(--bg-elev);
-  color: var(--fg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 10px 12px;
-  font-family: inherit;
-  font-size: 14px;
-  width: 100%;
-}
-
-.input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-
-.label {
-  display: block;
-  font-size: 12px;
-  color: var(--fg-muted);
-  margin-bottom: 6px;
-}
-
-.form-row {
-  margin-bottom: 16px;
-}
-
-/* Status badges */
-
-.badge {
-  display: inline-block;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.badge-active {
-  background: rgba(34, 197, 94, 0.15);
-  color: var(--ok);
-}
-
-.badge-restricted,
-.badge-paused-send {
-  background: rgba(245, 158, 11, 0.15);
-  color: var(--accent);
-}
-
-.badge-suspended,
-.badge-paused-full {
-  background: rgba(239, 68, 68, 0.15);
-  color: var(--danger);
-}
-
-.badge-muted {
-  background: rgba(138, 138, 143, 0.15);
-  color: var(--fg-muted);
-}
-
-/* Error surfaces */
-
-.err {
-  color: var(--danger);
-  font-size: 13px;
-  margin: 8px 0;
-}
-
-.muted {
-  color: var(--fg-muted);
-}
-
-.stack > * + * {
-  margin-top: 12px;
-}
-
-.row {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-
-/* Messages pane */
-
-.conv-layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: 24px;
-  min-height: 500px;
-}
-
-.conv-list {
-  border-right: 1px solid var(--border);
-  padding-right: 16px;
-  max-height: 70vh;
-  overflow-y: auto;
-}
-
-.conv-list-item {
-  display: block;
-  padding: 12px;
-  border-radius: 6px;
-  margin-bottom: 4px;
-  cursor: pointer;
-}
-
-.conv-list-item:hover {
-  background: var(--bg-elev);
-}
-
-.conv-list-item.active {
-  background: var(--bg-elev);
-  border: 1px solid var(--border-hover);
-}
-
-.conv-list-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--fg);
-}
-
-.conv-list-meta {
-  font-size: 11px;
-  color: var(--fg-muted);
-  margin-top: 2px;
-}
-
-.msg-thread {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-height: 70vh;
-  overflow-y: auto;
-  padding-right: 8px;
-}
-
-.msg {
-  max-width: 70%;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--bg-elev);
-  white-space: pre-wrap;
-  word-wrap: break-word;
-}
-
-.msg-meta {
-  font-size: 11px;
-  color: var(--fg-muted);
-  margin-bottom: 4px;
-}
-
-.msg-own {
-  align-self: flex-end;
-  border-color: var(--accent);
-  background: rgba(245, 158, 11, 0.08);
-}
-
-/* Events feed */
-
-.event-item {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 16px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-  font-size: 13px;
-}
-
-.event-time {
-  color: var(--fg-muted);
-  font-size: 12px;
-  font-family: 'SFMono-Regular', ui-monospace, monospace;
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    @apply bg-background text-foreground;
+    font-family:
+      -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui,
+      sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
 }
