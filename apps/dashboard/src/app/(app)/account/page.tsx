@@ -10,13 +10,13 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import { SignOutEverywhereButton } from '@/components/sign-out-everywhere-button'
 
-// Owner account settings (§3.1.2). The api-server doesn't yet expose
-// a mutate endpoint for the owner's own profile — display name is
-// set on first OTP verify and email is the identity, so there's
-// nothing to edit here in Phase D1. The route exists so the sidebar
-// link has a real destination and so the URL is stable when the
-// mutate endpoint lands (follow-up: PATCH /dashboard/me).
+// Owner account settings (§3.1.2). Profile fields are read-only in
+// Phase D1 — display name is set on first OTP verify and email is the
+// identity, so there's nothing to edit yet. The Security card hosts
+// sign-out-everywhere, the one cross-device auth action an owner can
+// take before a mutate endpoint for the profile itself lands.
 
 export default async function AccountPage() {
   const owner = await apiFetch<Owner>('/dashboard/me')
@@ -53,6 +53,19 @@ export default async function AccountPage() {
             <Field label="Account created">
               {format(new Date(owner.created_at), 'PPP')}
             </Field>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Security</CardTitle>
+            <CardDescription>
+              Sign out of every browser signed in as this account. Use
+              if you think someone else may have accessed your account.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <SignOutEverywhereButton />
           </CardContent>
         </Card>
       </div>

@@ -9,21 +9,37 @@ import { findOwnerById, getSupabaseClient } from '@agentchat/db'
 // every read/write to the caller's own claimed agents.
 //
 // Cookie contract (documented once so route code can stay consistent):
-//   name:       ac_dashboard_session
-//   value:      Supabase access_token (JWT) from verifyOtp()
-//   attributes: HttpOnly, Secure (in prod), SameSite=Lax, Path=/
-//   lifetime:   matches the Supabase access_token TTL (default 1h). When
-//               the token expires, the middleware surfaces 401 and the
-//               frontend re-OTPs. We intentionally do NOT carry a refresh
-//               token for Phase D1 — simpler cookie surface, and a
-//               short-session lurker dashboard is acceptable.
+//   ac_dashboard_session — short-lived access token (Supabase JWT, 1h TTL)
+//     Presented on every /dashboard/* request. Validated here via a
+//     stateless supabase.auth.getUser(token) call.
+//   ac_dashboard_refresh — long-lived refresh token (30d TTL)
+//     Never touched by this middleware. Only the /dashboard/auth/refresh
+//     route reads it; the dashboard's Next.js middleware proactively
+//     calls that route when the access token is close to expiry so the
+//     browser never sees a 401 during normal use.
+//
+// Both cookies are HttpOnly + Secure (prod) + SameSite=Lax + Path=/. The
+// access cookie returning 401 does NOT mean the session is dead — the
+// Next.js middleware catches it and silently refreshes using the refresh
+// cookie. A user only gets bounced to /login when BOTH the access cookie
+// AND the refresh cookie are missing or the refresh call itself is
+// rejected by Supabase (true logout, or 30d idle).
 //
 // Error responses:
-//   401 UNAUTHORIZED — no cookie or token failed validation
+//   401 UNAUTHORIZED — no cookie or access token failed validation
 //   401 OWNER_NOT_FOUND — valid JWT but no matching owners row (soft-deleted
 //   or never created, e.g. a stale cookie that outlived the account)
 
 export const DASHBOARD_SESSION_COOKIE = 'ac_dashboard_session'
+export const DASHBOARD_REFRESH_COOKIE = 'ac_dashboard_refresh'
+
+// Cookie lifetimes, in seconds. Access cookie matches the Supabase JWT
+// default (1h) so `getUser(token)` never rejects a cookie we still think
+// is live. Refresh cookie is 30 days — the outer bound on how long an
+// idle tab can sit before the user has to re-OTP. Rotation on every
+// refresh means continuously-used sessions never hit this ceiling.
+export const DASHBOARD_ACCESS_COOKIE_MAX_AGE = 60 * 60
+export const DASHBOARD_REFRESH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
 type DashboardEnv = {
   Variables: {

@@ -1,5 +1,6 @@
-import { Hono } from 'hono'
-import { setCookie, deleteCookie } from 'hono/cookie'
+import { createHash } from 'node:crypto'
+import { Hono, type Context } from 'hono'
+import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import {
   DashboardOtpRequest,
   DashboardOtpVerify,
@@ -9,12 +10,24 @@ import {
 import {
   getSupabaseClient,
   findActiveAgentByEmail,
-  findActiveOwnerByEmail,
   findOwnerById,
   insertOwner,
+  insertDashboardSession,
+  findDashboardSessionByHash,
+  rotateDashboardSession,
+  deleteDashboardSessionByHash,
+  deleteDashboardSessionsForOwner,
 } from '@agentchat/db'
-import { dashboardAuthMiddleware, DASHBOARD_SESSION_COOKIE } from '../middleware/dashboard-auth.js'
+import {
+  dashboardAuthMiddleware,
+  DASHBOARD_SESSION_COOKIE,
+  DASHBOARD_REFRESH_COOKIE,
+  DASHBOARD_ACCESS_COOKIE_MAX_AGE,
+  DASHBOARD_REFRESH_COOKIE_MAX_AGE,
+} from '../middleware/dashboard-auth.js'
 import { ipRateLimit } from '../middleware/rate-limit.js'
+import { generateId } from '../lib/id.js'
+import { env } from '../env.js'
 import {
   claimOtpSendSlot,
   releaseOtpSendSlot,
@@ -38,6 +51,77 @@ import { getRedis } from '../lib/redis.js'
 import { emitEvent } from '../services/events.service.js'
 
 const dashboard = new Hono()
+
+// ─── Session cookie helpers ────────────────────────────────────────────────
+// Two cookies, set together on every auth-state transition (verify, refresh):
+//   ac_dashboard_session — short-lived Supabase access token (1h)
+//   ac_dashboard_refresh — long-lived refresh token (30d), rotated on use
+//
+// Both are HttpOnly + Secure (prod) + SameSite=Lax + Path=/. The refresh
+// token never lives on the server except as a SHA-256 hash in the
+// dashboard_sessions row — so a DB read leak cannot be replayed.
+
+function hashRefreshToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex')
+}
+
+function setSessionCookies(c: Context, accessToken: string, refreshToken: string) {
+  const secure = process.env['NODE_ENV'] === 'production'
+  setCookie(c, DASHBOARD_SESSION_COOKIE, accessToken, {
+    httpOnly: true,
+    secure,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: DASHBOARD_ACCESS_COOKIE_MAX_AGE,
+  })
+  setCookie(c, DASHBOARD_REFRESH_COOKIE, refreshToken, {
+    httpOnly: true,
+    secure,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: DASHBOARD_REFRESH_COOKIE_MAX_AGE,
+  })
+}
+
+function clearSessionCookies(c: Context) {
+  deleteCookie(c, DASHBOARD_SESSION_COOKIE, { path: '/' })
+  deleteCookie(c, DASHBOARD_REFRESH_COOKIE, { path: '/' })
+}
+
+interface SupabaseTokenResponse {
+  access_token: string
+  refresh_token: string
+  expires_in: number
+  token_type: string
+  user: { id: string; email?: string }
+}
+
+// Direct REST call to Supabase /auth/v1/token?grant_type=refresh_token.
+// We deliberately bypass supabase-js because our singleton client is
+// configured stateless (persistSession:false, autoRefreshToken:false) to
+// keep service_role locked in for DB + Storage — calling refreshSession()
+// on it would plant the refreshed user's access token into the SDK's
+// in-memory state and poison every subsequent service-role call on this
+// process. A raw fetch sidesteps all of that.
+async function callSupabaseRefresh(
+  refreshToken: string,
+): Promise<SupabaseTokenResponse | null> {
+  const res = await fetch(`${env.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      apikey: env.SUPABASE_SERVICE_ROLE_KEY,
+      Authorization: `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`,
+    },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  })
+  if (!res.ok) return null
+  try {
+    return (await res.json()) as SupabaseTokenResponse
+  } catch {
+    return null
+  }
+}
 
 // ─── Auth: OTP flow ────────────────────────────────────────────────────────
 // Same Supabase email template as the agent flows (per §11.9 decision).
@@ -225,15 +309,28 @@ dashboard.post('/auth/otp/verify', ipRateLimit(10, 600), async (c) => {
     return c.json({ code: 'OWNER_NOT_FOUND', message: 'Owner account not found' }, 500)
   }
 
-  // Set the session cookie. httpOnly + SameSite=Lax + Secure in prod.
-  // MaxAge matches the Supabase JWT default (1h). When the cookie/token
-  // expires, the middleware returns 401 and the frontend re-OTPs.
-  setCookie(c, DASHBOARD_SESSION_COOKIE, verifyData.session.access_token, {
-    httpOnly: true,
-    secure: process.env['NODE_ENV'] === 'production',
-    sameSite: 'Lax',
-    path: '/',
-    maxAge: 3600,
+  // Persist the refresh token as a session row so we can rotate it and
+  // so sign-out-everywhere is a single DELETE. Only the SHA-256 hash is
+  // stored — the raw refresh token goes straight into the browser cookie
+  // and never lives server-side afterwards.
+  const refreshToken = verifyData.session.refresh_token
+  await insertDashboardSession({
+    id: generateId('dsh'),
+    owner_id: owner.id,
+    refresh_token_hash: hashRefreshToken(refreshToken),
+  })
+
+  setSessionCookies(c, verifyData.session.access_token, refreshToken)
+
+  // Log every successful sign-in (account creation already emitted
+  // owner.created above — this covers returning owners). Used by the
+  // audit log; one row per session start, NOT per refresh, so the
+  // events table doesn't flood.
+  await emitEvent({
+    actorType: 'owner',
+    actorId: owner.id,
+    action: 'owner.signed_in',
+    targetId: owner.id,
   })
 
   // owner.id is the Supabase auth user UUID — internal, never surfaced
@@ -247,10 +344,92 @@ dashboard.post('/auth/otp/verify', ipRateLimit(10, 600), async (c) => {
   })
 })
 
-// POST /dashboard/auth/logout — Clear the session cookie
+// POST /dashboard/auth/refresh — Rotate session using the refresh cookie
+// Called by the dashboard's Next.js middleware when the access token is
+// close to expiry (or already expired). Returns 204 on success with new
+// cookies set via Set-Cookie, 401 on any failure so the middleware knows
+// to redirect to /login.
+//
+// Rate limit: 30/min per IP. A single tab rotates at most once per ~1h of
+// active use, so 30/min is a hard ceiling against an attacker replaying
+// a stolen refresh cookie — real traffic can't come close.
+dashboard.post('/auth/refresh', ipRateLimit(30, 60), async (c) => {
+  const refreshToken = getCookie(c, DASHBOARD_REFRESH_COOKIE)
+  if (!refreshToken) {
+    return c.json({ code: 'UNAUTHORIZED', message: 'No refresh token' }, 401)
+  }
+
+  const oldHash = hashRefreshToken(refreshToken)
+  const session = await findDashboardSessionByHash(oldHash)
+  if (!session) {
+    // Unknown hash: either a stolen cookie, a revoked session, or the
+    // loser of a rotation race from another tab. Clear the cookies so
+    // the middleware bounces cleanly to /login.
+    clearSessionCookies(c)
+    return c.json({ code: 'UNAUTHORIZED', message: 'Session not found' }, 401)
+  }
+
+  const tokens = await callSupabaseRefresh(refreshToken)
+  if (!tokens) {
+    // Supabase rejected the refresh token — expired (30d idle), revoked,
+    // or malformed. Drop the row so a later replay attempt can't brute
+    // the same hash, and clear cookies.
+    await deleteDashboardSessionByHash(oldHash).catch(() => {})
+    clearSessionCookies(c)
+    return c.json({ code: 'UNAUTHORIZED', message: 'Session expired' }, 401)
+  }
+
+  // Rotate on the same row. If two tabs hit this endpoint concurrently
+  // with the same old hash, both callSupabaseRefresh() calls succeed
+  // against Supabase (Supabase allows a short rotation grace window),
+  // but only ONE rotateDashboardSession() finds the row — the loser's
+  // UPDATE affects zero rows and we surface 401 so that tab re-OTPs.
+  // Low probability; accepted tradeoff over adding a distributed lock.
+  const rotated = await rotateDashboardSession({
+    old_hash: oldHash,
+    new_hash: hashRefreshToken(tokens.refresh_token),
+  })
+  if (!rotated) {
+    clearSessionCookies(c)
+    return c.json({ code: 'UNAUTHORIZED', message: 'Rotation conflict' }, 401)
+  }
+
+  setSessionCookies(c, tokens.access_token, tokens.refresh_token)
+  return c.json({ message: 'Refreshed' })
+})
+
+// POST /dashboard/auth/logout — Sign out the current browser only
+// Deletes the single dashboard_sessions row keyed by the refresh-cookie
+// hash and clears both cookies. No auth required — an already-expired
+// access token must still be able to complete a clean logout. No event
+// emitted for common-case logout so the audit log stays signal-dense.
 dashboard.post('/auth/logout', async (c) => {
-  deleteCookie(c, DASHBOARD_SESSION_COOKIE, { path: '/' })
+  const refreshToken = getCookie(c, DASHBOARD_REFRESH_COOKIE)
+  if (refreshToken) {
+    await deleteDashboardSessionByHash(hashRefreshToken(refreshToken)).catch(() => {})
+  }
+  clearSessionCookies(c)
   return c.json({ message: 'Logged out' })
+})
+
+// POST /dashboard/auth/logout/all — Sign out of every browser
+// Requires a valid access token so we know WHICH owner is asking; a 401
+// here means the access cookie expired and the dashboard's Next.js
+// middleware should have refreshed it before this request arrived.
+// Emits owner.signed_out_all with the revoked count so the audit log
+// captures the explicit cross-device action.
+dashboard.post('/auth/logout/all', dashboardAuthMiddleware, async (c) => {
+  const ownerId = c.get('ownerId')
+  const revoked = await deleteDashboardSessionsForOwner(ownerId)
+  clearSessionCookies(c)
+  await emitEvent({
+    actorType: 'owner',
+    actorId: ownerId,
+    action: 'owner.signed_out_all',
+    targetId: ownerId,
+    metadata: { sessions_revoked: revoked },
+  })
+  return c.json({ message: 'Signed out of all devices', sessions_revoked: revoked })
 })
 
 // GET /dashboard/me — Return the signed-in owner
