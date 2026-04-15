@@ -61,3 +61,34 @@ export function PauseBadge({
     </Badge>
   )
 }
+
+// Effective agent state — collapses the orthogonal lifecycle/pause
+// dimensions into one visually coherent row. `status` is the platform
+// lifecycle (active / restricted / suspended), `pause` is the owner
+// override. The naive pair renders "Active + Fully paused" side by
+// side which reads as a contradiction — owners who pause expect the
+// UI to acknowledge the pause. Rule:
+//
+//   active + paused     → show only the PauseBadge
+//   not-active + paused → show both (restricted/suspended is info the
+//                         owner still needs to see even while paused)
+//   paused = none       → show only the StatusBadge
+//
+// Used by the agent settings Status field and the chat header.
+export function EffectiveStatusBadges({
+  status,
+  pause,
+  className,
+}: {
+  status: AgentStatus
+  pause: PauseMode
+  className?: string
+}) {
+  const hideStatus = status === 'active' && pause !== 'none'
+  return (
+    <>
+      {!hideStatus && <StatusBadge status={status} className={className} />}
+      <PauseBadge mode={pause} className={className} />
+    </>
+  )
+}

@@ -10,7 +10,7 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
-import { StatusBadge, PauseBadge } from '@/components/status-badge'
+import { EffectiveStatusBadges } from '@/components/status-badge'
 import { PauseControls } from '@/components/pause-controls'
 import { ReleaseButton } from '@/components/release-button'
 import { ActivityLog } from '@/components/activity-log'
@@ -84,8 +84,10 @@ export default async function AgentSettingsPage({
             </Field>
             <Field label="Status">
               <div className="flex flex-wrap items-center gap-2">
-                <StatusBadge status={profile.status} />
-                <PauseBadge mode={profile.paused_by_owner} />
+                <EffectiveStatusBadges
+                  status={profile.status}
+                  pause={profile.paused_by_owner}
+                />
               </div>
             </Field>
           </CardContent>

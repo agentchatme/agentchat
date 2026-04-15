@@ -6,22 +6,26 @@ import { Separator } from '@/components/ui/separator'
 import { ClaimAgentDialog } from '@/components/claim-agent-dialog'
 import { SidebarAgentLink } from '@/components/sidebar-agent-link'
 import { SidebarNavLink } from '@/components/sidebar-nav-link'
-import { OwnerMenu } from '@/components/owner-menu'
+import { OwnerMenuActions, OwnerIdentityCard } from '@/components/owner-menu'
 
 // Sidebar layout (§3.1.2):
 //
 //   Top         — branding (logo + wordmark)
 //   Middle      — claimed agents list (click = select; gear = settings)
 //   Claim       — "claim an agent" action
-//   Bottom nav  — account settings, documentation, theme toggle, sign
-//                 out, and the signed-in identity footer. All of these
-//                 previously lived in a dropdown menu or in a top-of-
-//                 sidebar nav; they are now flat, visible, and grouped
-//                 in one place so owners never have to hunt.
+//   Bottom nav  — one flat list containing Account settings,
+//                 Documentation, Theme toggle, Sign out. All four sit
+//                 inside the SAME <nav> container so there is no
+//                 padding gap between the server-rendered links and
+//                 the client-rendered theme/logout buttons — the
+//                 previous layout split them across two wrappers and
+//                 double-paddings created a visible 24px dead zone.
+//   Footer      — signed-in identity pill, separated by a Separator
+//                 so it reads as its own block.
 //
 // The sidebar itself stays a server component. Interactive children
-// (OwnerMenu for theme/logout, SidebarNavLink active state, claim
-// dialog) are small client islands.
+// (OwnerMenuActions for theme/logout, SidebarNavLink active state,
+// claim dialog) are small client islands.
 
 export function Sidebar({
   owner,
@@ -86,9 +90,14 @@ export function Sidebar({
           <BookOpen className="size-[18px]" />
           Documentation
         </Link>
+        <OwnerMenuActions />
       </nav>
 
-      <OwnerMenu email={owner.email} />
+      <Separator />
+
+      <div className="p-3">
+        <OwnerIdentityCard email={owner.email} />
+      </div>
     </aside>
   )
 }
