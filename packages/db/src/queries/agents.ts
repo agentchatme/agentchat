@@ -11,6 +11,35 @@ export async function findAgentByHandle(handle: string) {
   return data
 }
 
+/**
+ * Single-round-trip ownership check. Returns the agent row IFF both:
+ *   (a) an agent with this handle exists and is not soft-deleted
+ *   (b) the given owner has an owner_agents claim on that agent
+ *
+ * Uses PostgREST inner-join semantics via the `owner_agents!inner`
+ * embed so the join filter is pushed into the SQL plan — one query
+ * instead of the findAgentByHandle + findOwnerAgent pair that used to
+ * gate every dashboard request. Lives on the hot dashboard path (every
+ * per-agent route calls it once), so the saved round trip is
+ * multiplied across every click.
+ *
+ * Security: ownership is enforced at the DB level through the JOIN.
+ * Callers get `null` on either condition failing, and the dashboard
+ * service surfaces that as 404 AGENT_NOT_FOUND so a curious owner
+ * cannot distinguish "doesn't exist" from "not yours" (§11.6).
+ */
+export async function findOwnedAgentByHandle(ownerId: string, handle: string) {
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('*, owner_agents!inner(owner_id)')
+    .eq('handle', handle)
+    .eq('owner_agents.owner_id', ownerId)
+    .in('status', ['active', 'restricted'])
+    .single()
+  if (error) return null
+  return data
+}
+
 export async function findAgentById(id: string) {
   const { data, error } = await getSupabaseClient()
     .from('agents')

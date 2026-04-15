@@ -1,5 +1,7 @@
+import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
+import type { ClaimedAgent, Owner } from '@/lib/types'
 
 // ─── Server-side API fetch helper ──────────────────────────────────────────
 // Used by RSC pages to call the dashboard API while forwarding the signed-in
@@ -14,7 +16,11 @@ import { redirect } from 'next/navigation'
 //
 // Every response is explicitly cache: 'no-store' because the dashboard is
 // always showing live state. Page-level caching with stale data would leak
-// across owner sessions via Next's fetch memoization.
+// across owner sessions via Next's fetch memoization. For WITHIN-render
+// deduplication (e.g. layout and child both needing the same data) we use
+// React.cache() wrappers below — cache() is request-scoped by design, so
+// a layout + page in the same render tree share one fetch without any
+// cross-request leakage.
 
 const API_BASE = process.env['API_BASE'] ?? 'http://localhost:3000'
 
@@ -97,3 +103,24 @@ export async function apiFetchOptional<T>(
   if (!res.ok) return null
   return res.json() as Promise<T>
 }
+
+// ─── Request-scoped bootstrap ──────────────────────────────────────────────
+// getBootstrap() fetches owner + claimed-agents in a single authenticated
+// call. React.cache() is scoped to a single RSC render tree: the (app)
+// layout calls it once, and any child page (the home redirector, a
+// workspace child) that also calls it in the same render gets the SAME
+// promise back — no duplicate /dashboard/bootstrap fetch, no duplicate
+// round trip to Fly, no stale data.
+//
+// React.cache() does NOT persist state across requests (unlike unstable_cache
+// or Next's data cache), so there is zero cross-owner leakage risk: each
+// request gets a fresh cache. This is exactly what Next recommends for
+// request-scoped deduplication of RSC fetch work.
+export interface DashboardBootstrap {
+  owner: Owner
+  agents: ClaimedAgent[]
+}
+
+export const getBootstrap = cache(async (): Promise<DashboardBootstrap | null> => {
+  return apiFetchOptional<DashboardBootstrap>('/dashboard/bootstrap')
+})

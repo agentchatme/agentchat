@@ -25,6 +25,7 @@ import {
   DASHBOARD_ACCESS_COOKIE_MAX_AGE,
   DASHBOARD_REFRESH_COOKIE_MAX_AGE,
 } from '../middleware/dashboard-auth.js'
+import { serverTimingMiddleware } from '../middleware/server-timing.js'
 import { ipRateLimit, resolveClientIp } from '../middleware/rate-limit.js'
 import { generateId } from '../lib/id.js'
 import { env } from '../env.js'
@@ -53,6 +54,13 @@ import { getRedis } from '../lib/redis.js'
 import { emitEvent } from '../services/events.service.js'
 
 const dashboard = new Hono()
+
+// Server-Timing is the first middleware on the chain so its `total`
+// captures every millisecond of every /dashboard/* request: auth
+// verification, handler work, response serialization, error handling.
+// The header is emitted unconditionally (success, 4xx, 5xx) so DevTools
+// can observe slow failure paths without any extra instrumentation.
+dashboard.use('*', serverTimingMiddleware)
 
 // ─── Session cookie helpers ────────────────────────────────────────────────
 // Two cookies, set together on every auth-state transition (verify, refresh):
@@ -441,6 +449,31 @@ dashboard.get('/me', dashboardAuthMiddleware, async (c) => {
     email: owner.email,
     display_name: owner.display_name,
     created_at: owner.created_at,
+  })
+})
+
+// GET /dashboard/bootstrap — Single-call page bootstrap for the Next.js
+// (app) layout. Returns the signed-in owner AND the claimed-agents list
+// in one authenticated round-trip, so the layout no longer has to await
+// /dashboard/me followed by /dashboard/agents. Cuts one hop × network
+// RTT off every dashboard navigation.
+//
+// Security invariant is unchanged: every field surfaced here already
+// goes out via /dashboard/me and /dashboard/agents individually, and
+// the middleware gate is the same one they use. No internal row ids
+// (owner.id, agent.id) are included — owner is addressed by email,
+// agents by @handle throughout.
+dashboard.get('/bootstrap', dashboardAuthMiddleware, async (c) => {
+  const owner = c.get('owner')
+  const ownerId = c.get('ownerId')
+  const agents = await listAgentsForOwner(ownerId)
+  return c.json({
+    owner: {
+      email: owner.email,
+      display_name: owner.display_name,
+      created_at: owner.created_at,
+    },
+    agents,
   })
 })
 

@@ -55,6 +55,55 @@ export async function atomicSendMessage(params: {
 }
 
 /**
+ * Dashboard lurker path. Single RPC that resolves ownership, active
+ * participation, conversation type, hide cutoff, joined_seq (groups),
+ * message_hides anti-join, and the recipient-scoped delivery envelope
+ * in one query plan. Replaces the six sequential roundtrips the
+ * previous dashboard.service.ts implementation made.
+ *
+ * Throws one of two named errors the service layer maps to a 404:
+ *   * 'AGENT_NOT_FOUND' — caller doesn't own this handle / agent is gone
+ *   * 'CONVERSATION_NOT_FOUND' — conversation is gone, or the agent is
+ *     not an active participant of it
+ *
+ * Any other error bubbles up as-is for the route's 500 path.
+ *
+ * Wire shape: the RPC strips sender_id before returning, replacing it
+ * with is_own (boolean). Internal row ids never leave the database.
+ */
+export async function getAgentMessagesForOwnerRPC(params: {
+  owner_id: string
+  handle: string
+  conversation_id: string
+  before_seq?: number
+  limit?: number
+}) {
+  const { data, error } = await getSupabaseClient().rpc('get_agent_messages_for_owner', {
+    p_owner_id: params.owner_id,
+    p_handle: params.handle,
+    p_conversation_id: params.conversation_id,
+    p_before_seq: params.before_seq ?? null,
+    p_limit: params.limit ?? 50,
+  })
+  if (error) throw new Error(error.message)
+  return (data ?? []) as Array<{
+    id: string
+    client_msg_id: string
+    conversation_id: string
+    seq: number
+    type: string
+    content: Record<string, unknown>
+    metadata: Record<string, unknown>
+    created_at: string
+    is_own: boolean
+    delivery_id: string | null
+    status: string
+    delivered_at: string | null
+    read_at: string | null
+  }>
+}
+
+/**
  * Fetch a conversation's messages ordered by seq DESC (latest first).
  *
  * For direct conversations there is exactly one delivery row per message

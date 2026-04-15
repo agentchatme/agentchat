@@ -5,6 +5,12 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  // Supabase project JWT Secret (Dashboard → Project Settings → API → JWT Secret).
+  // Used by dashboardAuthMiddleware to verify access tokens locally via HS256
+  // instead of round-tripping to GoTrue on every request. Revocation is still
+  // bounded by the 1h access token TTL plus the sign-out-everywhere path that
+  // deletes the dashboard_sessions row, which kills refresh capability.
+  SUPABASE_JWT_SECRET: z.string().min(1),
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
   SENTRY_DSN: z.string().optional(),

@@ -1,17 +1,13 @@
 import { createHash } from 'node:crypto'
 import {
   findAgentByApiKeyHash,
-  findAgentByHandle,
-  findOwnerAgent,
+  findOwnedAgentByHandle,
   insertOwnerAgent,
   listClaimedAgents,
   deleteOwnerAgent,
   setPausedByOwner,
   getAgentConversations,
-  getConversationMessages,
-  getConversation,
-  getConversationHide,
-  isParticipant,
+  getAgentMessagesForOwnerRPC,
   listEventsForTarget,
   listContacts,
   listBlocks,
@@ -54,14 +50,14 @@ export class DashboardError extends Error {
 // the agent row AND verifying the caller's owner_agents claim. If either
 // the agent doesn't exist OR the caller hasn't claimed it, return 404 —
 // not 403 — so a curious owner can't enumerate other owners' agents.
+//
+// Collapses to one PostgREST call via findOwnedAgentByHandle's inner join.
+// Before: findAgentByHandle + findOwnerAgent sequentially — two trips per
+// dashboard endpoint. After: one trip, same fail-closed 404 semantics.
 
 async function requireOwnedAgent(ownerId: string, handle: string) {
-  const agent = await findAgentByHandle(handle)
+  const agent = await findOwnedAgentByHandle(ownerId, handle)
   if (!agent) {
-    throw new DashboardError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
-  }
-  const claim = await findOwnerAgent(ownerId, agent.id)
-  if (!claim) {
     throw new DashboardError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
   }
   return agent
@@ -266,35 +262,35 @@ export async function getAgentMessagesForOwner(
   conversationId: string,
   beforeSeq?: number,
 ) {
-  const agent = await requireOwnedAgent(ownerId, handle)
-  // Scope check: the claimed agent must actually be in this conversation.
-  // Without this a crafted conversation_id could read arbitrary history.
-  const isMember = await isParticipant(conversationId, agent.id as string)
-  if (!isMember) {
-    throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
+  // One RPC resolves ownership, participation, conversation type,
+  // hide cutoff, joined_seq, per-message hide anti-join, and the
+  // recipient-scoped delivery envelope. See migration 023 for the
+  // authorization steps and the SQL security invariants.
+  //
+  // Error translation mirrors the old ladder: AGENT_NOT_FOUND and
+  // CONVERSATION_NOT_FOUND both surface as 404 so the wire shape
+  // never distinguishes "you don't own this agent" from "conversation
+  // doesn't exist for your agent". sender_id is stripped inside the
+  // RPC and replaced with is_own, so nothing in the result needs
+  // further sanitization here.
+  try {
+    return await getAgentMessagesForOwnerRPC({
+      owner_id: ownerId,
+      handle,
+      conversation_id: conversationId,
+      before_seq: beforeSeq,
+      limit: MSG_LIMIT,
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : ''
+    if (/AGENT_NOT_FOUND/.test(msg)) {
+      throw new DashboardError('AGENT_NOT_FOUND', `Account @${handle} not found`, 404)
+    }
+    if (/CONVERSATION_NOT_FOUND/.test(msg)) {
+      throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
+    }
+    throw err
   }
-  const conv = await getConversation(conversationId)
-  if (!conv) {
-    throw new DashboardError('CONVERSATION_NOT_FOUND', 'Conversation not found', 404)
-  }
-  const hiddenAfter = await getConversationHide(agent.id as string, conversationId)
-  const rows = await getConversationMessages(
-    conversationId,
-    agent.id as string,
-    MSG_LIMIT,
-    beforeSeq,
-    hiddenAfter,
-    { scopeToRecipient: conv.type === 'group' },
-  )
-  // Strip internal sender_id from the wire and replace with is_own so the
-  // dashboard can render the outgoing/incoming split without ever seeing
-  // the raw agent row id. Same rule applies as for agent.id above.
-  const myId = agent.id as string
-  return rows.map((m) => {
-    const row = m as Record<string, unknown>
-    const { sender_id: _sender_id, ...rest } = row
-    return { ...rest, is_own: _sender_id === myId }
-  })
 }
 
 // ─── Contacts + blocks ─────────────────────────────────────────────────────

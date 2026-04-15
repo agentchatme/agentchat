@@ -12,39 +12,66 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // credentials required.
 
 // Mocks must exist before importing the module under test.
-const findAgentByHandle = vi.fn()
+// requireOwnedAgent used to be a pair of calls (findAgentByHandle +
+// findOwnerAgent); it is now one PostgREST inner-join via
+// findOwnedAgentByHandle, so the mock surface collapses accordingly.
+// The security semantics are unchanged: null return → 404 AGENT_NOT_FOUND.
+//
+// getAgentMessagesForOwner used to be a ladder of four queries
+// (isParticipant → getConversation → getConversationHide →
+// getConversationMessages); it is now a single RPC call via
+// getAgentMessagesForOwnerRPC (migration 023). Security-critical
+// behaviors like sender_id stripping and recipient-scoped delivery
+// envelopes happen inside the RPC and are tested via integration
+// rather than at this unit layer.
+const findOwnedAgentByHandle = vi.fn()
 const findAgentByApiKeyHash = vi.fn()
-const findOwnerAgent = vi.fn()
 const insertOwnerAgent = vi.fn()
 const deleteOwnerAgent = vi.fn()
 const listClaimedAgents = vi.fn()
 const setPausedByOwner = vi.fn()
 const getAgentConversations = vi.fn()
-const getConversationMessages = vi.fn()
-const getConversation = vi.fn()
-const getConversationHide = vi.fn()
-const isParticipant = vi.fn()
+const getAgentMessagesForOwnerRPC = vi.fn()
 const listEventsForTarget = vi.fn()
+const listContacts = vi.fn()
+const listBlocks = vi.fn()
 
 vi.mock('@agentchat/db', () => ({
-  findAgentByHandle,
+  findOwnedAgentByHandle,
   findAgentByApiKeyHash,
-  findOwnerAgent,
   insertOwnerAgent,
   deleteOwnerAgent,
   listClaimedAgents,
   setPausedByOwner,
   getAgentConversations,
-  getConversationMessages,
-  getConversation,
-  getConversationHide,
-  isParticipant,
+  getAgentMessagesForOwnerRPC,
   listEventsForTarget,
+  listContacts,
+  listBlocks,
 }))
 
 const emitEvent = vi.fn().mockResolvedValue(undefined)
 vi.mock('../src/services/events.service.js', () => ({
   emitEvent,
+}))
+
+// The claimAgent path touches the per-agent fail-counter bucket in
+// Redis before running the DB insert. The Upstash client initializes
+// lazily and, in a no-credential test environment, blocks the event
+// loop trying to connect — which surfaces as the 5s test timeout on
+// every claimAgent test. Mocking the module out is both faster and
+// semantically correct: rate-limit behavior is exercised in its own
+// unit file, and these tests are specifically about cross-
+// contamination and wire-shape invariants in dashboard.service.
+const peekRateLimitCounter = vi.fn().mockResolvedValue(0)
+const incrRateLimitCounter = vi.fn().mockResolvedValue(1)
+const rateLimitBucketKey = vi.fn(
+  (prefix: string, key: string, windowSecs: number) => `${prefix}:${key}:${windowSecs}`,
+)
+vi.mock('../src/middleware/rate-limit.js', () => ({
+  peekRateLimitCounter,
+  incrRateLimitCounter,
+  rateLimitBucketKey,
 }))
 
 const {
@@ -76,19 +103,17 @@ const AGENT = {
 }
 
 function resetAllMocks() {
-  findAgentByHandle.mockReset()
+  findOwnedAgentByHandle.mockReset()
   findAgentByApiKeyHash.mockReset()
-  findOwnerAgent.mockReset()
   insertOwnerAgent.mockReset()
   deleteOwnerAgent.mockReset()
   listClaimedAgents.mockReset()
   setPausedByOwner.mockReset()
   getAgentConversations.mockReset()
-  getConversationMessages.mockReset()
-  getConversation.mockReset()
-  getConversationHide.mockReset()
-  isParticipant.mockReset()
+  getAgentMessagesForOwnerRPC.mockReset()
   listEventsForTarget.mockReset()
+  listContacts.mockReset()
+  listBlocks.mockReset()
   emitEvent.mockReset().mockResolvedValue(undefined)
 }
 
@@ -132,17 +157,27 @@ const SCOPED_FUNCTIONS: Array<{
 describe('dashboard.service — cross-contamination (requireOwnedAgent)', () => {
   beforeEach(() => {
     resetAllMocks()
-    // By default the handle lookup succeeds — the guard is the
-    // owner_agents check, which each test configures per scenario.
-    findAgentByHandle.mockResolvedValue(AGENT)
-    // findOwnerAgent returns null unless the caller is owner A. This is
-    // the single choke point — every scoped function must hit it.
-    findOwnerAgent.mockImplementation(async (ownerId: string, agentId: string) => {
-      if (ownerId === OWNER_A && agentId === AGENT.id) {
-        return { owner_id: OWNER_A, agent_id: AGENT.id, claimed_at: '2026-01-02T00:00:00Z' }
-      }
-      return null
-    })
+    // The join returns the agent row only when the caller is owner A.
+    // Any other (owner, handle) pair — unknown handle, claimed by
+    // someone else, known handle + wrong owner — resolves to null, and
+    // the service surfaces that uniformly as 404 AGENT_NOT_FOUND so a
+    // curious owner cannot distinguish "doesn't exist" from "not yours".
+    findOwnedAgentByHandle.mockImplementation(
+      async (ownerId: string, handle: string) => {
+        if (ownerId === OWNER_A && handle === AGENT.handle) return AGENT
+        return null
+      },
+    )
+    // getAgentMessagesForOwner bypasses findOwnedAgentByHandle entirely
+    // and defers to the get_agent_messages_for_owner RPC (migration 023),
+    // which performs the ownership check in SQL. Mirror that fail-closed
+    // behavior here: owner A succeeds, anyone else gets AGENT_NOT_FOUND.
+    getAgentMessagesForOwnerRPC.mockImplementation(
+      async ({ owner_id, handle }: { owner_id: string; handle: string }) => {
+        if (owner_id === OWNER_A && handle === AGENT.handle) return []
+        throw new Error('AGENT_NOT_FOUND')
+      },
+    )
   })
 
   for (const { label, call } of SCOPED_FUNCTIONS) {
@@ -162,20 +197,16 @@ describe('dashboard.service — cross-contamination (requireOwnedAgent)', () => 
   }
 
   it('raises 404 AGENT_NOT_FOUND when the handle itself does not exist', async () => {
-    findAgentByHandle.mockResolvedValue(null)
     await expect(getAgentProfile(OWNER_A, 'ghost')).rejects.toMatchObject({
       code: 'AGENT_NOT_FOUND',
       status: 404,
     })
-    // owner_agents check should NOT fire — we short-circuit on missing agent.
-    expect(findOwnerAgent).not.toHaveBeenCalled()
   })
 
   it('same 404 code whether the agent exists unclaimed or does not exist at all', async () => {
-    // Unclaimed agent → findOwnerAgent returns null → 404.
+    // Unclaimed agent: known handle but wrong owner → null → 404.
     const err1 = await getAgentProfile(OWNER_B, 'alice').catch((e) => e)
-    // Non-existent agent → findAgentByHandle returns null → 404.
-    findAgentByHandle.mockResolvedValueOnce(null)
+    // Non-existent agent: unknown handle → null → 404.
     const err2 = await getAgentProfile(OWNER_B, 'ghost').catch((e) => e)
     expect(err1).toBeInstanceOf(DashboardError)
     expect(err2).toBeInstanceOf(DashboardError)
@@ -189,12 +220,7 @@ describe('dashboard.service — cross-contamination (requireOwnedAgent)', () => 
 describe('dashboard.service — owner A happy path', () => {
   beforeEach(() => {
     resetAllMocks()
-    findAgentByHandle.mockResolvedValue(AGENT)
-    findOwnerAgent.mockResolvedValue({
-      owner_id: OWNER_A,
-      agent_id: AGENT.id,
-      claimed_at: '2026-01-02T00:00:00Z',
-    })
+    findOwnedAgentByHandle.mockResolvedValue(AGENT)
   })
 
   it('getAgentProfile returns masked email + core fields for the owning owner', async () => {
@@ -259,73 +285,90 @@ describe('dashboard.service — owner A happy path', () => {
     expect(emitEvent).not.toHaveBeenCalled()
   })
 
-  it('getAgentMessagesForOwner rejects with 404 when the agent is not a participant', async () => {
-    // Crafted conversation id — alice is not a member. The guard here
-    // is separate from the owner-agent check because the conversation id
-    // comes from the query string, not the URL path.
-    isParticipant.mockResolvedValue(false)
+  it('getAgentMessagesForOwner rejects with 404 CONVERSATION_NOT_FOUND when the RPC raises it', async () => {
+    // The RPC raises named exceptions when the claimed agent is not a
+    // participant OR the conversation does not exist. The service layer
+    // must translate both paths to a 404 so a crafted conversation id
+    // cannot be used to enumerate conversations the agent does not own.
+    getAgentMessagesForOwnerRPC.mockRejectedValueOnce(new Error('CONVERSATION_NOT_FOUND'))
     await expect(
       getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_foreign'),
     ).rejects.toMatchObject({
       code: 'CONVERSATION_NOT_FOUND',
       status: 404,
     })
-    expect(getConversation).not.toHaveBeenCalled()
-    expect(getConversationMessages).not.toHaveBeenCalled()
   })
 
-  it('getAgentMessagesForOwner forwards the agent id + beforeSeq when the agent is a member', async () => {
-    isParticipant.mockResolvedValue(true)
-    getConversation.mockResolvedValue({ id: 'conv_ok', type: 'direct' })
-    getConversationHide.mockResolvedValue(null)
-    getConversationMessages.mockResolvedValue([])
+  it('getAgentMessagesForOwner rejects with 404 AGENT_NOT_FOUND when the RPC raises it', async () => {
+    // Ownership is enforced inside the RPC (migration 023), so the
+    // service catches AGENT_NOT_FOUND from the RPC and maps it to the
+    // same 404 the rest of the dashboard surface uses.
+    getAgentMessagesForOwnerRPC.mockRejectedValueOnce(new Error('AGENT_NOT_FOUND'))
+    await expect(
+      getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_any'),
+    ).rejects.toMatchObject({
+      code: 'AGENT_NOT_FOUND',
+      status: 404,
+    })
+  })
+
+  it('getAgentMessagesForOwner forwards owner id, handle, conversation id and beforeSeq to the RPC', async () => {
+    getAgentMessagesForOwnerRPC.mockResolvedValueOnce([])
     await getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_ok', 42)
-    expect(getConversationMessages).toHaveBeenCalledWith(
-      'conv_ok',
-      AGENT.id,
-      50,
-      42,
-      null,
-      { scopeToRecipient: false },
-    )
+    expect(getAgentMessagesForOwnerRPC).toHaveBeenCalledWith({
+      owner_id: OWNER_A,
+      handle: 'alice',
+      conversation_id: 'conv_ok',
+      before_seq: 42,
+      limit: 50,
+    })
   })
 
-  it('getAgentMessagesForOwner strips sender_id and replaces with is_own', async () => {
-    // The DB layer returns raw rows with sender_id (internal agent id).
-    // The dashboard wire must NOT include sender_id — the service maps
-    // it to is_own against the claimed agent, then deletes the field.
-    isParticipant.mockResolvedValue(true)
-    getConversation.mockResolvedValue({ id: 'conv_ok', type: 'direct' })
-    getConversationHide.mockResolvedValue(null)
-    getConversationMessages.mockResolvedValue([
+  it('getAgentMessagesForOwner returns RPC rows unchanged — no sender_id, is_own already set', async () => {
+    // The RPC strips sender_id in-SQL and emits is_own (boolean) so the
+    // service can forward its rows directly. This test pins that
+    // contract: the service must NOT re-shape rows. If someone
+    // re-introduces a `.map(...)` here, it will break the recipient-
+    // scoped delivery envelope fields (delivery_id, status, delivered_at,
+    // read_at) that the RPC emits and the dashboard depends on.
+    const rpcRows = [
       {
         id: 'msg_self',
+        client_msg_id: 'cli_1',
         conversation_id: 'conv_ok',
-        sender_id: AGENT.id,
         seq: 1,
         type: 'text',
         content: { text: 'hi' },
         metadata: {},
         created_at: '2026-01-03T00:00:00Z',
+        is_own: true,
+        delivery_id: 'del_1',
+        status: 'read',
+        delivered_at: '2026-01-03T00:00:01Z',
+        read_at: '2026-01-03T00:00:02Z',
       },
       {
         id: 'msg_other',
+        client_msg_id: 'cli_2',
         conversation_id: 'conv_ok',
-        sender_id: 'agt_someone_else',
         seq: 2,
         type: 'text',
         content: { text: 'hello' },
         metadata: {},
         created_at: '2026-01-03T00:01:00Z',
+        is_own: false,
+        delivery_id: 'del_2',
+        status: 'delivered',
+        delivered_at: '2026-01-03T00:01:01Z',
+        read_at: null,
       },
-    ])
+    ]
+    getAgentMessagesForOwnerRPC.mockResolvedValueOnce(rpcRows)
     const result = await getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_ok')
-    expect(result).toHaveLength(2)
+    expect(result).toEqual(rpcRows)
     for (const m of result) {
       expect((m as Record<string, unknown>)['sender_id']).toBeUndefined()
     }
-    expect((result[0] as Record<string, unknown>)['is_own']).toBe(true)
-    expect((result[1] as Record<string, unknown>)['is_own']).toBe(false)
   })
 
   it('getAgentEventsForOwner strips actor_id/target_id and filters metadata to a whitelist', async () => {
@@ -373,21 +416,6 @@ describe('dashboard.service — owner A happy path', () => {
     expect((events[2] as Record<string, unknown>)['metadata']).toEqual({})
   })
 
-  it('getAgentMessagesForOwner sets scopeToRecipient=true for group conversations', async () => {
-    isParticipant.mockResolvedValue(true)
-    getConversation.mockResolvedValue({ id: 'grp_x', type: 'group' })
-    getConversationHide.mockResolvedValue(null)
-    getConversationMessages.mockResolvedValue([])
-    await getAgentMessagesForOwner(OWNER_A, 'alice', 'grp_x')
-    expect(getConversationMessages).toHaveBeenCalledWith(
-      'grp_x',
-      AGENT.id,
-      50,
-      undefined,
-      null,
-      { scopeToRecipient: true },
-    )
-  })
 })
 
 describe('dashboard.service — claimAgent', () => {
@@ -414,7 +442,7 @@ describe('dashboard.service — claimAgent', () => {
     expect(insertOwnerAgent).not.toHaveBeenCalled()
   })
 
-  it('rejects with 409 ALREADY_CLAIMED when the insert hits a duplicate-key error', async () => {
+  it('rejects with 409 ALREADY_CLAIMED and emits agent.claim_attempted on the incumbent', async () => {
     findAgentByApiKeyHash.mockResolvedValue(AGENT)
     insertOwnerAgent.mockRejectedValue(
       new Error('duplicate key value violates unique constraint "owner_agents_pkey"'),
@@ -423,7 +451,22 @@ describe('dashboard.service — claimAgent', () => {
       code: 'ALREADY_CLAIMED',
       status: 409,
     })
-    expect(emitEvent).not.toHaveBeenCalled()
+    // Failed-claim path must emit exactly ONE event: agent.claim_attempted
+    // on the target agent. Never agent.claimed, which is reserved for the
+    // successful insert path below. Without this event the incumbent
+    // owner's activity feed would silently hide probing attempts.
+    expect(emitEvent).toHaveBeenCalledTimes(1)
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actorType: 'owner',
+        actorId: OWNER_A,
+        action: 'agent.claim_attempted',
+        targetId: AGENT.id,
+      }),
+    )
+    // And the per-agent fail counter must be bumped so distributed probes
+    // trip TOO_MANY_CLAIMS on their next attempt.
+    expect(incrRateLimitCounter).toHaveBeenCalled()
   })
 
   it('on success, inserts owner_agents, emits agent.claimed, returns the claimed shape', async () => {

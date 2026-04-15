@@ -42,6 +42,9 @@ app.use('*', requestLogger)
 //
 // exposeHeaders: Retry-After so browser rate-limit responses can be read
 // by the SDK — fetch() hides non-whitelisted response headers otherwise.
+// Server-Timing is exposed so Chrome DevTools can render the per-phase
+// timing bars for /dashboard/* requests on the Network tab even when
+// the dashboard is served from a different origin than the API.
 const corsOriginsRaw = process.env['CORS_ORIGINS']?.trim() ?? ''
 const corsOrigin: string | string[] =
   corsOriginsRaw === '' || corsOriginsRaw === '*'
@@ -53,7 +56,7 @@ app.use(
   cors({
     origin: corsOrigin,
     allowHeaders: ['Authorization', 'Content-Type'],
-    exposeHeaders: ['Retry-After'],
+    exposeHeaders: ['Retry-After', 'Server-Timing'],
     maxAge: 600,
     credentials: false,
   }),

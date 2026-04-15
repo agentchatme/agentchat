@@ -2,8 +2,7 @@ import { redirect } from 'next/navigation'
 import { cookies } from 'next/headers'
 import { MessageSquare } from 'lucide-react'
 
-import { apiFetch } from '@/lib/api'
-import type { ClaimedAgent } from '@/lib/types'
+import { getBootstrap } from '@/lib/api'
 import { EmptyStateHero } from '@/components/empty-state-hero'
 
 // Home state (§3.1.2):
@@ -12,21 +11,26 @@ import { EmptyStateHero } from '@/components/empty-state-hero'
 //                              the main pane (sidebar still shows the
 //                              claim button and the nav block)
 //   One+ claimed agents      → auto-select the first agent and redirect
-//                              to their chat view. Follow-up: remember
-//                              the last viewed agent in a cookie and
-//                              prefer that one (§3.1.2 — matches the
+//                              to their chat view. The last-viewed agent
+//                              is remembered via ac_last_agent and we
+//                              prefer it (§3.1.2 — matches the
 //                              Telegram/Slack/Linear default).
 //
-// Refetching the agents list here is cheap but technically a
-// duplicate of the fetch in (app)/layout.tsx — Next memoizes fetch
-// within a single RSC render, and apiFetch forwards cookies on every
-// call, so a duplicate is safe but wastes a hop. Worth moving to a
-// server-side cache later; not worth pre-optimizing now.
+// getBootstrap() is React.cache()-memoized so calling it here reuses
+// the same promise the (app) layout already awaited — no duplicate
+// /dashboard/bootstrap round trip, no duplicate Fly hop. The layout
+// also already redirected if it was null, so the non-null assertion
+// below is safe in practice — we keep the explicit guard only as a
+// fail-closed belt-and-braces for any future refactor that changes
+// the layout's auth semantics.
 
 export default async function AppHome() {
-  const { agents } = await apiFetch<{ agents: ClaimedAgent[] }>(
-    '/dashboard/agents',
-  )
+  const bootstrap = await getBootstrap()
+  if (!bootstrap) {
+    redirect('/login')
+  }
+
+  const { agents } = bootstrap
 
   if (agents.length === 0) {
     return <EmptyStateHero />
