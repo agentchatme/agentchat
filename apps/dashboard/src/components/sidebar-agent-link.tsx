@@ -36,20 +36,20 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
   return (
     <div
       className={cn(
-        'group hover:bg-accent flex items-center gap-2 rounded-md pr-1 transition-colors',
+        'group hover:bg-accent flex items-center gap-1 rounded-md pr-1.5 transition-colors',
         isChat && 'bg-accent',
       )}
     >
       <Link
         href={base}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2"
+        className="flex min-w-0 flex-1 items-center gap-3 px-2.5 py-2.5"
       >
-        <Avatar className="size-8">
+        <Avatar className="size-9">
           <AvatarFallback>{initial}</AvatarFallback>
         </Avatar>
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex items-center gap-1.5">
-            <span className="truncate text-sm font-medium">
+            <span className="truncate text-sm font-semibold">
               {agent.display_name ?? agent.handle}
             </span>
             <StatusDot
@@ -57,7 +57,7 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
               paused={agent.paused_by_owner !== 'none'}
             />
           </div>
-          <span className="text-muted-foreground truncate text-xs">
+          <span className="text-muted-foreground truncate text-[13px]">
             @{agent.handle}
           </span>
         </div>
@@ -65,12 +65,12 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
       <Link
         href={`${base}/settings`}
         className={cn(
-          'text-muted-foreground hover:text-foreground hover:bg-background flex size-7 items-center justify-center rounded-md transition-colors',
+          'text-muted-foreground hover:text-foreground hover:bg-background flex size-8 items-center justify-center rounded-md transition-colors',
           isSettings && 'bg-background text-foreground',
         )}
         aria-label={`Settings for @${agent.handle}`}
       >
-        <Settings2 className="size-3.5" />
+        <Settings2 className="size-4" />
       </Link>
     </div>
   )

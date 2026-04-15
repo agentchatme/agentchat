@@ -35,10 +35,10 @@ export default async function AgentChatHome({
     <>
       <LastAgentTracker handle={handle} />
       <ChatShell profile={profile} conversations={conversations}>
-        <div className="flex flex-1 items-center justify-center p-8">
-          <div className="text-chat-meta flex flex-col items-center gap-2 text-center">
-            <MessageSquare className="size-8 opacity-40" />
-            <p className="text-sm">
+        <div className="flex flex-1 items-center justify-center p-10">
+          <div className="text-chat-meta flex flex-col items-center gap-4 text-center">
+            <MessageSquare className="size-10 opacity-40" />
+            <p className="text-[15px]">
               Pick a conversation on the left to start reading.
             </p>
           </div>

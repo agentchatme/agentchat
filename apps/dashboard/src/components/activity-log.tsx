@@ -45,7 +45,7 @@ export function ActivityLog({ events }: { events: AgentEvent[] }) {
   }
 
   return (
-    <ul className="flex flex-col gap-3">
+    <ul className="flex flex-col gap-4">
       {events.map((e) => {
         if (e.action === 'agent.claim_attempted') {
           return <ClaimAttemptedRow key={e.id} event={e} />
@@ -59,13 +59,13 @@ export function ActivityLog({ events }: { events: AgentEvent[] }) {
 function DefaultRow({ event }: { event: AgentEvent }) {
   const label = actionLabel[event.action] ?? event.action
   return (
-    <li className="flex items-start gap-3 border-l pl-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+    <li className="flex items-start gap-3 border-l-2 pl-4">
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider">
             {actorLabel[event.actor_type]}
           </span>
-          <span className="text-sm">{label}</span>
+          <span className="text-[15px] font-medium">{label}</span>
         </div>
         <span className="text-muted-foreground text-xs">
           {formatDistanceToNow(new Date(event.created_at), {
@@ -88,15 +88,15 @@ function ClaimAttemptedRow({ event }: { event: AgentEvent }) {
       : 'unknown'
 
   return (
-    <li className="border-l-2 border-amber-500 bg-amber-500/5 rounded-sm px-3 py-2">
-      <div className="flex items-start gap-2">
-        <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
-        <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <li className="border-l-2 border-amber-500 bg-amber-500/5 rounded-md px-4 py-3">
+      <div className="flex items-start gap-3">
+        <ShieldAlert className="mt-0.5 size-5 shrink-0 text-amber-600 dark:text-amber-500" />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+            <span className="text-[15px] font-semibold text-amber-700 dark:text-amber-400">
               Claim attempt blocked
             </span>
-            <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+            <span className="bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
               Security
             </span>
           </div>
@@ -106,14 +106,16 @@ function ClaimAttemptedRow({ event }: { event: AgentEvent }) {
             to rotate its API key — dashboard access alone cannot rotate
             the key.
           </p>
-          <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
-            <dt>IP</dt>
+          <dl className="text-muted-foreground mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <dt className="font-semibold uppercase tracking-wider">IP</dt>
             <dd className="font-mono">{ip}</dd>
-            <dt>User agent</dt>
+            <dt className="font-semibold uppercase tracking-wider">
+              User agent
+            </dt>
             <dd className="truncate font-mono" title={ua}>
               {ua}
             </dd>
-            <dt>When</dt>
+            <dt className="font-semibold uppercase tracking-wider">When</dt>
             <dd>
               {formatDistanceToNow(new Date(event.created_at), {
                 addSuffix: true,

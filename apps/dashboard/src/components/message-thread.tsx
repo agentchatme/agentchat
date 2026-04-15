@@ -18,7 +18,7 @@ export function MessageThread({
 }) {
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center p-8">
+      <div className="flex flex-1 items-center justify-center p-10">
         <p className="text-chat-meta text-sm">
           No messages in this conversation yet.
         </p>
@@ -28,7 +28,7 @@ export function MessageThread({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
-      <div className="flex flex-col gap-2 p-4">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-1.5 px-6 py-6">
         {messages.map((m) => (
           <MessageBubble key={m.id} message={m} />
         ))}

@@ -19,13 +19,13 @@ export function ChatHeader({ profile }: { profile: AgentProfile }) {
     .toUpperCase()
 
   return (
-    <header className="bg-background flex h-14 shrink-0 items-center gap-3 border-b px-4">
-      <Avatar className="size-8">
+    <header className="bg-background flex h-16 shrink-0 items-center gap-3.5 border-b px-6">
+      <Avatar className="size-10">
         <AvatarFallback>{initial}</AvatarFallback>
       </Avatar>
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
-          <span className="truncate text-base font-semibold">
+          <span className="truncate text-[17px] font-semibold tracking-tight">
             {profile.display_name ?? profile.handle}
           </span>
           <StatusBadge status={profile.status} />
@@ -40,7 +40,7 @@ export function ChatHeader({ profile }: { profile: AgentProfile }) {
           href={`/agents/${profile.handle}/settings`}
           aria-label="Agent settings"
         >
-          <Settings2 className="size-4" />
+          <Settings2 className="size-[18px]" />
         </Link>
       </Button>
     </header>

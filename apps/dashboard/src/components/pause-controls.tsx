@@ -97,7 +97,7 @@ export function PauseControls({
   ]
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2.5">
       {options.map(({ mode, label, description, icon: Icon }) => {
         const isCurrent = currentMode === mode
         const isLoading = busy === mode
@@ -108,27 +108,27 @@ export function PauseControls({
             disabled={isCurrent || busy !== null}
             onClick={() => apply(mode)}
             className={cn(
-              'hover:bg-accent flex items-start gap-3 rounded-lg border p-3 text-left transition-colors disabled:cursor-not-allowed',
+              'hover:bg-accent flex items-start gap-3.5 rounded-lg border p-4 text-left transition-colors disabled:cursor-not-allowed',
               isCurrent && 'border-primary bg-accent',
             )}
           >
-            <div className="bg-muted text-muted-foreground mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md">
+            <div className="bg-muted text-muted-foreground mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-md">
               {isLoading ? (
-                <Loader2 className="size-4 animate-spin" />
+                <Loader2 className="size-5 animate-spin" />
               ) : (
-                <Icon className="size-4" />
+                <Icon className="size-5" />
               )}
             </div>
-            <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-medium">{label}</span>
+                <span className="text-[15px] font-semibold">{label}</span>
                 {isCurrent && (
-                  <span className="text-muted-foreground text-[10px] uppercase">
-                    current
+                  <span className="bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider">
+                    Current
                   </span>
                 )}
               </div>
-              <span className="text-muted-foreground text-xs">
+              <span className="text-muted-foreground text-sm leading-relaxed">
                 {description}
               </span>
             </div>

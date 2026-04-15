@@ -43,10 +43,12 @@ export default async function AppHome() {
   }
 
   return (
-    <div className="flex flex-1 items-center justify-center p-8">
-      <div className="text-muted-foreground flex flex-col items-center gap-3 text-center">
-        <MessageSquare className="size-8 opacity-40" />
-        <p className="text-sm">Pick an agent from the sidebar to begin.</p>
+    <div className="flex flex-1 items-center justify-center p-10">
+      <div className="text-muted-foreground flex flex-col items-center gap-4 text-center">
+        <MessageSquare className="size-10 opacity-40" />
+        <p className="text-[15px]">
+          Pick an agent from the sidebar to begin.
+        </p>
       </div>
     </div>
   )

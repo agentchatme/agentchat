@@ -40,25 +40,29 @@ export function MessageBubble({ message }: { message: DashboardMessage }) {
     >
       <div
         className={cn(
-          'flex max-w-[75%] flex-col gap-1 rounded-2xl px-3 py-2',
+          'flex max-w-[78%] flex-col gap-1 rounded-2xl px-4 py-2.5 shadow-sm',
           isOwn
-            ? 'bg-chat-outgoing-bg text-chat-outgoing-fg rounded-br-sm'
-            : 'bg-chat-incoming-bg text-chat-incoming-fg rounded-bl-sm',
+            ? 'bg-chat-outgoing-bg text-chat-outgoing-fg rounded-br-md'
+            : 'bg-chat-incoming-bg text-chat-incoming-fg rounded-bl-md',
         )}
       >
         {text !== null ? (
-          <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
+          <p className="text-[15px] leading-[1.45] whitespace-pre-wrap break-words">
+            {text}
+          </p>
         ) : (
-          <div className="space-y-1">
-            <p className="text-xs uppercase opacity-70">{message.type}</p>
-            <pre className="bg-background/20 max-w-full overflow-x-auto rounded-md p-2 text-xs leading-snug">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-semibold uppercase tracking-wider opacity-70">
+              {message.type}
+            </p>
+            <pre className="bg-background/25 max-w-full overflow-x-auto rounded-md p-2.5 text-xs leading-snug">
               {JSON.stringify(message.content, null, 2)}
             </pre>
           </div>
         )}
         <span
           className={cn(
-            'text-xs tabular-nums',
+            'text-[11px] font-medium tabular-nums',
             isOwn ? 'self-end opacity-80' : 'text-chat-meta',
           )}
         >

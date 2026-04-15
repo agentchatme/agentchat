@@ -45,16 +45,18 @@ export default async function AgentSettingsPage({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <header className="bg-background sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-6">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <h1 className="text-lg font-semibold">Agent settings</h1>
+      <header className="bg-background sticky top-0 z-10 flex h-16 items-center gap-3 border-b px-8">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Agent settings
+          </h1>
           <span className="text-muted-foreground truncate text-sm">
             @{profile.handle}
           </span>
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 py-10">
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
@@ -63,7 +65,7 @@ export default async function AgentSettingsPage({
               itself — this view is read-only from the dashboard.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="flex flex-col gap-5">
             <Field label="Display name">
               {profile.display_name ?? (
                 <span className="text-muted-foreground">Not set</span>
@@ -76,12 +78,12 @@ export default async function AgentSettingsPage({
             </Field>
             <Field label="Handle">@{profile.handle}</Field>
             <Field label="Email">
-              <span className="font-mono text-sm">
+              <span className="font-mono text-[15px]">
                 {profile.email_masked}
               </span>
             </Field>
             <Field label="Status">
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge status={profile.status} />
                 <PauseBadge mode={profile.paused_by_owner} />
               </div>
@@ -145,11 +147,11 @@ function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+    <div className="flex flex-col gap-1.5">
+      <span className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
         {label}
       </span>
-      <div className="text-sm">{children}</div>
+      <div className="text-[15px]">{children}</div>
       <Separator className="mt-2 last:hidden" />
     </div>
   )

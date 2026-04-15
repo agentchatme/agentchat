@@ -50,30 +50,30 @@ export function OwnerMenu({ email }: { email: string }) {
   const initial = email.charAt(0).toUpperCase()
 
   return (
-    <div className="flex flex-col gap-0.5 p-2">
+    <div className="flex flex-col gap-1 p-3">
       <button
         type="button"
         onClick={toggleTheme}
-        className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+        className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
       >
-        <ThemeIcon className="size-4" />
+        <ThemeIcon className="size-[18px]" />
         {themeLabel}
       </button>
       <button
         type="button"
         onClick={logout}
-        className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+        className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
       >
-        <LogOut className="size-4" />
+        <LogOut className="size-[18px]" />
         Sign out
       </button>
 
-      <div className="mt-1 flex items-center gap-2 rounded-md px-3 py-2">
-        <Avatar className="size-7">
+      <div className="mt-2 flex items-center gap-3 rounded-md border bg-background/40 px-3 py-2.5">
+        <Avatar className="size-9">
           <AvatarFallback>{initial}</AvatarFallback>
         </Avatar>
-        <div className="flex min-w-0 flex-col">
-          <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider">
             Signed in
           </span>
           <span className="max-w-full truncate text-sm font-medium">

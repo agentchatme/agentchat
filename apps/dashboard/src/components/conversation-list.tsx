@@ -28,9 +28,9 @@ export function ConversationList({
 }) {
   if (conversations.length === 0) {
     return (
-      <aside className="bg-background flex flex-col items-center justify-center gap-2 p-6 text-center">
-        <MessageSquare className="text-muted-foreground size-6 opacity-40" />
-        <p className="text-muted-foreground text-sm">
+      <aside className="bg-background flex flex-col items-center justify-center gap-3 p-8 text-center">
+        <MessageSquare className="text-muted-foreground size-8 opacity-40" />
+        <p className="text-muted-foreground max-w-[260px] text-sm leading-relaxed">
           No conversations yet. They&apos;ll appear here as soon as this
           agent sends or receives a message.
         </p>
@@ -51,26 +51,26 @@ export function ConversationList({
               <Link
                 href={`/agents/${handle}/conversations/${c.id}`}
                 className={cn(
-                  'hover:bg-accent flex items-start gap-3 border-b px-4 py-3 transition-colors',
+                  'hover:bg-accent flex items-start gap-3.5 border-b px-5 py-4 transition-colors',
                   isActive && 'bg-accent',
                 )}
               >
-                <div className="bg-muted text-muted-foreground flex size-9 shrink-0 items-center justify-center rounded-full">
+                <div className="bg-muted text-muted-foreground flex size-11 shrink-0 items-center justify-center rounded-full">
                   {c.type === 'group' ? (
-                    <Users className="size-4" />
+                    <Users className="size-[18px]" />
                   ) : (
-                    <span className="text-sm font-medium">
+                    <span className="text-base font-semibold">
                       {title.charAt(0).toUpperCase()}
                     </span>
                   )}
                 </div>
-                <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-sm font-medium">
+                    <span className="truncate text-[15px] font-semibold">
                       {title}
                     </span>
                     {stamp && (
-                      <span className="text-muted-foreground shrink-0 text-xs uppercase tracking-wide">
+                      <span className="text-muted-foreground shrink-0 text-[11px] font-medium uppercase tracking-wider tabular-nums">
                         {formatDistanceToNowStrict(new Date(stamp), {
                           addSuffix: false,
                         })}

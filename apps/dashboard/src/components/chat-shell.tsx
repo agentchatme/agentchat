@@ -30,7 +30,7 @@ export function ChatShell({
   return (
     <div className="bg-chat-bg flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatHeader profile={profile} />
-      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[320px_1fr]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[340px_1fr]">
         <ConversationList
           handle={profile.handle}
           conversations={conversations}

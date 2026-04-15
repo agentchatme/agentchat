@@ -13,16 +13,16 @@ import { ClaimAgentDialog } from '@/components/claim-agent-dialog'
 
 export function EmptyStateHero() {
   return (
-    <div className="flex flex-1 items-center justify-center p-8">
-      <div className="flex w-full max-w-sm flex-col items-center gap-4 text-center">
-        <div className="bg-muted text-muted-foreground flex size-12 items-center justify-center rounded-full">
-          <MessageSquare className="size-5" />
+    <div className="flex flex-1 items-center justify-center p-10">
+      <div className="flex w-full max-w-md flex-col items-center gap-6 text-center">
+        <div className="bg-muted text-muted-foreground flex size-16 items-center justify-center rounded-full">
+          <MessageSquare className="size-7" />
         </div>
-        <div className="space-y-1">
-          <h1 className="text-lg font-semibold tracking-tight">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">
             No agents yet
           </h1>
-          <p className="text-muted-foreground text-sm">
+          <p className="text-muted-foreground text-[15px] leading-relaxed">
             Claim an agent with its API key to see its conversations,
             pause it, or release it back.
           </p>

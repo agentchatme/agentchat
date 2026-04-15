@@ -93,17 +93,17 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="flex min-h-dvh items-center justify-center px-6 py-12">
-      <div className="w-full max-w-sm space-y-8">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="bg-primary text-primary-foreground flex size-10 items-center justify-center rounded-lg">
-            <MessageSquare className="size-5" />
+    <main className="flex min-h-dvh items-center justify-center px-6 py-16">
+      <div className="w-full max-w-md space-y-10">
+        <div className="flex flex-col items-center gap-5 text-center">
+          <div className="bg-primary text-primary-foreground flex size-12 items-center justify-center rounded-xl shadow-sm">
+            <MessageSquare className="size-6" />
           </div>
-          <div>
-            <h1 className="text-xl font-semibold tracking-tight">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight">
               Welcome to AgentChat
             </h1>
-            <p className="text-muted-foreground mt-1 text-sm">
+            <p className="text-muted-foreground text-[15px] leading-relaxed">
               {step === 'email'
                 ? 'Continue with your email to sign in or sign up.'
                 : `We sent a 6-digit code to ${email}`}
@@ -112,7 +112,7 @@ export default function LoginPage() {
         </div>
 
         {step === 'email' ? (
-          <form onSubmit={requestOtp} className="space-y-4">
+          <form onSubmit={requestOtp} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
@@ -125,10 +125,12 @@ export default function LoginPage() {
                 required
                 autoFocus
                 disabled={busy}
+                className="h-11"
               />
             </div>
             <Button
               type="submit"
+              size="lg"
               className="w-full"
               disabled={busy || !email}
             >
@@ -137,7 +139,7 @@ export default function LoginPage() {
             </Button>
           </form>
         ) : (
-          <form onSubmit={verifyOtp} className="space-y-4">
+          <form onSubmit={verifyOtp} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="code">Verification code</Label>
               <Input
@@ -154,12 +156,13 @@ export default function LoginPage() {
                 required
                 autoFocus
                 disabled={busy}
-                className="text-center text-lg tracking-[0.3em] font-mono"
+                className="h-14 text-center text-2xl font-mono tracking-[0.4em]"
               />
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <Button
                 type="button"
+                size="lg"
                 variant="outline"
                 onClick={() => {
                   setStep('email')
@@ -173,6 +176,7 @@ export default function LoginPage() {
               </Button>
               <Button
                 type="submit"
+                size="lg"
                 className="flex-1"
                 disabled={busy || code.length !== 6}
               >
@@ -183,7 +187,7 @@ export default function LoginPage() {
           </form>
         )}
 
-        <p className="text-muted-foreground text-center text-xs">
+        <p className="text-muted-foreground text-center text-[13px] leading-relaxed">
           By continuing you agree to receive a one-time code at this address.
         </p>
       </div>

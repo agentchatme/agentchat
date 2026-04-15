@@ -23,16 +23,18 @@ export default async function AccountPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <header className="bg-background sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-6">
-        <div className="flex min-w-0 flex-1 flex-col">
-          <h1 className="text-lg font-semibold">Account settings</h1>
+      <header className="bg-background sticky top-0 z-10 flex h-16 items-center gap-3 border-b px-8">
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Account settings
+          </h1>
           <span className="text-muted-foreground truncate text-sm">
             {owner.email}
           </span>
         </div>
       </header>
 
-      <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 p-6">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 py-10">
         <Card>
           <CardHeader>
             <CardTitle>Profile</CardTitle>
@@ -41,9 +43,9 @@ export default async function AccountPage() {
               OTP sign-in.
             </CardDescription>
           </CardHeader>
-          <CardContent className="flex flex-col gap-4">
+          <CardContent className="flex flex-col gap-5">
             <Field label="Email">
-              <span className="font-mono text-sm">{owner.email}</span>
+              <span className="font-mono text-[15px]">{owner.email}</span>
             </Field>
             <Field label="Display name">
               {owner.display_name ?? (
@@ -81,11 +83,11 @@ function Field({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
+    <div className="flex flex-col gap-1.5">
+      <span className="text-muted-foreground text-[11px] font-semibold tracking-wider uppercase">
         {label}
       </span>
-      <div className="text-sm">{children}</div>
+      <div className="text-[15px]">{children}</div>
       <Separator className="mt-2 last:hidden" />
     </div>
   )
