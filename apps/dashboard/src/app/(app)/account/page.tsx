@@ -23,7 +23,11 @@ export default async function AccountPage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <header className="bg-background sticky top-0 z-10 flex h-16 items-center gap-3 border-b px-8">
+      {/* h-[65px] matches the sidebar's h-16 row + Separator (64 + 1)
+          so the header's border-b lands at the same y-coordinate as
+          the sidebar's rule — clean grid intersection across the
+          sidebar/main vertical divider. */}
+      <header className="bg-background sticky top-0 z-10 flex h-[65px] items-center gap-3 border-b px-8">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <h1 className="text-2xl font-semibold tracking-tight">
             Account settings

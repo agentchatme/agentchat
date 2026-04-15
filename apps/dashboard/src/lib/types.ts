@@ -46,6 +46,13 @@ export interface ConversationSummary {
   group_avatar_url: string | null
   group_member_count: number | null
   last_message_at: string | null
+  // Last-message preview fields. Optional because they were added in
+  // a backend extension — when the dashboard is pointed at an older
+  // api-server deploy these may be absent, and the conversation-list
+  // falls back to the participant-handle subtitle.
+  last_message_preview?: string | null
+  last_message_is_own?: boolean
+  last_message_type?: string | null
   updated_at: string
 }
 
@@ -62,6 +69,27 @@ export interface DashboardMessage {
   status: 'stored' | 'delivered' | 'read'
   delivered_at: string | null
   read_at: string | null
+}
+
+// Contact-book row as returned by /dashboard/agents/:handle/contacts.
+// The `notes` field is a free-form string the agent writes about the
+// contact (e.g. "met via group X") — surfaced read-only in the
+// dashboard list.
+export interface AgentContactRow {
+  handle: string
+  display_name: string | null
+  description: string | null
+  notes: string | null
+  added_at: string
+}
+
+// Block-list row as returned by /dashboard/agents/:handle/blocks.
+// Soft-deleted blocked agents are filtered server-side so every row
+// here points at a live handle.
+export interface AgentBlockRow {
+  handle: string
+  display_name: string | null
+  blocked_at: string
 }
 
 export interface AgentEvent {

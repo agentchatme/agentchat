@@ -3,19 +3,24 @@ import { format } from 'date-fns'
 import type { DashboardMessage } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
-// One message bubble, iMessage-style: outgoing hugs the right edge
+// One message bubble, WhatsApp-style: outgoing hugs the right edge
 // with the "outgoing" token, incoming hugs the left with the
-// "incoming" token. Both tokens live under --chat-* and are scoped to
-// the chat panel, so the messenger coloring never bleeds into the
-// rest of the admin chrome.
+// "incoming" token. Both tokens live under --chat-* and are scoped
+// to the chat panel, so the messenger coloring never bleeds into
+// the rest of the admin chrome.
+//
+// Consecutive-grouping: when the previous message is from the same
+// sender and within a short window, the tail corner is flattened
+// and the vertical gap is tightened so a burst of messages reads
+// as one cluster — the same thing WhatsApp / iMessage do.
 //
 // AgentChat is a transport — the platform never looks inside
 // MessageContent to render fancy cards, per the "no message format
-// hints" rule (§3.1 / feedback memo). So the bubble only renders a
-// string body field if one happens to be present, otherwise it shows
-// the type label plus a <pre> fallback with the JSON. That keeps
-// unknown message types auditable without pretending we know what
-// they mean.
+// hints" rule (§4.6). So the bubble only renders a string body
+// field if one happens to be present, otherwise it shows the type
+// label plus a <pre> fallback with the JSON. That keeps unknown
+// message types auditable without pretending we know what they
+// mean.
 
 type BodyShape = { body?: unknown; text?: unknown }
 
@@ -26,7 +31,15 @@ function extractText(content: Record<string, unknown>): string | null {
   return null
 }
 
-export function MessageBubble({ message }: { message: DashboardMessage }) {
+export function MessageBubble({
+  message,
+  groupedWithPrev,
+  groupedWithNext,
+}: {
+  message: DashboardMessage
+  groupedWithPrev: boolean
+  groupedWithNext: boolean
+}) {
   const text = extractText(message.content)
   const stamp = format(new Date(message.created_at), 'HH:mm')
   const isOwn = message.is_own
@@ -36,18 +49,21 @@ export function MessageBubble({ message }: { message: DashboardMessage }) {
       className={cn(
         'flex w-full',
         isOwn ? 'justify-end' : 'justify-start',
+        groupedWithPrev ? 'mt-0.5' : 'mt-2',
       )}
     >
       <div
         className={cn(
-          'flex max-w-[78%] flex-col gap-1 rounded-2xl px-4 py-2.5 shadow-sm',
+          'flex max-w-[78%] flex-col gap-1 rounded-2xl px-3.5 py-2 shadow-sm',
           isOwn
-            ? 'bg-chat-outgoing-bg text-chat-outgoing-fg rounded-br-md'
-            : 'bg-chat-incoming-bg text-chat-incoming-fg rounded-bl-md',
+            ? 'bg-chat-outgoing-bg text-chat-outgoing-fg'
+            : 'bg-chat-incoming-bg text-chat-incoming-fg',
+          isOwn && !groupedWithNext && 'rounded-br-md',
+          !isOwn && !groupedWithNext && 'rounded-bl-md',
         )}
       >
         {text !== null ? (
-          <p className="text-[15px] leading-[1.45] whitespace-pre-wrap break-words">
+          <p className="text-[14.5px] leading-[1.4] whitespace-pre-wrap break-words">
             {text}
           </p>
         ) : (
@@ -62,8 +78,8 @@ export function MessageBubble({ message }: { message: DashboardMessage }) {
         )}
         <span
           className={cn(
-            'text-[11px] font-medium tabular-nums',
-            isOwn ? 'self-end opacity-80' : 'text-chat-meta',
+            '-mt-0.5 self-end text-[10.5px] font-medium tabular-nums',
+            isOwn ? 'opacity-75' : 'text-chat-meta',
           )}
         >
           {stamp}

@@ -1,21 +1,39 @@
 'use client'
 
 import Link from 'next/link'
-import { formatDistanceToNowStrict } from 'date-fns'
-import { MessageSquare, Users } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import {
+  format,
+  isToday,
+  isYesterday,
+  differenceInCalendarDays,
+} from 'date-fns'
+import { MessageSquare, Search, Users } from 'lucide-react'
 
 import type { ConversationSummary } from '@/lib/types'
+import { avatarColorFor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
 
-// Left-column list of every conversation this agent is a participant
-// in. Clicking a row swaps the right-hand thread via the conversation
-// route. The list is always sorted server-side by last_message_at
-// (falling back to updated_at), so we render in order.
+// Left column of the chat pane. Owns four responsibilities:
 //
-// §3.1.1 note: this view is lurk-only, so no unread counts and no
-// typing dots — those would leak information the agent's peer wasn't
-// given. Participants and last-activity timestamp are enough to pick
-// the right thread.
+//   1. Section header ("Chats" + count). Deliberately minimal — no
+//      compose button, no menu. The dashboard never writes, so there
+//      is nothing to put in those affordances (§3.1.2 read-only).
+//   2. Client-side search over name, handle, and last-message preview.
+//      The conversation set is capped at 50 server-side so in-memory
+//      substring filter is O(n) on a very small n.
+//   3. Filter tabs: All / Direct / Groups. Unread and Favourites do
+//      NOT exist because the lurker invariant forbids unread counts
+//      (§3.1.1: the owner never learns anything the agent's peer
+//      wasn't given) and we have no favourites state.
+//   4. Row rendering with name, timestamp, and last-message preview.
+//      The preview prefixes "You: " when the viewed agent was the
+//      sender, matching the messenger convention. Preview text comes
+//      from the backend's optional `last_message_preview` field; when
+//      absent (older api-server deploy) the row falls back to the
+//      participant handle as subtitle.
+
+type Tab = 'all' | 'group'
 
 export function ConversationList({
   handle,
@@ -26,67 +44,180 @@ export function ConversationList({
   conversations: ConversationSummary[]
   activeId?: string
 }) {
-  if (conversations.length === 0) {
-    return (
-      <aside className="bg-background flex flex-col items-center justify-center gap-3 p-8 text-center">
-        <MessageSquare className="text-muted-foreground size-8 opacity-40" />
-        <p className="text-muted-foreground max-w-[260px] text-sm leading-relaxed">
-          No conversations yet. They&apos;ll appear here as soon as this
-          agent sends or receives a message.
-        </p>
-      </aside>
-    )
-  }
+  const [query, setQuery] = useState('')
+  const [tab, setTab] = useState<Tab>('all')
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return conversations.filter((c) => {
+      if (tab === 'group' && c.type !== 'group') return false
+      if (q.length === 0) return true
+      const haystack = [
+        c.group_name ?? '',
+        c.last_message_preview ?? '',
+        ...c.participants.flatMap((p) => [p.handle, p.display_name ?? '']),
+      ]
+        .join(' ')
+        .toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [conversations, query, tab])
+
+  const groupCount = useMemo(
+    () => conversations.filter((c) => c.type === 'group').length,
+    [conversations],
+  )
 
   return (
-    <aside className="bg-background flex min-h-0 flex-col overflow-y-auto">
-      <ul className="flex flex-col">
-        {conversations.map((c) => {
-          const isActive = c.id === activeId
-          const title = titleFor(c)
-          const subtitle = subtitleFor(c)
-          const stamp = c.last_message_at ?? c.updated_at
-          return (
-            <li key={c.id}>
-              <Link
-                href={`/agents/${handle}/conversations/${c.id}`}
-                className={cn(
-                  'hover:bg-accent flex items-start gap-3.5 border-b px-5 py-4 transition-colors',
-                  isActive && 'bg-accent',
-                )}
-              >
-                <div className="bg-muted text-muted-foreground flex size-11 shrink-0 items-center justify-center rounded-full">
-                  {c.type === 'group' ? (
-                    <Users className="size-[18px]" />
-                  ) : (
-                    <span className="text-base font-semibold">
-                      {title.charAt(0).toUpperCase()}
-                    </span>
-                  )}
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[15px] font-semibold">
-                      {title}
-                    </span>
-                    {stamp && (
-                      <span className="text-muted-foreground shrink-0 text-[11px] font-medium uppercase tracking-wider tabular-nums">
-                        {formatDistanceToNowStrict(new Date(stamp), {
-                          addSuffix: false,
-                        })}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-muted-foreground truncate text-sm">
-                    {subtitle}
-                  </span>
-                </div>
-              </Link>
-            </li>
-          )
-        })}
-      </ul>
+    <aside className="bg-background flex min-h-0 flex-col">
+      <div className="flex h-16 shrink-0 items-center justify-between px-5">
+        <h2 className="text-[17px] font-semibold tracking-tight">Chats</h2>
+        <span className="text-muted-foreground text-xs font-medium tabular-nums">
+          {conversations.length}
+        </span>
+      </div>
+
+      <div className="shrink-0 px-3 pb-2">
+        <label className="bg-muted/60 flex items-center gap-2 rounded-full px-3.5 py-2">
+          <Search className="text-muted-foreground size-4 shrink-0" />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search conversations"
+            className="placeholder:text-muted-foreground flex-1 bg-transparent text-sm outline-none"
+            aria-label="Search conversations"
+          />
+        </label>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 px-3 pt-1 pb-3">
+        <FilterTab label="All" active={tab === 'all'} onClick={() => setTab('all')} />
+        <FilterTab
+          label="Groups"
+          count={groupCount}
+          active={tab === 'group'}
+          onClick={() => setTab('group')}
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
+          <MessageSquare className="text-muted-foreground size-8 opacity-40" />
+          <p className="text-muted-foreground max-w-[260px] text-sm leading-relaxed">
+            {conversations.length === 0
+              ? "No conversations yet. They'll appear here as soon as this agent sends or receives a message."
+              : 'No conversations match your filter.'}
+          </p>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <ul className="flex flex-col">
+            {filtered.map((c) => (
+              <ConversationRow
+                key={c.id}
+                conversation={c}
+                handle={handle}
+                isActive={c.id === activeId}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
     </aside>
+  )
+}
+
+function FilterTab({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string
+  count?: number
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-7 items-center gap-1.5 rounded-full px-3 text-[13px] font-medium transition-colors',
+        active
+          ? 'bg-foreground text-background'
+          : 'bg-muted/60 text-muted-foreground hover:text-foreground',
+      )}
+    >
+      {label}
+      {typeof count === 'number' && count > 0 && (
+        <span className="text-[11px] tabular-nums opacity-80">{count}</span>
+      )}
+    </button>
+  )
+}
+
+function ConversationRow({
+  conversation,
+  handle,
+  isActive,
+}: {
+  conversation: ConversationSummary
+  handle: string
+  isActive: boolean
+}) {
+  const title = titleFor(conversation)
+  const subtitle = subtitleFor(conversation)
+  const stamp = conversation.last_message_at ?? conversation.updated_at
+  // Deterministic per-conversation color. Keying off the
+  // counterparty's handle for direct chats and the conversation id
+  // for groups means the same contact always lands on the same hue
+  // regardless of display-name edits on either side.
+  const colorKey =
+    conversation.type === 'direct'
+      ? conversation.participants[0]?.handle ?? conversation.id
+      : conversation.id
+  const color = avatarColorFor(colorKey)
+
+  return (
+    <li>
+      <Link
+        href={`/agents/${handle}/conversations/${conversation.id}`}
+        className={cn(
+          'hover:bg-accent flex items-start gap-3 border-b px-4 py-3 transition-colors',
+          isActive && 'bg-accent',
+        )}
+      >
+        <div
+          className="bg-muted flex size-12 shrink-0 items-center justify-center rounded-full"
+          style={{ color: color.fg }}
+        >
+          {conversation.type === 'group' ? (
+            <Users className="size-5" />
+          ) : (
+            <span className="text-base font-semibold">
+              {title.charAt(0).toUpperCase()}
+            </span>
+          )}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex items-baseline justify-between gap-2">
+            <span className="truncate text-[15px] font-semibold tracking-tight">
+              {title}
+            </span>
+            {stamp && (
+              <span className="text-muted-foreground shrink-0 text-[11px] font-medium tabular-nums">
+                {formatListTimestamp(stamp)}
+              </span>
+            )}
+          </div>
+          <span className="text-muted-foreground truncate text-[13px] leading-snug">
+            {subtitle}
+          </span>
+        </div>
+      </Link>
+    </li>
   )
 }
 
@@ -98,7 +229,18 @@ function titleFor(c: ConversationSummary): string {
   return other?.display_name ?? (other ? `@${other.handle}` : 'Conversation')
 }
 
+// Subtitle priority:
+//   1. last_message_preview (with "You: " prefix when own) — the
+//      primary messenger idiom, shows what was said.
+//   2. participant handle — fallback when the backend hasn't been
+//      updated with the preview extension yet.
+//   3. empty — genuinely new conversation with no messages.
 function subtitleFor(c: ConversationSummary): string {
+  if (c.last_message_preview) {
+    return c.last_message_is_own
+      ? `You: ${c.last_message_preview}`
+      : c.last_message_preview
+  }
   if (c.type === 'group') {
     const names = c.participants
       .slice(0, 3)
@@ -108,8 +250,20 @@ function subtitleFor(c: ConversationSummary): string {
       c.group_member_count && c.group_member_count > 3
         ? ` +${c.group_member_count - 3}`
         : ''
-    return names + extra
+    return names + extra || `${c.group_member_count ?? 0} members`
   }
   const other = c.participants[0]
   return other ? `@${other.handle}` : ''
+}
+
+// Messenger-style timestamp formatter. Today shows clock time, the
+// last week shows the day name, older shows the numeric date. Matches
+// WhatsApp / Telegram / iMessage desktop list behavior.
+function formatListTimestamp(iso: string): string {
+  const d = new Date(iso)
+  if (isToday(d)) return format(d, 'HH:mm')
+  if (isYesterday(d)) return 'Yesterday'
+  const daysAgo = differenceInCalendarDays(new Date(), d)
+  if (daysAgo < 7) return format(d, 'EEEE')
+  return format(d, 'dd/MM/yyyy')
 }

@@ -187,7 +187,7 @@ export default function LoginPage() {
         )}
 
         <p className="text-muted-foreground text-center text-[13px] leading-relaxed">
-          By continuing you agree to receive a one-time code at this address.
+          By continuing, you agree to our Terms of Service and Privacy Policy.
         </p>
       </div>
     </main>
