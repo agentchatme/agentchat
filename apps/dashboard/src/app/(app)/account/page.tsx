@@ -25,8 +25,8 @@ export default async function AccountPage() {
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <header className="bg-background sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-6">
         <div className="flex min-w-0 flex-1 flex-col">
-          <h1 className="text-sm font-semibold">Account settings</h1>
-          <span className="text-muted-foreground truncate text-xs">
+          <h1 className="text-lg font-semibold">Account settings</h1>
+          <span className="text-muted-foreground truncate text-sm">
             {owner.email}
           </span>
         </div>
@@ -43,7 +43,7 @@ export default async function AccountPage() {
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <Field label="Email">
-              <span className="font-mono text-xs">{owner.email}</span>
+              <span className="font-mono text-sm">{owner.email}</span>
             </Field>
             <Field label="Display name">
               {owner.display_name ?? (

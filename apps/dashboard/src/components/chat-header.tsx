@@ -25,13 +25,13 @@ export function ChatHeader({ profile }: { profile: AgentProfile }) {
       </Avatar>
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm font-semibold">
+          <span className="truncate text-base font-semibold">
             {profile.display_name ?? profile.handle}
           </span>
           <StatusBadge status={profile.status} />
           <PauseBadge mode={profile.paused_by_owner} />
         </div>
-        <span className="text-muted-foreground truncate text-xs">
+        <span className="text-muted-foreground truncate text-sm">
           @{profile.handle}
         </span>
       </div>

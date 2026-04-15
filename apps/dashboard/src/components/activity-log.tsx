@@ -38,7 +38,7 @@ const actionLabel: Record<string, string> = {
 export function ActivityLog({ events }: { events: AgentEvent[] }) {
   if (events.length === 0) {
     return (
-      <p className="text-muted-foreground text-xs">
+      <p className="text-muted-foreground text-sm">
         No activity recorded yet.
       </p>
     )
@@ -59,13 +59,13 @@ export function ActivityLog({ events }: { events: AgentEvent[] }) {
 function DefaultRow({ event }: { event: AgentEvent }) {
   const label = actionLabel[event.action] ?? event.action
   return (
-    <li className="flex items-start gap-3 border-l pl-3 text-sm">
+    <li className="flex items-start gap-3 border-l pl-3">
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground text-[10px] uppercase">
+          <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
             {actorLabel[event.actor_type]}
           </span>
-          <span className="text-xs">{label}</span>
+          <span className="text-sm">{label}</span>
         </div>
         <span className="text-muted-foreground text-xs">
           {formatDistanceToNow(new Date(event.created_at), {
@@ -88,25 +88,25 @@ function ClaimAttemptedRow({ event }: { event: AgentEvent }) {
       : 'unknown'
 
   return (
-    <li className="border-l-2 border-amber-500 bg-amber-500/5 rounded-sm px-3 py-2 text-sm">
+    <li className="border-l-2 border-amber-500 bg-amber-500/5 rounded-sm px-3 py-2">
       <div className="flex items-start gap-2">
         <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-500" />
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <div className="flex items-center gap-2">
-            <span className="text-xs font-semibold text-amber-700 dark:text-amber-400">
+            <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
               Claim attempt blocked
             </span>
-            <span className="text-muted-foreground text-[10px] uppercase">
+            <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
               Security
             </span>
           </div>
-          <p className="text-muted-foreground text-xs leading-relaxed">
+          <p className="text-muted-foreground text-sm leading-relaxed">
             Someone with a valid API key tried to claim this agent. The
             attempt was rejected. If this wasn&apos;t you, ask the agent
             to rotate its API key — dashboard access alone cannot rotate
             the key.
           </p>
-          <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-[11px]">
+          <dl className="text-muted-foreground grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-xs">
             <dt>IP</dt>
             <dd className="font-mono">{ip}</dd>
             <dt>User agent</dt>

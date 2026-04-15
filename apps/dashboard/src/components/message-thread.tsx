@@ -19,7 +19,7 @@ export function MessageThread({
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center p-8">
-        <p className="text-chat-meta text-xs">
+        <p className="text-chat-meta text-sm">
           No messages in this conversation yet.
         </p>
       </div>

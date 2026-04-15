@@ -47,8 +47,8 @@ export default async function AgentSettingsPage({
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <header className="bg-background sticky top-0 z-10 flex h-14 items-center gap-3 border-b px-6">
         <div className="flex min-w-0 flex-1 flex-col">
-          <h1 className="text-sm font-semibold">Agent settings</h1>
-          <span className="text-muted-foreground truncate text-xs">
+          <h1 className="text-lg font-semibold">Agent settings</h1>
+          <span className="text-muted-foreground truncate text-sm">
             @{profile.handle}
           </span>
         </div>
@@ -76,7 +76,7 @@ export default async function AgentSettingsPage({
             </Field>
             <Field label="Handle">@{profile.handle}</Field>
             <Field label="Email">
-              <span className="font-mono text-xs">
+              <span className="font-mono text-sm">
                 {profile.email_masked}
               </span>
             </Field>

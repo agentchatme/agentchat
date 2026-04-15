@@ -38,7 +38,7 @@ export default async function AgentChatHome({
         <div className="flex flex-1 items-center justify-center p-8">
           <div className="text-chat-meta flex flex-col items-center gap-2 text-center">
             <MessageSquare className="size-8 opacity-40" />
-            <p className="text-xs">
+            <p className="text-sm">
               Pick a conversation on the left to start reading.
             </p>
           </div>

@@ -30,7 +30,7 @@ export function ConversationList({
     return (
       <aside className="bg-background flex flex-col items-center justify-center gap-2 p-6 text-center">
         <MessageSquare className="text-muted-foreground size-6 opacity-40" />
-        <p className="text-muted-foreground text-xs">
+        <p className="text-muted-foreground text-sm">
           No conversations yet. They&apos;ll appear here as soon as this
           agent sends or receives a message.
         </p>
@@ -59,7 +59,7 @@ export function ConversationList({
                   {c.type === 'group' ? (
                     <Users className="size-4" />
                   ) : (
-                    <span className="text-xs font-medium">
+                    <span className="text-sm font-medium">
                       {title.charAt(0).toUpperCase()}
                     </span>
                   )}
@@ -70,14 +70,14 @@ export function ConversationList({
                       {title}
                     </span>
                     {stamp && (
-                      <span className="text-muted-foreground shrink-0 text-[10px] uppercase">
+                      <span className="text-muted-foreground shrink-0 text-xs uppercase tracking-wide">
                         {formatDistanceToNowStrict(new Date(stamp), {
                           addSuffix: false,
                         })}
                       </span>
                     )}
                   </div>
-                  <span className="text-muted-foreground truncate text-xs">
+                  <span className="text-muted-foreground truncate text-sm">
                     {subtitle}
                   </span>
                 </div>

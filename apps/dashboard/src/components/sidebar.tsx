@@ -8,20 +8,20 @@ import { SidebarAgentLink } from '@/components/sidebar-agent-link'
 import { SidebarNavLink } from '@/components/sidebar-nav-link'
 import { OwnerMenu } from '@/components/owner-menu'
 
-// Three-section sidebar from §3.1.2:
+// Sidebar layout (§3.1.2):
 //
-//   Top block       — account settings, docs, theme/sign-out menu
-//   Middle block    — claimed agents list (click = select; gear = settings)
-//   Bottom action   — claim an agent (opens ClaimAgentDialog)
+//   Top         — branding (logo + wordmark)
+//   Middle      — claimed agents list (click = select; gear = settings)
+//   Claim       — "claim an agent" action
+//   Bottom nav  — account settings, documentation, theme toggle, sign
+//                 out, and the signed-in identity footer. All of these
+//                 previously lived in a dropdown menu or in a top-of-
+//                 sidebar nav; they are now flat, visible, and grouped
+//                 in one place so owners never have to hunt.
 //
-// The sidebar is a server component so it can render directly from
-// the layout's fetch. Interactive children (owner menu, agent link
-// active state, claim dialog) are small client islands. Route-group
-// layout provides owner + agents; we don't re-fetch here.
-//
-// Docs link is an external href to Mintlify (future) per §3.1.2.
-// For now it points at the placeholder docs.agentchat.me subdomain
-// with rel=noopener and opens in a new tab.
+// The sidebar itself stays a server component. Interactive children
+// (OwnerMenu for theme/logout, SidebarNavLink active state, claim
+// dialog) are small client islands.
 
 export function Sidebar({
   owner,
@@ -36,26 +36,10 @@ export function Sidebar({
         <div className="bg-primary text-primary-foreground flex size-7 items-center justify-center rounded-md">
           <MessageSquare className="size-4" />
         </div>
-        <span className="text-sm font-semibold tracking-tight">AgentChat</span>
+        <span className="text-base font-semibold tracking-tight">
+          AgentChat
+        </span>
       </div>
-
-      <Separator />
-
-      <nav className="flex flex-col gap-0.5 p-2">
-        <SidebarNavLink href="/account">
-          <Settings className="size-4" />
-          Account settings
-        </SidebarNavLink>
-        <Link
-          href="https://docs.agentchat.me"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors"
-        >
-          <BookOpen className="size-4" />
-          Documentation
-        </Link>
-      </nav>
 
       <Separator />
 
@@ -68,7 +52,7 @@ export function Sidebar({
 
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-2">
         {agents.length === 0 ? (
-          <p className="text-muted-foreground px-3 py-2 text-xs">
+          <p className="text-muted-foreground px-3 py-2 text-sm">
             No claimed agents yet.
           </p>
         ) : (
@@ -86,9 +70,23 @@ export function Sidebar({
 
       <Separator />
 
-      <div className="p-3">
-        <OwnerMenu email={owner.email} />
-      </div>
+      <nav className="flex flex-col gap-0.5 p-2">
+        <SidebarNavLink href="/account">
+          <Settings className="size-4" />
+          Account settings
+        </SidebarNavLink>
+        <Link
+          href="https://docs.agentchat.me"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-2 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+        >
+          <BookOpen className="size-4" />
+          Documentation
+        </Link>
+      </nav>
+
+      <OwnerMenu email={owner.email} />
     </aside>
   )
 }

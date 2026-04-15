@@ -50,15 +50,15 @@ export function MessageBubble({ message }: { message: DashboardMessage }) {
           <p className="text-sm whitespace-pre-wrap break-words">{text}</p>
         ) : (
           <div className="space-y-1">
-            <p className="text-[10px] uppercase opacity-70">{message.type}</p>
-            <pre className="bg-background/20 max-w-full overflow-x-auto rounded-md p-2 text-[11px] leading-snug">
+            <p className="text-xs uppercase opacity-70">{message.type}</p>
+            <pre className="bg-background/20 max-w-full overflow-x-auto rounded-md p-2 text-xs leading-snug">
               {JSON.stringify(message.content, null, 2)}
             </pre>
           </div>
         )}
         <span
           className={cn(
-            'text-[10px] tabular-nums',
+            'text-xs tabular-nums',
             isOwn ? 'self-end opacity-80' : 'text-chat-meta',
           )}
         >
