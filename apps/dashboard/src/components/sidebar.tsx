@@ -38,8 +38,8 @@ export function Sidebar({
   return (
     <aside className="bg-card hidden w-72 shrink-0 flex-col border-r md:flex lg:w-80">
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <AgentChatIcon className="h-8 w-auto" />
-        <span className="text-[17px] font-semibold tracking-tight">
+        <AgentChatIcon className="h-6 w-auto" />
+        <span className="text-[17px] font-semibold leading-none tracking-tight">
           AgentChat
         </span>
       </div>
