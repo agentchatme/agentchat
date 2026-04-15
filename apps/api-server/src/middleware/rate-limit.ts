@@ -16,7 +16,7 @@ import { getRedis } from '../lib/redis.js'
 // Only if neither is present do we fall back to X-Forwarded-For, and we
 // take the RIGHTMOST entry (the closest hop to us, presumably the trusted
 // proxy). Final fallback is x-real-ip, then 'unknown'.
-function resolveClientIp(c: { req: { header: (n: string) => string | undefined } }): string {
+export function resolveClientIp(c: { req: { header: (n: string) => string | undefined } }): string {
   const flyIp = c.req.header('fly-client-ip')
   if (flyIp) return flyIp
   const cfIp = c.req.header('cf-connecting-ip')
@@ -28,6 +28,57 @@ function resolveClientIp(c: { req: { header: (n: string) => string | undefined }
     if (last) return last
   }
   return c.req.header('x-real-ip') ?? 'unknown'
+}
+
+/**
+ * Non-middleware counter helpers for rate limits that need to be applied
+ * after the route handler has parsed the body (e.g. per-agent claim
+ * attempt limits where the agent id is only known once we've hashed the
+ * submitted API key). Fail-open on Redis errors — never block a legit
+ * claim because of a transient cache outage.
+ *
+ * The window is time-bucketed the same way ipRateLimit buckets its keys
+ * so that counters reset cleanly and we don't need a sliding window.
+ */
+export async function peekRateLimitCounter(bucketKey: string): Promise<number> {
+  try {
+    const redis = getRedis()
+    const val = await redis.get(bucketKey)
+    if (val === null || val === undefined) return 0
+    const n = typeof val === 'number' ? val : Number(val)
+    return Number.isFinite(n) ? n : 0
+  } catch {
+    return 0
+  }
+}
+
+export async function incrRateLimitCounter(
+  bucketKey: string,
+  windowSecs: number,
+): Promise<void> {
+  try {
+    const redis = getRedis()
+    const current = await redis.incr(bucketKey)
+    if (current === 1) {
+      await redis.expire(bucketKey, windowSecs + 1)
+    }
+  } catch {
+    // Redis down — swallow. The audit event still emits, the PK still
+    // enforces the invariant, and the IP-level limiter is still up front.
+  }
+}
+
+/**
+ * Build a time-bucketed rate-limit key. Matches the shape used by
+ * ipRateLimit/keyRateLimit so a future move to a shared helper is
+ * straightforward.
+ */
+export function rateLimitBucketKey(
+  prefix: string,
+  subject: string,
+  windowSecs: number,
+): string {
+  return `rl:${prefix}:${subject}:${Math.floor(Date.now() / (windowSecs * 1000))}`
 }
 
 /**

@@ -25,7 +25,7 @@ import {
   DASHBOARD_ACCESS_COOKIE_MAX_AGE,
   DASHBOARD_REFRESH_COOKIE_MAX_AGE,
 } from '../middleware/dashboard-auth.js'
-import { ipRateLimit } from '../middleware/rate-limit.js'
+import { ipRateLimit, resolveClientIp } from '../middleware/rate-limit.js'
 import { generateId } from '../lib/id.js'
 import { env } from '../env.js'
 import {
@@ -467,11 +467,19 @@ dashboard.post('/agents/claim', ipRateLimit(20, 600), dashboardAuthMiddleware, a
 
   try {
     const ownerId = c.get('ownerId')
-    const claimed = await claimAgent(ownerId, parsed.data.api_key)
+    const ip = resolveClientIp(c)
+    const userAgent = c.req.header('user-agent')
+    const claimed = await claimAgent(ownerId, parsed.data.api_key, {
+      ip,
+      userAgent,
+    })
     return c.json(claimed, 201)
   } catch (e) {
     if (e instanceof DashboardError) {
-      return c.json({ code: e.code, message: e.message }, e.status as 404 | 409)
+      return c.json(
+        { code: e.code, message: e.message },
+        e.status as 404 | 409 | 429,
+      )
     }
     throw e
   }

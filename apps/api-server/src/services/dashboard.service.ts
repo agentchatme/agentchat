@@ -15,6 +15,20 @@ import {
   listEventsForTarget,
 } from '@agentchat/db'
 import { emitEvent } from './events.service.js'
+import {
+  peekRateLimitCounter,
+  incrRateLimitCounter,
+  rateLimitBucketKey,
+} from '../middleware/rate-limit.js'
+
+// ─── Per-agent claim rate limit ────────────────────────────────────────────
+// Second layer behind the /agents/claim IP limiter. The IP limit blunts a
+// single-host attacker; this one catches a distributed probe against ONE
+// specific agent (different IPs, same target). We only count FAILED
+// (ALREADY_CLAIMED) attempts so a legit owner mis-typing their own key
+// doesn't trip the limiter.
+const CLAIM_FAIL_WINDOW_SECS = 600
+const CLAIM_FAIL_MAX = 5
 
 // ─── Dashboard service errors ──────────────────────────────────────────────
 // The dashboard API uses 404 for "you don't own this agent" cases to avoid
@@ -55,9 +69,21 @@ async function requireOwnedAgent(ownerId: string, handle: string) {
 // Owner pastes an API key → we hash it → look up the agent → insert the
 // claim. Returns 404 INVALID_API_KEY if the hash doesn't match any live
 // agent. Returns 409 ALREADY_CLAIMED on a second claim (enforced by the
-// agent_id PK on owner_agents — unique-violation maps here).
+// agent_id PK on owner_agents — unique-violation maps here). Every blocked
+// attempt (409) ALSO emits an `agent.claim_attempted` event on the target
+// agent so the incumbent sees the probe in their activity feed, plus bumps
+// a per-agent Redis counter that short-circuits further attempts at the
+// TOO_MANY_CLAIMS threshold.
+//
+// `context` carries the request IP and truncated user-agent so the audit
+// event has enough fingerprint to distinguish one attempt from another.
+// Both are optional so unit tests / internal callers can skip them.
 
-export async function claimAgent(ownerId: string, apiKey: string) {
+export async function claimAgent(
+  ownerId: string,
+  apiKey: string,
+  context?: { ip?: string; userAgent?: string },
+) {
   const hash = createHash('sha256').update(apiKey).digest('hex')
   const agent = await findAgentByApiKeyHash(hash)
   if (!agent) {
@@ -67,11 +93,46 @@ export async function claimAgent(ownerId: string, apiKey: string) {
     throw new DashboardError('INVALID_API_KEY', 'No agent matches that API key', 404)
   }
 
+  // Per-agent fail counter peek. If a distributed probe has already run up
+  // CLAIM_FAIL_MAX failures inside the window, short-circuit with 429 so
+  // we don't even try the insert. The legit owner's first successful claim
+  // never increments this counter, so an owner who eventually pastes the
+  // right key is unaffected.
+  const failBucket = rateLimitBucketKey(
+    'claim_fail_agent',
+    agent.id as string,
+    CLAIM_FAIL_WINDOW_SECS,
+  )
+  const failCount = await peekRateLimitCounter(failBucket)
+  if (failCount >= CLAIM_FAIL_MAX) {
+    throw new DashboardError(
+      'TOO_MANY_CLAIMS',
+      'This agent has seen too many claim attempts. Please try again later.',
+      429,
+    )
+  }
+
   try {
     await insertOwnerAgent({ owner_id: ownerId, agent_id: agent.id })
   } catch (e) {
     const msg = e instanceof Error ? e.message : ''
     if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('owner_agents_pkey')) {
+      // Bump the per-agent counter and emit an audit event so the
+      // incumbent's activity feed surfaces the probe. The actor_id is
+      // stored for incident response but sanitizeEvent strips it before
+      // returning to the dashboard — the incumbent sees "someone tried"
+      // without learning WHO.
+      await incrRateLimitCounter(failBucket, CLAIM_FAIL_WINDOW_SECS)
+      await emitEvent({
+        actorType: 'owner',
+        actorId: ownerId,
+        action: 'agent.claim_attempted',
+        targetId: agent.id as string,
+        metadata: {
+          ip: context?.ip ?? 'unknown',
+          user_agent: truncateUserAgent(context?.userAgent),
+        },
+      })
       throw new DashboardError(
         'ALREADY_CLAIMED',
         'This agent is already claimed by another dashboard owner',
@@ -167,6 +228,17 @@ function maskEmail(email: string): string {
   return `${first}****@${email.slice(at + 1)}`
 }
 
+// Keep audit UA strings bounded so a pathological client can't balloon
+// the events table. 200 chars is plenty for a real UA; anything longer
+// is either garbage or hostile and the trailing bytes won't help
+// incident response anyway.
+function truncateUserAgent(ua: string | undefined): string {
+  if (!ua) return 'unknown'
+  const clean = ua.trim()
+  if (!clean) return 'unknown'
+  return clean.length > 200 ? clean.slice(0, 200) : clean
+}
+
 // ─── Conversations + messages ──────────────────────────────────────────────
 // Dashboard is a lurker: we reuse the same queries the agent's own API
 // surface uses, passing the agent's id as the "caller". This means the
@@ -236,6 +308,7 @@ export async function getAgentMessagesForOwner(
 const EVENT_METADATA_WHITELIST: Record<string, ReadonlySet<string>> = {
   'agent.paused': new Set(['mode']),
   'agent.claim_revoked': new Set(['reason']),
+  'agent.claim_attempted': new Set(['ip', 'user_agent']),
 }
 
 function sanitizeEvent(raw: Record<string, unknown>) {
