@@ -1,12 +1,12 @@
 import { createMiddleware } from 'hono/factory'
 import { getCookie } from 'hono/cookie'
-import { jwtVerify } from 'jose'
+import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { findOwnerById } from '@agentchat/db'
 import { env } from '../env.js'
 
 // ─── Dashboard auth middleware ─────────────────────────────────────────────
 // Reads the httpOnly session cookie set during /dashboard/auth/otp/verify,
-// verifies the JWT LOCALLY against SUPABASE_JWT_SECRET, and loads the
+// verifies the JWT LOCALLY against Supabase's public JWKS, and loads the
 // matching owners row. Sets `ownerId` + `owner` on the context so
 // downstream routes can scope every read/write to the caller's own
 // claimed agents.
@@ -17,10 +17,28 @@ import { env } from '../env.js'
 // multiply across the handful of fetches each page navigation triggers.
 // That's a huge chunk of the dashboard click-latency budget, reclaimed.
 //
+// Algorithm: ES256 (ECDSA over NIST P-256). Supabase's new JWT signing
+// keys are asymmetric — Supabase holds the private key, and validators
+// fetch the corresponding public key from the JWKS discovery endpoint.
+// The legacy HS256 shared-secret path is no longer used for currently-
+// issued tokens; projects migrate to the new signing keys automatically,
+// and even the Supabase dashboard labels the old shared secret as
+// "verify-only for old JWTs." Local verify here MUST use JWKS — an
+// HS256-only validator would reject every newly-issued access token.
+//
 // Why local verify is safe:
-//   * Supabase mints access tokens signed with SUPABASE_JWT_SECRET (HS256
-//     by default). Any token that verifies AND is not expired AND carries
-//     the right issuer/audience is a token Supabase itself issued.
+//   * Supabase mints access tokens signed with the ES256 signing key.
+//     Any token that verifies against the JWKS AND is not expired AND
+//     carries the right issuer/audience is a token Supabase itself
+//     issued. The JWT `kid` header selects the exact public key out of
+//     the JWKS set, so signing-key rotation is transparent — jose
+//     automatically refetches on a `kid` miss and there is nothing to
+//     deploy on our side when Supabase rotates.
+//   * Asymmetric crypto eliminates the shared-secret leak class:
+//     Supabase never exposes the private key, so a DB/log/env leak on
+//     our side cannot be used to mint valid tokens. With HS256 any
+//     leak of the shared secret was a mint oracle; that attack surface
+//     is gone.
 //   * Revocation is bounded by two things: (a) 1h access token TTL
 //     naturally kills stale tokens; (b) sign-out-everywhere DELETEs the
 //     matching dashboard_sessions row which kills refresh capability, so
@@ -62,12 +80,23 @@ export const DASHBOARD_REFRESH_COOKIE = 'ac_dashboard_refresh'
 export const DASHBOARD_ACCESS_COOKIE_MAX_AGE = 60 * 60
 export const DASHBOARD_REFRESH_COOKIE_MAX_AGE = 60 * 60 * 24 * 30
 
-// Prepared once at module load: raw-bytes view of SUPABASE_JWT_SECRET so
-// every request reuses it (jose needs the raw key, not the string). The
-// issuer/audience constants derive from env and stay frozen for the
-// process lifetime, so there is no per-request allocation on the hot
-// auth path.
-const JWT_SECRET_BYTES = new TextEncoder().encode(env.SUPABASE_JWT_SECRET)
+// Prepared once at module load: a Remote JWKS handle that jose reuses
+// across every request. createRemoteJWKSet lazily fetches the JWKS on
+// the first verify, caches it in-memory for ~10 minutes, and transparently
+// refetches on a `kid` miss — so Supabase rotating its signing key never
+// requires a redeploy. The cache lives in the single handle below, not
+// in a per-request allocation, which means the hot auth path stays ~1ms
+// for every request after the first cold one. Coalesces concurrent
+// first-request fetches so we do not hammer the JWKS endpoint under load.
+//
+// The issuer/audience constants derive from env and stay frozen for the
+// process lifetime — no per-request allocation either. The issuer value
+// matches the `iss` claim Supabase puts on access tokens, which is
+// `${SUPABASE_URL}/auth/v1`. The audience is `authenticated`, Supabase's
+// default for logged-in user tokens.
+const SUPABASE_JWKS = createRemoteJWKSet(
+  new URL(`${env.SUPABASE_URL}/auth/v1/.well-known/jwks.json`),
+)
 const JWT_ISSUER = `${env.SUPABASE_URL}/auth/v1`
 const JWT_AUDIENCE = 'authenticated'
 
@@ -95,17 +124,21 @@ export const dashboardAuthMiddleware = createMiddleware<DashboardEnv>(async (c, 
     return c.json({ code: 'UNAUTHORIZED', message: 'Not signed in' }, 401)
   }
 
-  // Local HS256 verify. jose enforces, in one pass:
-  //   * signature via JWT_SECRET_BYTES (wrong or missing secret → throw)
-  //   * alg ∈ ['HS256'] — this REJECTS forged "alg: none" tokens and
-  //     stops algorithm-confusion attacks where an attacker re-signs
-  //     with a public key as HMAC input
+  // Local ES256 verify against Supabase's JWKS. jose enforces, in one pass:
+  //   * signature via the public key in SUPABASE_JWKS selected by the
+  //     token's `kid` header (wrong/unknown kid → throw; stale cache is
+  //     auto-refetched on a miss so rotation never silently 401s)
+  //   * alg ∈ ['ES256'] — this REJECTS forged "alg: none" tokens and
+  //     stops algorithm-confusion attacks (e.g. an attacker reusing the
+  //     ES256 public key as an HS256 shared secret); we also do NOT
+  //     accept legacy HS256 here, because every HS256-signed token from
+  //     this project has already expired past its 1h TTL
   //   * exp/nbf/iat with 30s default clock skew
   //   * issuer and audience claims match the values we pass
   let sub: string | undefined
   try {
-    const { payload } = await jwtVerify(token, JWT_SECRET_BYTES, {
-      algorithms: ['HS256'],
+    const { payload } = await jwtVerify(token, SUPABASE_JWKS, {
+      algorithms: ['ES256'],
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     })
