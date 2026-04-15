@@ -28,7 +28,7 @@ export function ChatShell({
   children: ReactNode
 }) {
   return (
-    <div className="bg-chat-bg flex h-dvh min-w-0 flex-1 flex-col">
+    <div className="bg-chat-bg flex min-h-0 min-w-0 flex-1 flex-col">
       <ChatHeader profile={profile} />
       <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[320px_1fr]">
         <ConversationList
@@ -36,7 +36,9 @@ export function ChatShell({
           conversations={conversations}
           activeId={activeConversationId}
         />
-        <section className="flex min-w-0 flex-col border-l">{children}</section>
+        <section className="flex min-h-0 min-w-0 flex-col border-l">
+          {children}
+        </section>
       </div>
     </div>
   )

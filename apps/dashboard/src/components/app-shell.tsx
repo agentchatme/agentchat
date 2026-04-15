@@ -22,9 +22,9 @@ export function AppShell({
   children: React.ReactNode
 }) {
   return (
-    <div className="bg-background flex min-h-dvh">
+    <div className="bg-background flex h-dvh overflow-hidden">
       <Sidebar owner={owner} agents={agents} />
-      <main className="flex min-w-0 flex-1 flex-col">{children}</main>
+      <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
     </div>
   )
 }
