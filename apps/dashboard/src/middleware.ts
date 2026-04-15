@@ -32,8 +32,6 @@ const ACCESS_MAX_AGE = 60 * 60
 const REFRESH_MAX_AGE = 60 * 60 * 24 * 30
 const REFRESH_WINDOW_SECS = 5 * 60
 
-const API_BASE = process.env['API_BASE'] ?? 'http://localhost:3000'
-
 // Decode a JWT's `exp` claim without verifying the signature. Verification
 // is the api-server's job — the middleware only needs to know whether the
 // token is close to expiring so it can decide to refresh. A malformed or
@@ -113,14 +111,29 @@ export async function middleware(req: NextRequest) {
     return redirectToLogin(req)
   }
 
-  const refreshRes = await fetch(`${API_BASE}/dashboard/auth/refresh`, {
-    method: 'POST',
-    headers: {
-      cookie: `${REFRESH_COOKIE}=${refresh}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-  })
+  // Hit the refresh endpoint via the dashboard's own origin so the
+  // request rides the /dashboard/:path* rewrite in next.config.ts to
+  // the api-server. This works identically on localhost, preview, and
+  // prod without requiring an API_BASE env var on Vercel — whichever
+  // api-server the dashboard is wired to for normal apiFetch calls is
+  // also the one the middleware talks to here. The matcher excludes
+  // /dashboard, so this same-origin fetch cannot re-trigger middleware.
+  let refreshRes: Response
+  try {
+    refreshRes = await fetch(
+      new URL('/dashboard/auth/refresh', req.nextUrl.origin),
+      {
+        method: 'POST',
+        headers: {
+          cookie: `${REFRESH_COOKIE}=${refresh}`,
+          'Content-Type': 'application/json',
+        },
+        cache: 'no-store',
+      },
+    )
+  } catch {
+    return redirectToLogin(req)
+  }
 
   if (!refreshRes.ok) {
     return redirectToLogin(req)
