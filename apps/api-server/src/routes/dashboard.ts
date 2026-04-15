@@ -43,6 +43,8 @@ import {
   getAgentConversationsForOwner,
   getAgentMessagesForOwner,
   getAgentEventsForOwner,
+  getAgentContactsForOwner,
+  getAgentBlocksForOwner,
   pauseAgent,
   unpauseAgent,
   DashboardError,
@@ -559,6 +561,41 @@ dashboard.get('/agents/:handle/events', dashboardAuthMiddleware, async (c) => {
     const ownerId = c.get('ownerId')
     const events = await getAgentEventsForOwner(ownerId, handle, beforeCreatedAt)
     return c.json({ events })
+  } catch (e) {
+    if (e instanceof DashboardError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
+})
+
+// GET /dashboard/agents/:handle/contacts — List the agent's contact book
+// Read-only. Returns { contacts, total, limit, offset } with each contact
+// carrying handle, display_name, description, notes, added_at.
+dashboard.get('/agents/:handle/contacts', dashboardAuthMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    const ownerId = c.get('ownerId')
+    const result = await getAgentContactsForOwner(ownerId, handle)
+    return c.json(result)
+  } catch (e) {
+    if (e instanceof DashboardError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
+})
+
+// GET /dashboard/agents/:handle/blocks — List the agent's block list
+// Read-only. Returns { blocks, total, limit, offset }. Soft-deleted
+// blocked agents are filtered out server-side so the owner never sees
+// a row that points at a non-existent handle.
+dashboard.get('/agents/:handle/blocks', dashboardAuthMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    const ownerId = c.get('ownerId')
+    const result = await getAgentBlocksForOwner(ownerId, handle)
+    return c.json(result)
   } catch (e) {
     if (e instanceof DashboardError) {
       return c.json({ code: e.code, message: e.message }, e.status as 404)

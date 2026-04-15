@@ -91,6 +91,81 @@ export async function isBlockedEither(agentA: string, agentB: string): Promise<b
   return !!data
 }
 
+// Paginated list of every agent this blocker has blocked, enriched
+// with handle + display_name so the dashboard block-list view can
+// render without a second round-trip per row. Two queries instead of
+// a PostgREST embed so we don't couple to FK-relation names — the
+// blocks table has two FKs to agents (blocker_id, blocked_id) and
+// PostgREST's multi-FK embed hints are brittle to rename. On a
+// typical block list (a handful of rows) the extra round-trip is
+// negligible.
+export async function listBlocks(
+  blockerId: string,
+  limit = 50,
+  offset = 0,
+): Promise<{
+  blocks: Array<{
+    handle: string
+    display_name: string | null
+    blocked_at: string
+  }>
+  total: number
+  limit: number
+  offset: number
+}> {
+  const supabase = getSupabaseClient()
+  const { data: rows, count, error } = await supabase
+    .from('blocks')
+    .select('blocked_id, created_at', { count: 'exact' })
+    .eq('blocker_id', blockerId)
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1)
+
+  if (error) throw error
+  if (!rows || rows.length === 0) {
+    return { blocks: [], total: count ?? 0, limit, offset }
+  }
+
+  const blockedIds = rows.map((r) => r.blocked_id as string)
+  const { data: agents, error: agentsError } = await supabase
+    .from('agents')
+    .select('id, handle, display_name, status')
+    .in('id', blockedIds)
+
+  if (agentsError) throw agentsError
+
+  // Index by id for O(1) join, preserve blocks ordering (newest first).
+  const byId = new Map<
+    string,
+    { handle: string; display_name: string | null; status: string }
+  >()
+  for (const a of agents ?? []) {
+    byId.set(a.id as string, {
+      handle: a.handle as string,
+      display_name: (a.display_name as string | null) ?? null,
+      status: a.status as string,
+    })
+  }
+
+  const blocks = rows
+    .map((r) => {
+      const agent = byId.get(r.blocked_id as string)
+      if (!agent) return null
+      // Hide soft-deleted agents from the list — the block row stays
+      // in the DB for audit, but a deleted handle is meaningless to
+      // render.
+      if (agent.status === 'deleted') return null
+      return {
+        handle: agent.handle,
+        display_name: agent.display_name,
+        blocked_at: r.created_at as string,
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+
+  return { blocks, total: count ?? 0, limit, offset }
+}
+
 export async function blockAgent(blockerId: string, blockedId: string) {
   const { error } = await getSupabaseClient()
     .from('blocks')

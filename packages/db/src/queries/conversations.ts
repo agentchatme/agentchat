@@ -144,6 +144,47 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     (counterpartyAgents ?? []).map((a) => [a.id as string, a]),
   )
 
+  // Last-message fetch per conversation. N parallel point-reads keyed
+  // on the (conversation_id, seq DESC) index — same N-parallel pattern
+  // we already use above for group member counts. At page size 50 this
+  // is 50 fast index lookups and finishes inside one network RTT
+  // window. A bulk DISTINCT ON RPC would be cleaner at much larger
+  // page sizes; revisit if CONV_LIMIT ever grows past ~200.
+  //
+  // Preview extraction is deliberately conservative:
+  //   - Only reads content.body / content.text when type === 'text'
+  //   - Every other type falls back to a simple type label
+  // This respects the platform-is-a-transport invariant (§4.6, "no
+  // message format hints"): the dashboard reads opaque content ONLY
+  // at this rendering boundary to produce a human-facing preview,
+  // never to version or route the message.
+  const lastMessageMap = new Map<
+    string,
+    { preview: string | null; is_own: boolean; type: string }
+  >()
+  await Promise.all(
+    capped.map(async (conv) => {
+      const cid = conv.id as string
+      const { data: rows, error: mErr } = await getSupabaseClient()
+        .from('messages')
+        .select('sender_id, type, content')
+        .eq('conversation_id', cid)
+        .order('seq', { ascending: false })
+        .limit(1)
+      if (mErr) throw mErr
+      const row = rows?.[0]
+      if (!row) return
+      lastMessageMap.set(cid, {
+        preview: extractPreview(
+          row.type as string,
+          row.content as Record<string, unknown> | null,
+        ),
+        is_own: (row.sender_id as string) === agentId,
+        type: row.type as string,
+      })
+    }),
+  )
+
   // Map direct conv id → counterparty handle/display_name. A direct conv
   // always has exactly one other participant in Phase 1, but we tolerate
   // zero (other side purged) by leaving participants empty.
@@ -163,6 +204,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
   return capped.map((conv) => {
     const id = conv.id as string
     const type = conv.type as 'direct' | 'group'
+    const lastMsg = lastMessageMap.get(id) ?? null
     if (type === 'group') {
       return {
         id,
@@ -172,6 +214,9 @@ export async function getAgentConversations(agentId: string, limit = 50) {
         group_avatar_url: (conv.avatar_url as string | null) ?? null,
         group_member_count: groupCountsRes.get(id) ?? 0,
         last_message_at: (conv.last_message_at as string | null) ?? null,
+        last_message_preview: lastMsg?.preview ?? null,
+        last_message_is_own: lastMsg?.is_own ?? false,
+        last_message_type: lastMsg?.type ?? null,
         updated_at: conv.updated_at as string,
       }
     }
@@ -184,9 +229,39 @@ export async function getAgentConversations(agentId: string, limit = 50) {
       group_avatar_url: null,
       group_member_count: null,
       last_message_at: (conv.last_message_at as string | null) ?? null,
+      last_message_preview: lastMsg?.preview ?? null,
+      last_message_is_own: lastMsg?.is_own ?? false,
+      last_message_type: lastMsg?.type ?? null,
       updated_at: conv.updated_at as string,
     }
   })
+}
+
+// Compact one-line preview for the conversation list. Conservative by
+// design: only peeks inside content for type === 'text'. Everything
+// else returns a human-readable type label so the row renders
+// something useful without assuming a schema that isn't ours to
+// define (§4.6 no-format-hints rule).
+const PREVIEW_MAX_LEN = 140
+function extractPreview(
+  type: string,
+  content: Record<string, unknown> | null,
+): string | null {
+  if (type === 'text' && content) {
+    const body = content['body']
+    const text = content['text']
+    const raw = typeof body === 'string' ? body : typeof text === 'string' ? text : null
+    if (!raw) return null
+    const collapsed = raw.replace(/\s+/g, ' ').trim()
+    if (collapsed.length === 0) return null
+    return collapsed.length > PREVIEW_MAX_LEN
+      ? collapsed.slice(0, PREVIEW_MAX_LEN - 1) + '…'
+      : collapsed
+  }
+  if (type === 'image') return 'Photo'
+  if (type === 'file' || type === 'attachment') return 'Attachment'
+  if (type === 'system') return 'System update'
+  return `[${type}]`
 }
 
 /**

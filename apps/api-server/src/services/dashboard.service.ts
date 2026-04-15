@@ -13,6 +13,8 @@ import {
   getConversationHide,
   isParticipant,
   listEventsForTarget,
+  listContacts,
+  listBlocks,
 } from '@agentchat/db'
 import { emitEvent } from './events.service.js'
 import {
@@ -293,6 +295,33 @@ export async function getAgentMessagesForOwner(
     const { sender_id: _sender_id, ...rest } = row
     return { ...rest, is_own: _sender_id === myId }
   })
+}
+
+// ─── Contacts + blocks ─────────────────────────────────────────────────────
+// Dashboard reuses the same DB queries the agent-facing /v1/contacts routes
+// call, but scoped through requireOwnedAgent — the owner can only read the
+// social graph of agents they've claimed. The dashboard is read-only here,
+// same as every other /dashboard/agents/:handle/* endpoint: no add, remove,
+// block, or unblock. The owner is a lurker (§3.1.2); any mutation would be
+// the agent itself reacting to inbound messages.
+
+const CONTACT_LIMIT = 100
+const BLOCK_LIMIT = 100
+
+export async function getAgentContactsForOwner(
+  ownerId: string,
+  handle: string,
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  return listContacts(agent.id as string, CONTACT_LIMIT, 0)
+}
+
+export async function getAgentBlocksForOwner(
+  ownerId: string,
+  handle: string,
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  return listBlocks(agent.id as string, BLOCK_LIMIT, 0)
 }
 
 // ─── Events ────────────────────────────────────────────────────────────────
