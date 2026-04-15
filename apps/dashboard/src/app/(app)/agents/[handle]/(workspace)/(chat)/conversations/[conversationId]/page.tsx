@@ -1,16 +1,14 @@
-import { apiFetch } from '@/lib/api'
-import type {
-  ConversationSummary,
-  DashboardMessage,
-} from '@/lib/types'
-import { ChatShell } from '@/components/chat-shell'
+import { apiFetch, getAgentConversations } from '@/lib/api'
+import type { DashboardMessage } from '@/lib/types'
 import { MessageThread } from '@/components/message-thread'
 import { ThreadHeader } from '@/components/thread-header'
 
-// Active conversation view. The agent profile and ChatHeader are
-// rendered by the workspace layout above, so this page only fetches
-// the two pieces of data it owns: the conversations list (for the
-// left column) and the messages for this specific thread.
+// Active conversation view. The (chat) layout owns the conversation
+// list + ChatShell chrome, so this page only fetches the messages for
+// this specific thread — plus a single /conversations read used to
+// resolve the peer identity for the ThreadHeader. React Query will
+// dedupe the /conversations fetch against the layout's copy on the
+// server render, so the extra call is free in practice.
 //
 // Pagination is out of scope for Phase D1: the api-server caps each
 // /messages response at its internal page size and we render the
@@ -24,9 +22,7 @@ export default async function AgentConversationPage({
 }) {
   const { handle, conversationId } = await params
   const [conversations, messages] = await Promise.all([
-    apiFetch<{ conversations: ConversationSummary[] }>(
-      `/dashboard/agents/${handle}/conversations`,
-    ).then((r) => r.conversations),
+    getAgentConversations(handle),
     apiFetch<{ messages: DashboardMessage[] }>(
       `/dashboard/agents/${handle}/messages?conversation_id=${encodeURIComponent(conversationId)}`,
     ).then((r) => r.messages),
@@ -39,13 +35,9 @@ export default async function AgentConversationPage({
   const active = conversations.find((c) => c.id === conversationId)
 
   return (
-    <ChatShell
-      handle={handle}
-      conversations={conversations}
-      activeConversationId={conversationId}
-    >
+    <>
       {active && <ThreadHeader conversation={active} />}
       <MessageThread messages={messages} />
-    </ChatShell>
+    </>
   )
 }

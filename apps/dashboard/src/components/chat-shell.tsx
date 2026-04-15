@@ -9,29 +9,26 @@ import { ConversationList } from '@/components/conversation-list'
 // level up, so this component only renders the grid below the
 // header.
 //
-// Both the bare /agents/:handle landing and the active
-// /agents/:handle/conversations/:id thread use this same shell so
-// navigating between conversations is a soft swap of `children`
-// instead of remounting the list column.
+// Mounted exactly once from the (workspace)/(chat)/layout so that
+// navigating between conversations re-renders ONLY the `{children}`
+// slot (the thread column). The ConversationList on the left stays
+// fully mounted — no scroll reset, no re-fetch, no blink on either
+// column. The highlighted active row is derived from the URL inside
+// ConversationList itself via useParams, so this presentational
+// shell never has to thread an active-id prop through.
 
 export function ChatShell({
   handle,
   conversations,
-  activeConversationId,
   children,
 }: {
   handle: string
   conversations: ConversationSummary[]
-  activeConversationId?: string
   children: ReactNode
 }) {
   return (
     <div className="grid min-h-0 flex-1 grid-cols-1 md:grid-cols-[340px_1fr]">
-      <ConversationList
-        handle={handle}
-        conversations={conversations}
-        activeId={activeConversationId}
-      />
+      <ConversationList handle={handle} conversations={conversations} />
       <section className="flex min-h-0 min-w-0 flex-col border-l">
         {children}
       </section>

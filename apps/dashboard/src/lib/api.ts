@@ -1,7 +1,11 @@
 import { cache } from 'react'
 import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
-import type { ClaimedAgent, Owner } from '@/lib/types'
+import type {
+  ClaimedAgent,
+  ConversationSummary,
+  Owner,
+} from '@/lib/types'
 
 // ─── Server-side API fetch helper ──────────────────────────────────────────
 // Used by RSC pages to call the dashboard API while forwarding the signed-in
@@ -124,3 +128,20 @@ export interface DashboardBootstrap {
 export const getBootstrap = cache(async (): Promise<DashboardBootstrap | null> => {
   return apiFetchOptional<DashboardBootstrap>('/dashboard/bootstrap')
 })
+
+// Same request-scoped dedupe trick for the per-agent conversation list.
+// The (chat) layout calls it once to render the persistent left column,
+// and the active-thread page calls it again to resolve the peer identity
+// for ThreadHeader — cache() keyed on the handle string collapses both
+// calls into a single network round trip per render. On navigation
+// between two conversations inside the same agent, the layout stays
+// mounted, so only the page's cached call re-runs against a fresh
+// request-scope and does the one fetch that actually goes over the wire.
+export const getAgentConversations = cache(
+  async (handle: string): Promise<ConversationSummary[]> => {
+    const result = await apiFetch<{ conversations: ConversationSummary[] }>(
+      `/dashboard/agents/${handle}/conversations`,
+    )
+    return result.conversations
+  },
+)

@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useParams } from 'next/navigation'
 import { useMemo, useState } from 'react'
 import {
   format,
@@ -38,12 +39,20 @@ type Tab = 'all' | 'group'
 export function ConversationList({
   handle,
   conversations,
-  activeId,
 }: {
   handle: string
   conversations: ConversationSummary[]
-  activeId?: string
 }) {
+  // The active conversation id is read from the URL instead of a
+  // prop because the (chat) layout (which owns ConversationList) sits
+  // one segment above [conversationId] and therefore can't receive
+  // that param directly. useParams on the client gives us the full
+  // route params dict, so the active row stays highlighted even
+  // though the layout itself never re-renders on thread navigation —
+  // which is the whole point of the persistent-list refactor.
+  const params = useParams<{ conversationId?: string }>()
+  const activeId = params?.conversationId
+
   const [query, setQuery] = useState('')
   const [tab, setTab] = useState<Tab>('all')
 
