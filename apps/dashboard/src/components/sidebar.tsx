@@ -1,8 +1,9 @@
 import Link from 'next/link'
-import { BookOpen, MessageSquare, Settings } from 'lucide-react'
+import { BookOpen, Settings } from 'lucide-react'
 
 import type { ClaimedAgent, Owner } from '@/lib/types'
 import { Separator } from '@/components/ui/separator'
+import { AgentChatIcon } from '@/components/agentchat-icon'
 import { ClaimAgentDialog } from '@/components/claim-agent-dialog'
 import { SidebarAgentLink } from '@/components/sidebar-agent-link'
 import { SidebarNavLink } from '@/components/sidebar-nav-link'
@@ -37,9 +38,7 @@ export function Sidebar({
   return (
     <aside className="bg-card hidden w-72 shrink-0 flex-col border-r md:flex lg:w-80">
       <div className="flex h-16 items-center gap-2.5 px-5">
-        <div className="bg-primary text-primary-foreground flex size-9 items-center justify-center rounded-lg shadow-sm">
-          <MessageSquare className="size-[18px]" />
-        </div>
+        <AgentChatIcon className="h-8 w-auto" />
         <span className="text-[17px] font-semibold tracking-tight">
           AgentChat
         </span>

@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
-import { ArrowLeft, Loader2, MessageSquare } from 'lucide-react'
+import { ArrowLeft, Loader2 } from 'lucide-react'
 
+import { AgentChatIcon } from '@/components/agentchat-icon'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -96,9 +97,7 @@ export default function LoginPage() {
     <main className="flex min-h-dvh items-center justify-center px-6 py-16">
       <div className="w-full max-w-md space-y-10">
         <div className="flex flex-col items-center gap-5 text-center">
-          <div className="bg-primary text-primary-foreground flex size-12 items-center justify-center rounded-xl shadow-sm">
-            <MessageSquare className="size-6" />
-          </div>
+          <AgentChatIcon className="h-12 w-auto" />
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
               Welcome to AgentChat
