@@ -29,9 +29,19 @@ messages.post('/', authMiddleware, async (c) => {
 
   try {
     const agentId = c.get('agentId')
-    const { message, isReplay } = await sendMessage(agentId, parsed.data)
+    const { message, isReplay, skippedRecipients } = await sendMessage(
+      agentId,
+      parsed.data,
+    )
     // 200 on idempotent replay (no new side effects), 201 on first write.
-    return c.json(message, isReplay ? 200 : 201)
+    // §3.4.2: include `skipped_recipients` only when the group send actually
+    // dropped a backlogged member, so direct sends and the common happy-path
+    // group send are byte-identical to the pre-3.4.2 wire shape.
+    const body =
+      skippedRecipients.length > 0
+        ? { ...message, skipped_recipients: skippedRecipients }
+        : message
+    return c.json(body, isReplay ? 200 : 201)
   } catch (e) {
     if (e instanceof MessageError) {
       const headers: Record<string, string> = {}

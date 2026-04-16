@@ -106,12 +106,19 @@ export async function enqueueWebhookDelivery(row: {
  * rows with status already flipped to 'delivering' and attempts incremented.
  * The caller is expected to finalize each row by calling
  * markWebhookDelivered / scheduleWebhookRetry / markWebhookDead.
+ *
+ * `excludeWebhookIds` (§3.4.3) skips rows whose webhook_id is currently
+ * behind an open circuit breaker — those rows stay 'pending' with their
+ * attempts counter untouched, so the ~31h retry horizon is preserved
+ * across circuit-open windows.
  */
 export async function claimWebhookDeliveries(
   limit: number,
+  excludeWebhookIds: readonly string[] = [],
 ): Promise<WebhookDeliveryRow[]> {
   const { data, error } = await getSupabaseClient().rpc('claim_webhook_deliveries', {
     p_limit: limit,
+    p_exclude_webhook_ids: excludeWebhookIds.length > 0 ? [...excludeWebhookIds] : null,
   })
   if (error) throw error
   return (data ?? []) as WebhookDeliveryRow[]

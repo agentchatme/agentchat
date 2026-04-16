@@ -28,6 +28,14 @@ vi.mock('@agentchat/db', () => ({
   findAgentById: vi.fn(),
   findDirectConversation: vi.fn(),
   atomicSendMessage: vi.fn(),
+  RecipientBackloggedError: class RecipientBackloggedError extends Error {
+    readonly recipientId: string
+    constructor(recipientId: string) {
+      super(`Recipient ${recipientId} is backlogged`)
+      this.name = 'RecipientBackloggedError'
+      this.recipientId = recipientId
+    }
+  },
   getConversationMessages: vi.fn(),
   getConversationHide: vi.fn(),
   getMessageById: vi.fn(),
@@ -39,6 +47,7 @@ vi.mock('@agentchat/db', () => ({
   isContact: vi.fn(),
   findOrCreateDirectConversation: vi.fn(),
   isParticipant: vi.fn(),
+  hasParticipantHistory: vi.fn(),
   getConversation: vi.fn(),
   markConversationEstablished: vi.fn(),
   addContact: vi.fn(),
@@ -46,6 +55,8 @@ vi.mock('@agentchat/db', () => ({
   getGroupParticipantRole: vi.fn(),
   getGroupParticipantJoinedSeq: vi.fn(),
   getAttachmentById: vi.fn(),
+  findOwnerIdForAgent: vi.fn().mockResolvedValue(null),
+  getAgentHandlesByIds: vi.fn().mockResolvedValue(new Map<string, string>()),
 }))
 
 const sendToAgentMock = vi.fn()
@@ -130,5 +141,49 @@ describe('pushToGroup', () => {
 
     expect(getGroupPushRecipientsMock).toHaveBeenNthCalledWith(1, 'conv_abc', 99, 'agt_s')
     expect(getGroupPushRecipientsMock).toHaveBeenNthCalledWith(2, 'conv_abc', 100, 'agt_s')
+  })
+
+  // §3.4.2: backlogged members have no envelope in message_deliveries, so
+  // the ephemeral push must also skip them or they would receive a
+  // message.new with no durable row backing it on the next sync.
+  it('excludes skippedRecipientIds from the push fan-out', async () => {
+    getGroupPushRecipientsMock.mockResolvedValue(['agt_alice', 'agt_bob', 'agt_carol'])
+    await pushToGroup(
+      'conv_xyz',
+      'agt_sender',
+      42,
+      { id: 'msg_1', seq: 42 },
+      ['agt_bob'],
+    )
+
+    expect(sendToAgentMock).toHaveBeenCalledTimes(2)
+    expect(sendToAgentMock).toHaveBeenNthCalledWith(1, 'agt_alice', {
+      type: 'message.new',
+      payload: { id: 'msg_1', seq: 42 },
+    })
+    expect(sendToAgentMock).toHaveBeenNthCalledWith(2, 'agt_carol', {
+      type: 'message.new',
+      payload: { id: 'msg_1', seq: 42 },
+    })
+    expect(fireWebhooksMock).toHaveBeenCalledTimes(2)
+    // agt_bob (the skipped one) never sees a push, matching its missing
+    // envelope on the DB side.
+    expect(
+      sendToAgentMock.mock.calls.every(([id]) => id !== 'agt_bob'),
+    ).toBe(true)
+    expect(
+      fireWebhooksMock.mock.calls.every(([id]) => id !== 'agt_bob'),
+    ).toBe(true)
+  })
+
+  it('delivers to everyone when the skipped list is empty or omitted', async () => {
+    getGroupPushRecipientsMock.mockResolvedValue(['agt_a', 'agt_b'])
+    await pushToGroup('conv_x', 'agt_s', 1, { id: 'm', seq: 1 })
+    expect(sendToAgentMock).toHaveBeenCalledTimes(2)
+
+    sendToAgentMock.mockReset()
+
+    await pushToGroup('conv_x', 'agt_s', 1, { id: 'm', seq: 1 }, [])
+    expect(sendToAgentMock).toHaveBeenCalledTimes(2)
   })
 })

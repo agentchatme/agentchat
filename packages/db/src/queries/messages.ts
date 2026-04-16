@@ -1,17 +1,41 @@
 import { getSupabaseClient } from '../client.js'
 
 /**
+ * Thrown by atomicSendMessage when the direct-message recipient has hit the
+ * per-recipient undelivered-envelope cap (§3.4.2). The service layer catches
+ * this and returns HTTP 429 `RECIPIENT_BACKLOGGED`. Group sends do not raise
+ * — backlogged members are reported via the `skipped_recipient_ids` array on
+ * the normal return instead.
+ */
+export class RecipientBackloggedError extends Error {
+  readonly recipientId: string
+  constructor(recipientId: string) {
+    super(`Recipient ${recipientId} is backlogged`)
+    this.name = 'RecipientBackloggedError'
+    this.recipientId = recipientId
+  }
+}
+
+const BACKLOGGED_PREFIX = 'recipient_backlogged: '
+
+/**
  * Atomic idempotent message insert. Calls the SQL function
  * send_message_atomic which:
  *   1. Fast-paths on (sender_id, client_msg_id) — returns the existing row
  *      with is_replay=true if this exact send has already happened.
- *   2. Atomically bumps conversations.next_seq and assigns the message seq.
- *   3. Fans out delivery envelopes (message_deliveries) for every non-sender
- *      participant in the same transaction as the message insert.
- *   4. Recovers from the concurrent-insert race via a unique_violation catch.
+ *   2. Checks per-recipient backlog cap (§3.4.2): direct raises
+ *      recipient_backlogged when the sole recipient is at cap; group
+ *      returns skipped ids and delivers to the rest.
+ *   3. Atomically bumps conversations.next_seq and assigns the message seq.
+ *   4. Fans out delivery envelopes (message_deliveries) for every eligible
+ *      non-sender participant in the same transaction as the message insert.
+ *   5. Recovers from the concurrent-insert race via a unique_violation catch.
  *
  * Return value includes `is_replay` so the route can map to 200 (replay) vs
  * 201 (new) and callers can skip the push fan-out on replays.
+ *
+ * `skipped_recipient_ids` is non-empty only for group sends that found at
+ * least one backlogged member; always empty for direct and for replays.
  *
  * Delivery status (stored/delivered/read) lives on message_deliveries rows,
  * not on the returned message, so callers that need per-recipient state
@@ -36,7 +60,17 @@ export async function atomicSendMessage(params: {
     p_metadata: params.metadata ?? {},
   })
 
-  if (error) throw error
+  if (error) {
+    // Translate the plpgsql RAISE into a typed TS error so the service
+    // layer can map it to HTTP 429 without string-matching in two places.
+    const msg = error.message ?? ''
+    const idx = msg.indexOf(BACKLOGGED_PREFIX)
+    if (idx >= 0) {
+      const recipientId = msg.slice(idx + BACKLOGGED_PREFIX.length).trim()
+      throw new RecipientBackloggedError(recipientId)
+    }
+    throw error
+  }
 
   const row = Array.isArray(data) ? data[0] : data
   if (!row) throw new Error('send_message_atomic returned no row')
@@ -51,6 +85,7 @@ export async function atomicSendMessage(params: {
     metadata: Record<string, unknown>
     created_at: string
     is_replay: boolean
+    skipped_recipient_ids: string[]
   }
 }
 

@@ -4,6 +4,7 @@ import {
   findAgentById,
   findDirectConversation,
   atomicSendMessage,
+  RecipientBackloggedError,
   getConversationMessages,
   getConversationHide,
   getMessageById,
@@ -301,6 +302,8 @@ async function sendDirectMessage(
 
   // 10. Store message via atomic RPC — idempotency fast-path, seq allocation,
   //     and last_message_at update all happen inside send_message_atomic.
+  //     A backlogged recipient (§3.4.2) raises before anything persists; we
+  //     translate into the standard RECIPIENT_BACKLOGGED/429 error shape.
   const messageId = generateId('msg')
   const message = await atomicSendMessage({
     id: messageId,
@@ -310,6 +313,16 @@ async function sendDirectMessage(
     type: req.type ?? 'text',
     content: req.content as Record<string, unknown>,
     metadata: req.metadata as Record<string, unknown> | undefined,
+  }).catch((err: unknown): never => {
+    if (err instanceof RecipientBackloggedError) {
+      messagesSendRejected.inc({ reason: 'recipient_backlogged' })
+      throw new MessageError(
+        'RECIPIENT_BACKLOGGED',
+        'Recipient has too many undelivered messages. Try again later.',
+        429,
+      )
+    }
+    throw err
   })
 
   // Map sender_id to sender handle BEFORE any external delivery
@@ -345,7 +358,11 @@ async function sendDirectMessage(
     messagesSent.inc({ outcome: 'replay' })
   }
 
-  return { message: publicMessage, isReplay: message.is_replay }
+  return {
+    message: publicMessage,
+    isReplay: message.is_replay,
+    skippedRecipients: [] as string[],
+  }
 }
 
 // Group send path. Skips cold-outreach, block, and inbox_mode checks
@@ -485,8 +502,28 @@ async function sendGroupMessage(
 
   const publicMessage = toPublicMessage(message, sender.handle)
 
+  // Backlogged members (§3.4.2) got no envelope from the RPC. The push
+  // fan-out must also skip them, or they would receive a WS / webhook
+  // event for a message with no durable record for them — breaking the
+  // invariant that every received event has a matching delivery row.
+  // Resolve handles once so the response can report them back to the
+  // sender; empty on replay or when nothing was skipped.
+  const skippedIds = message.skipped_recipient_ids ?? []
+  const skippedHandleMap =
+    skippedIds.length > 0
+      ? await getAgentHandlesByIds(skippedIds).catch(() => new Map<string, string>())
+      : new Map<string, string>()
+  const skippedHandles: string[] = []
+  for (const id of skippedIds) {
+    const h = skippedHandleMap.get(id)
+    if (h) skippedHandles.push(h)
+  }
+
   if (!message.is_replay) {
     messagesSent.inc({ outcome: 'ok' })
+    if (skippedIds.length > 0) {
+      messagesSendRejected.inc({ reason: 'recipient_backlogged_skipped' })
+    }
     // Async fan-out to all active members except the sender. Recipient set
     // is filtered by `joined_seq <= message.seq` so that a member who
     // joined AFTER send_message_atomic committed (but before this async
@@ -494,11 +531,15 @@ async function sendGroupMessage(
     // message their history cutoff would hide. The DB envelopes already
     // exclude them — this query mirrors the same rule for the ephemeral
     // push so the two stay consistent.
-    pushToGroup(conversationId, senderId, message.seq, publicMessage).catch(
-      () => {
-        // Push failed — DB state is durable, sync/WS reconnect recovers it
-      },
-    )
+    pushToGroup(
+      conversationId,
+      senderId,
+      message.seq,
+      publicMessage,
+      skippedIds,
+    ).catch(() => {
+      // Push failed — DB state is durable, sync/WS reconnect recovers it
+    })
     // Dashboard owner fan-out runs in parallel with the agent push.
     // It does its own getGroupPushRecipients lookup so the existing
     // pushToGroup signature stays untouched.
@@ -508,6 +549,7 @@ async function sendGroupMessage(
       senderId,
       sender.handle,
       message.seq,
+      skippedIds,
     ).catch(() => {
       // Fan-out failed — dashboard reconciles on next router.refresh()
     })
@@ -515,7 +557,11 @@ async function sendGroupMessage(
     messagesSent.inc({ outcome: 'replay' })
   }
 
-  return { message: publicMessage, isReplay: message.is_replay }
+  return {
+    message: publicMessage,
+    isReplay: message.is_replay,
+    skippedRecipients: skippedHandles,
+  }
 }
 
 // ─── Dashboard owner fan-out ──────────────────────────────────────────────
@@ -628,12 +674,18 @@ async function pushGroupToOwnerDashboards(
   senderId: string,
   senderHandle: string,
   messageSeq: number,
+  skippedRecipientIds: readonly string[] = [],
 ) {
-  const recipientIds = await getGroupPushRecipients(
+  const rawRecipientIds = await getGroupPushRecipients(
     conversationId,
     messageSeq,
     senderId,
   )
+  // §3.4.2: a backlogged member has no delivery envelope, so they must
+  // not receive the dashboard fan-out either. Skipped set is tiny — a
+  // Set lookup is cheaper than an IN-query in the DB.
+  const skipped = new Set(skippedRecipientIds)
+  const recipientIds = rawRecipientIds.filter((id) => !skipped.has(id))
   if (recipientIds.length === 0) {
     // Still fan out the sender view even if there are no live recipients
     // (everyone else is fully-paused or has left mid-send).
@@ -686,15 +738,20 @@ export async function pushToGroup(
   senderId: string,
   messageSeq: number,
   message: Record<string, unknown>,
+  skippedRecipientIds: readonly string[] = [],
 ) {
   // Single round-trip: active, non-departed, non-late-joiner, non-sender.
   // Returns agent ids directly so we avoid the handle→agent N+1 roundtrip
   // the previous implementation did through findAgentByHandle.
-  const recipientIds = await getGroupPushRecipients(
+  const rawRecipientIds = await getGroupPushRecipients(
     conversationId,
     messageSeq,
     senderId,
   )
+  // §3.4.2: backlogged members have no envelope — exclude them from the
+  // WS + webhook fan-out so a received event always matches a stored row.
+  const skipped = new Set(skippedRecipientIds)
+  const recipientIds = rawRecipientIds.filter((id) => !skipped.has(id))
   // Drop any recipients whose owner has full-paused them. The DB envelopes
   // in message_deliveries still exist, so the message drains normally once
   // the pause lifts — we only skip the real-time fan-out for now. One
@@ -713,7 +770,12 @@ export async function pushToGroup(
 /** Strip internal sender_id (and internal is_replay flag), replace sender_id
  *  with the public sender handle. */
 function toPublicMessage(msg: Record<string, unknown>, senderHandle: string) {
-  const { sender_id: _sender, is_replay: _replay, ...rest } = msg
+  const {
+    sender_id: _sender,
+    is_replay: _replay,
+    skipped_recipient_ids: _skipped,
+    ...rest
+  } = msg
   return { ...rest, sender: senderHandle }
 }
 

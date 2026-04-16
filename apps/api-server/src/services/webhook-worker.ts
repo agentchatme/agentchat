@@ -8,6 +8,11 @@ import {
   type WebhookDeliveryRow,
 } from '@agentchat/db'
 import { webhookDeliveries } from '../lib/metrics.js'
+import {
+  getOpenWebhookIds,
+  recordWebhookFailure,
+  recordWebhookSuccess,
+} from './webhook-circuit-breaker.js'
 
 /**
  * Background webhook delivery worker.
@@ -82,7 +87,13 @@ async function tick() {
   if (running || stopped) return
   running = true
   try {
-    const rows = await claimWebhookDeliveries(BATCH_SIZE)
+    // §3.4.3: pull the set of webhook ids currently behind an open circuit
+    // so the claim RPC leaves their rows in 'pending' (no attempt burn).
+    // The Lua evaluation also auto-promotes expired OPEN circuits into
+    // HALF_OPEN, letting the next claim pull exactly one probe row per
+    // recovering endpoint. Fails open on Redis outage.
+    const excludedWebhookIds = await getOpenWebhookIds()
+    const rows = await claimWebhookDeliveries(BATCH_SIZE, excludedWebhookIds)
     if (rows.length === 0) return
 
     // Fire all attempts in parallel — each row is independent and the HTTP
@@ -116,6 +127,10 @@ async function processRow(row: WebhookDeliveryRow) {
     if (response.ok) {
       await markWebhookDelivered(row.id)
       webhookDeliveries.inc({ outcome: 'delivered' })
+      // §3.4.3: reset the circuit for this endpoint. Clears any
+      // accumulated failure state and, for a probe fired from half_open,
+      // transitions it back to closed.
+      await recordWebhookSuccess(row.webhook_id)
       // For message.new events, this worker is the signal that the agent's
       // webhook receiver actually got the message — mark the per-recipient
       // envelope so sync/drain won't replay it. Pub/sub + WS push marks the
@@ -126,9 +141,11 @@ async function processRow(row: WebhookDeliveryRow) {
     }
 
     const errText = `HTTP ${response.status} ${response.statusText}`
+    await recordWebhookFailure(row.webhook_id)
     await scheduleNextAttempt(row, errText)
   } catch (err) {
     const errText = err instanceof Error ? err.message : String(err)
+    await recordWebhookFailure(row.webhook_id)
     await scheduleNextAttempt(row, errText)
   }
 }
