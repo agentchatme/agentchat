@@ -17,9 +17,11 @@ import { NextResponse, type NextRequest } from 'next/server'
 //
 // Refresh window:
 //   The access token is a Supabase JWT with a 1h lifetime. We refresh when
-//   it has LESS than 5 minutes left, so an active tab rotates at roughly
-//   the 55-minute mark. Idle tabs with a still-valid access token pass
-//   straight through without any API call.
+//   it has LESS than 15 minutes left, so an active tab rotates at roughly
+//   the 45-minute mark. The wide window ensures that even infrequent
+//   requests (e.g. WS-triggered router.refresh() every ~40 min) catch
+//   the token before it expires. Idle tabs with a still-valid access
+//   token pass straight through without any API call.
 //
 // Failure mode:
 //   If the api-server rejects the refresh (expired, revoked, or unknown),
@@ -30,7 +32,7 @@ const ACCESS_COOKIE = 'ac_dashboard_session'
 const REFRESH_COOKIE = 'ac_dashboard_refresh'
 const ACCESS_MAX_AGE = 60 * 60
 const REFRESH_MAX_AGE = 60 * 60 * 24 * 30
-const REFRESH_WINDOW_SECS = 5 * 60
+const REFRESH_WINDOW_SECS = 15 * 60
 
 const API_BASE = process.env['API_BASE'] ?? 'http://localhost:3000'
 

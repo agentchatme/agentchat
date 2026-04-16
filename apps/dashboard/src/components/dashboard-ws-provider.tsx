@@ -23,6 +23,11 @@ const TICKET_PATH = '/dashboard/ws/ticket'
 const BACKOFF_INITIAL_MS = 1_000
 const BACKOFF_MAX_MS = 30_000
 const VISIBILITY_GRACE_MS = 10_000
+// Periodic refresh that ensures the Next.js middleware runs and rotates
+// the access token before it expires. The middleware's 15-minute refresh
+// window starts at the 45-minute mark — this fires at 40 minutes so
+// the next RSC request lands squarely inside that window.
+const SESSION_KEEPALIVE_MS = 40 * 60 * 1_000
 
 interface TicketResponse {
   ticket: string
@@ -234,8 +239,15 @@ export function DashboardWsProvider({
     document.addEventListener('visibilitychange', onVisibilityChange)
     void connect()
 
+    const keepalive = setInterval(() => {
+      if (!unmountedRef.current && !dormantRef.current) {
+        startTransition(() => { routerRef.current.refresh() })
+      }
+    }, SESSION_KEEPALIVE_MS)
+
     return () => {
       unmountedRef.current = true
+      clearInterval(keepalive)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       clearReconnectTimer()
       clearVisibilityTimer()
