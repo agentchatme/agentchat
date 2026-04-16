@@ -52,7 +52,7 @@ export function MessageThread({
             withinWindow(m.created_at, next.created_at)
 
           return (
-            <div key={m.id}>
+            <div key={m.id} style={{ animation: 'message-in 200ms ease-out both' }}>
               {showDivider && <DateDivider iso={m.created_at} />}
               <MessageBubble
                 message={m}
