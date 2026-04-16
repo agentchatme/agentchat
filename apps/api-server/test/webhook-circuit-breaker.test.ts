@@ -12,11 +12,24 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 class FakeRedis {
   hashes = new Map<string, Map<string, string>>()
   sets = new Map<string, Set<string>>()
+  // Per-hash absolute expiry time in ms. A hash with expireAt <= now is
+  // treated as nonexistent by HGET (mirrors Redis EXPIRE semantics).
+  // PERSIST removes the entry; HSET preserves it unless PERSIST is
+  // called explicitly — same as real Redis.
+  expireAt = new Map<string, number>()
   // Flip to simulate a transient Upstash outage — the next eval() throws
   // and the flag auto-clears. Matches FakeRedis in idempotency.test.ts.
   failNextCall = false
 
+  // Mirror of Redis HGET — returns nil on expired hashes (sweeping them
+  // out so subsequent reads also see nil, matching real semantics).
   private hget(hash: string, field: string): string | null {
+    const exp = this.expireAt.get(hash)
+    if (exp !== undefined && exp <= Date.now()) {
+      this.hashes.delete(hash)
+      this.expireAt.delete(hash)
+      return null
+    }
     return this.hashes.get(hash)?.get(field) ?? null
   }
 
@@ -27,6 +40,14 @@ class FakeRedis {
       this.hashes.set(hash, h)
     }
     for (const [k, v] of Object.entries(fields)) h.set(k, v)
+  }
+
+  private expire(hash: string, seconds: number) {
+    this.expireAt.set(hash, Date.now() + seconds * 1000)
+  }
+
+  private persist(hash: string) {
+    this.expireAt.delete(hash)
   }
 
   private sadd(key: string, member: string) {
@@ -48,6 +69,7 @@ class FakeRedis {
 
   private del(key: string) {
     this.hashes.delete(key)
+    this.expireAt.delete(key)
   }
 
   async eval(
@@ -113,12 +135,14 @@ class FakeRedis {
 
     if (state === 'half_open') {
       this.hset(hash, { state: 'open', opened_at: String(now) })
+      this.persist(hash)
       this.sadd(setKey, id)
       return 'open'
     }
 
     if (state === 'open') {
       this.hset(hash, { opened_at: String(now) })
+      this.persist(hash)
       this.sadd(setKey, id)
       return 'open'
     }
@@ -144,6 +168,7 @@ class FakeRedis {
         window_fails: '0',
         opened_at: String(now),
       })
+      this.persist(hash)
       this.sadd(setKey, id)
       return 'open'
     }
@@ -153,6 +178,7 @@ class FakeRedis {
       window_start: String(windowStart),
       window_fails: String(windowFails),
     })
+    this.expire(hash, windowSeconds * 2)
     return 'closed'
   }
 
@@ -171,6 +197,7 @@ class FakeRedis {
   reset() {
     this.hashes.clear()
     this.sets.clear()
+    this.expireAt.clear()
     this.failNextCall = false
   }
 }
@@ -353,6 +380,48 @@ describe('webhook circuit breaker — §3.4.3', () => {
       expect(excluded).toEqual([dead])
       expect(excluded).not.toContain(healthy1)
       expect(excluded).not.toContain(healthy2)
+    })
+  })
+
+  describe('TTL leak regression (PERSIST on open transition)', () => {
+    // Closed-state failures set an EXPIRE of window_seconds*2 = 120s on
+    // the hash so stale counters on long-quiet webhooks don't accumulate
+    // forever. Before the fix, the HSET that transitioned the state to
+    // OPEN did NOT reset that TTL — so the hash would self-destruct 120s
+    // after the last pre-threshold failure, long before the 5 min
+    // cooldown elapsed. A self-destructed hash reads as state=nil, which
+    // EVAL_OPEN_SET treats as "stale, clean up" and SREMs from the
+    // exclude set. Net effect: broken endpoint gets hammered again 2 min
+    // after being marked dead.
+    it('open circuit does NOT self-destruct after the closed-state TTL elapses', async () => {
+      const id = 'wh_ttl'
+      for (let i = 0; i < CB.CONSECUTIVE_THRESHOLD; i++) await recordWebhookFailure(id)
+      expect(await getOpenWebhookIds()).toEqual([id])
+
+      // Advance past the 120s window that would've killed the hash in
+      // the buggy version. The state must survive.
+      advanceSeconds(CB.WINDOW_SECONDS * 2 + 10)
+
+      // Still excluded — the cooldown is 300s, we've only moved 130s in.
+      expect(await getOpenWebhookIds()).toEqual([id])
+      // Hash is still present with state=open.
+      expect(fakeRedis.hashes.get(`wh:cb:${id}`)?.get('state')).toBe('open')
+    })
+
+    it('half_open → open transition also PERSISTs so the cooldown reset sticks', async () => {
+      const id = 'wh_ttl_probe'
+      for (let i = 0; i < CB.CONSECUTIVE_THRESHOLD; i++) await recordWebhookFailure(id)
+      advanceSeconds(CB.COOLDOWN_SECONDS + 1)
+      await getOpenWebhookIds() // promotes open → half_open
+
+      // Probe fails — circuit snaps back to open with a fresh cooldown.
+      await recordWebhookFailure(id)
+      expect(fakeRedis.hashes.get(`wh:cb:${id}`)?.get('state')).toBe('open')
+
+      // 120s into the fresh cooldown, hash must still exist.
+      advanceSeconds(CB.WINDOW_SECONDS * 2 + 10)
+      expect(fakeRedis.hashes.get(`wh:cb:${id}`)?.get('state')).toBe('open')
+      expect(await getOpenWebhookIds()).toEqual([id])
     })
   })
 

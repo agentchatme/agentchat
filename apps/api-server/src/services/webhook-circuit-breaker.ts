@@ -86,8 +86,11 @@ local window_seconds = tonumber(ARGV[5])
 local state = redis.call('HGET', hash, 'state') or 'closed'
 
 if state == 'half_open' then
-  -- Probe failed: back to open, reset cooldown.
+  -- Probe failed: back to open, reset cooldown. PERSIST strips any TTL
+  -- inherited from the closed-state EXPIRE below so the 5 min cooldown
+  -- can't be cut short by a 120s self-destruct timer.
   redis.call('HSET', hash, 'state', 'open', 'opened_at', now)
+  redis.call('PERSIST', hash)
   redis.call('SADD', set_key, id)
   return 'open'
 end
@@ -96,7 +99,9 @@ if state == 'open' then
   -- A failure while already open: re-stamp opened_at so cooldown restarts
   -- from the latest failure. Prevents a borderline-recovering endpoint
   -- from flipping to half_open on the heels of a just-failed probe.
+  -- PERSIST for the same reason as the half_open branch.
   redis.call('HSET', hash, 'opened_at', now)
+  redis.call('PERSIST', hash)
   redis.call('SADD', set_key, id)
   return 'open'
 end
@@ -123,6 +128,12 @@ if fail_count >= consecutive_threshold or window_fails >= window_threshold then
     'window_fails', 0,
     'opened_at', now
   )
+  -- CRITICAL: strip the TTL set by earlier closed-state failures below.
+  -- HSET preserves TTL; without PERSIST the hash would self-destruct
+  -- window_seconds*2 after the last pre-threshold failure (often ~120s),
+  -- long before the 5 min cooldown elapses. The hash disappearing looks
+  -- to EVAL_OPEN_SET like state==nil → circuit silently self-heals.
+  redis.call('PERSIST', hash)
   redis.call('SADD', set_key, id)
   return 'open'
 end
