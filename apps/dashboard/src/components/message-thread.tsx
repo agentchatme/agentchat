@@ -8,25 +8,7 @@ import {
 
 import type { DashboardMessage } from '@/lib/types'
 import { MessageBubble } from '@/components/message-bubble'
-
-// Vertical stack of message bubbles for one conversation. The API
-// returns messages in ascending seq order (oldest first, newest
-// last), so we render them straight through and let the flex column
-// grow downward. We scroll the container, not the page, so the
-// sidebar, chat header, and thread header stay fixed.
-//
-// Two presentation layers on top of the raw list:
-//   1. Date dividers between messages from different calendar days,
-//      matching WhatsApp Desktop's "Today / Yesterday / Monday /
-//      12/04/2026" pills.
-//   2. Consecutive-message grouping: when two adjacent messages
-//      share a sender and sit within GROUP_WINDOW_MS, the tail of
-//      the first and the top of the second are flattened so a burst
-//      reads as one cluster instead of four identical bubbles.
-//
-// The chat viewer is read-only (§3.1.2): no composer, no send
-// button, no typing indicators. This component is deliberately just
-// a list — there's no input anywhere on the route, by design.
+import { ScrollAnchor } from '@/components/scroll-anchor'
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000
 
@@ -45,12 +27,17 @@ export function MessageThread({
     )
   }
 
+  // API returns descending (newest first) — reverse to ascending for
+  // a natural top-to-bottom chronological layout. The ScrollAnchor at
+  // the end keeps the view pinned to the newest message.
+  const sorted = [...messages].reverse()
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col-reverse overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto flex w-full max-w-4xl flex-col px-6 py-6">
-        {messages.map((m, i) => {
-          const prev = i > 0 ? messages[i - 1] : null
-          const next = i < messages.length - 1 ? messages[i + 1] : null
+        {sorted.map((m, i) => {
+          const prev = i > 0 ? sorted[i - 1] : null
+          const next = i < sorted.length - 1 ? sorted[i + 1] : null
           const showDivider =
             !prev || !isSameDay(new Date(prev.created_at), new Date(m.created_at))
           const groupedWithPrev =
@@ -75,6 +62,7 @@ export function MessageThread({
             </div>
           )
         })}
+        <ScrollAnchor seq={sorted.length > 0 ? sorted[sorted.length - 1]!.seq : 0} />
       </div>
     </div>
   )
