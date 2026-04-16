@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation'
 import { getBootstrap } from '@/lib/api'
 import { AppShell } from '@/components/app-shell'
+import { DashboardWsProvider } from '@/components/dashboard-ws-provider'
 
 // Route group (app) holds every authenticated surface — home,
 // per-agent chat viewer, per-agent settings, account settings. This
@@ -17,9 +18,11 @@ import { AppShell } from '@/components/app-shell'
 //      again — React.cache() dedupes within the same render tree so
 //      there is exactly one network call per navigation.
 //
-// The lurker invariant (§3.1.1 / §3.1.2) forbids any live push on
-// this surface — no WebSocket, no polling. State refresh happens on
-// RSC re-render triggered by router.refresh() after mutations.
+// Live updates: DashboardWsProvider holds one WebSocket for the life
+// of this layout and router.refresh()es on message.new events from
+// the api-server. The lurker invariant still holds — the channel is
+// one-way server→client and scoped to the signed-in owner via a
+// one-shot ticket (see WIRE-CONTRACT.md).
 
 export default async function AppLayout({
   children,
@@ -33,7 +36,7 @@ export default async function AppLayout({
 
   return (
     <AppShell owner={bootstrap.owner} agents={bootstrap.agents}>
-      {children}
+      <DashboardWsProvider>{children}</DashboardWsProvider>
     </AppShell>
   )
 }

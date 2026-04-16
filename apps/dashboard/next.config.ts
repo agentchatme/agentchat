@@ -80,28 +80,27 @@ const nextConfig: NextConfig = {
   // between the same 2–4 recent threads repeatedly, that is the
   // difference between a ~300ms click and a 0ms click.
   //
-  // Raising `dynamic` to 300s turns the router cache into a warm
-  // cache for ~5 minutes per route segment. Clicking Bob → Carol →
-  // back to Bob inside 5 min serves Bob's full page (layout + RSC
-  // + messages) from the in-memory client cache with zero network,
-  // zero server render, zero paint delay. That is the WhatsApp-like
-  // behavior the dashboard is missing today: after the first visit
-  // a thread is "warm" and feels instant on revisit.
+  // `dynamic: 30` is the rapid-flip sweet spot: clicking Bob → Carol
+  // → back to Bob inside 30s hits the warm router cache (zero network,
+  // zero server render), while bounding the worst-case stale-on-
+  // revisit window to 30s for a cached-but-not-active thread. Live
+  // updates for the ACTIVE view come from the WS provider — it calls
+  // router.refresh() on message.new, which invalidates whichever
+  // segment is currently rendered. The 30s cap only matters for
+  // threads you haven't opened recently: after 30s the cache expires
+  // and the next click does a fresh fetch anyway.
+  //
+  // Why 30 instead of 0: zero would throw away the rapid-flip win
+  // (the whole reason staleTimes exists) and spam the api-server on
+  // every back/forward. 30s keeps the flip-warm behavior without
+  // risking stale data lingering longer than a human would notice.
   //
   // `static` at 300s keeps static segments (the agent-workspace
   // layout chrome) cached for the same window so the chat header
   // never refetches when the handle is unchanged.
-  //
-  // Live updates (new-message-arrived-while-you-were-elsewhere) are
-  // a follow-up: the dashboard will subscribe to the api-server's
-  // WebSocket and call router.refresh() on `message.new` events to
-  // invalidate the cache entry for the affected thread. Until then,
-  // the worst-case staleness is 5 minutes, which is acceptable for
-  // a read-only lurker view — and the owner can always hit the
-  // browser reload to force-refresh.
   experimental: {
     staleTimes: {
-      dynamic: 300,
+      dynamic: 30,
       static: 300,
     },
   },
