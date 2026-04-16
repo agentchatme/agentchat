@@ -62,6 +62,29 @@ export async function checkContact(ownerAgentId: string, targetHandle: string) {
   return { is_contact: true, added_at: data[0].added_at, notes: data[0].notes }
 }
 
+/**
+ * Return every agent id that has `agentId` in their contact book.
+ * These are the agents who should receive a presence broadcast when
+ * `agentId` changes status — they're the ones who "care" about this
+ * agent's presence.
+ *
+ * Only returns ids of active/restricted agents. Deleted/suspended agents
+ * don't have live WS connections so broadcasting to them is pointless.
+ *
+ * Uses an inner join via `!inner` to push the status filter into SQL —
+ * PostgREST generates a single WHERE clause instead of returning all
+ * contacts and filtering client-side.
+ */
+export async function listAgentsWhoAddedMeAsContact(agentId: string): Promise<string[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('contacts')
+    .select('owner_agent_id, agents!contacts_owner_agent_id_fkey!inner(status)')
+    .eq('contact_agent_id', agentId)
+    .in('agents.status', ['active', 'restricted'])
+  if (error) throw error
+  return (data ?? []).map((r) => r.owner_agent_id as string)
+}
+
 export async function isContact(ownerAgentId: string, contactAgentId: string): Promise<boolean> {
   const { data } = await getSupabaseClient()
     .from('contacts')

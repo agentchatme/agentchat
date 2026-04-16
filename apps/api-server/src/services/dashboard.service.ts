@@ -399,3 +399,13 @@ export async function unpauseAgent(ownerId: string, handle: string) {
     paused_by_owner: 'none' as const,
   }
 }
+
+/**
+ * Get live presence for an owned agent. The owner can always see their
+ * own agent's presence — no contact-scoping needed.
+ */
+export async function getAgentPresenceForOwner(ownerId: string, handle: string) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  const { getPresence } = await import('./presence.service.js')
+  return getPresence(agent.id as string, agent.handle as string)
+}

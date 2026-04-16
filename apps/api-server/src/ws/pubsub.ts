@@ -8,6 +8,7 @@ import { deliverLocallyToOwner, closeOwnerConnections } from './owner-registry.j
 const CHANNEL_FANOUT = 'agentchat:ws:fanout'
 const CHANNEL_CONTROL = 'agentchat:ws:control'
 const OWNER_CHANNEL = 'agentchat:ws:owner-fanout'
+const CHANNEL_PRESENCE = 'agentchat:ws:presence'
 
 interface FanoutMessage {
   agentId: string
@@ -17,6 +18,15 @@ interface FanoutMessage {
 interface OwnerFanoutMessage {
   ownerId: string
   message: unknown
+}
+
+interface PresenceFanoutMessage {
+  /** The agent whose presence changed */
+  sourceAgentId: string
+  /** Agents who have sourceAgentId as a contact — only these receive the push */
+  subscriberIds: string[]
+  /** The wire payload pushed to each subscriber */
+  event: { handle: string; status: string; custom_message: string | null }
 }
 
 type ControlMessage =
@@ -52,7 +62,7 @@ export function initPubSub(redisUrl?: string) {
   })
 
   sub.connect().then(() => {
-    sub!.subscribe(CHANNEL_FANOUT, CHANNEL_CONTROL, OWNER_CHANNEL).catch((err) => {
+    sub!.subscribe(CHANNEL_FANOUT, CHANNEL_CONTROL, OWNER_CHANNEL, CHANNEL_PRESENCE).catch((err) => {
       console.error('[pubsub] Subscribe failed:', err.message)
     })
   }).catch((err) => {
@@ -74,6 +84,16 @@ export function initPubSub(redisUrl?: string) {
       try {
         const { ownerId, message } = JSON.parse(raw) as OwnerFanoutMessage
         deliverLocallyToOwner(ownerId, message)
+      } catch {
+        // Malformed — skip
+      }
+      return
+    }
+
+    if (channel === CHANNEL_PRESENCE) {
+      try {
+        const { subscriberIds, event } = JSON.parse(raw) as PresenceFanoutMessage
+        deliverPresenceLocally(subscriberIds, event)
       } catch {
         // Malformed — skip
       }
@@ -241,6 +261,52 @@ export function deliverToSocket(
     })
   }
   return true
+}
+
+/**
+ * Publish a presence change for fan-out. The message carries the full
+ * subscriber list so each server can filter to its own local connections
+ * without a DB lookup. Single pub/sub message regardless of subscriber
+ * count — the cost is O(1) publish + O(local connections) delivery.
+ */
+export function publishPresence(
+  sourceAgentId: string,
+  subscriberIds: string[],
+  event: { handle: string; status: string; custom_message: string | null },
+) {
+  if (pub) {
+    const payload: PresenceFanoutMessage = { sourceAgentId, subscriberIds, event }
+    pub.publish(CHANNEL_PRESENCE, JSON.stringify(payload)).catch(() => {
+      // Fall back to local delivery
+      deliverPresenceLocally(subscriberIds, event)
+    })
+  } else {
+    deliverPresenceLocally(subscriberIds, event)
+  }
+}
+
+/**
+ * Deliver a presence update to every local subscriber socket. Iterates
+ * the subscriber list, checks which agents have connections on THIS server,
+ * and pushes the event. Also pushes to dashboard owner sockets via the
+ * owner registry so the dashboard gets real-time presence updates.
+ */
+function deliverPresenceLocally(
+  subscriberIds: string[],
+  event: { handle: string; status: string; custom_message: string | null },
+) {
+  const raw = JSON.stringify({ type: 'presence.update', payload: event })
+
+  for (const subscriberId of subscriberIds) {
+    const conns = getConnections(subscriberId)
+    for (const ws of conns) {
+      try {
+        ws.send(raw)
+      } catch {
+        // Dead socket — cleanup on close event
+      }
+    }
+  }
 }
 
 export function isPubSubEnabled(): boolean {

@@ -21,7 +21,7 @@ import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
 import { initPubSub, shutdownPubSub } from './ws/pubsub.js'
-import { closeAllConnections } from './ws/registry.js'
+import { closeAllConnections, getAllConnectedAgentIds } from './ws/registry.js'
 import {
   addOwnerConnection,
   removeOwnerConnection,
@@ -29,6 +29,8 @@ import {
 } from './ws/owner-registry.js'
 import { consumeTicket } from './ws/ticket-store.js'
 import { startWebhookWorker, stopWebhookWorker } from './services/webhook-worker.js'
+import { clearPresenceBatch } from './services/presence.service.js'
+import { getAgentHandlesByIds } from '@agentchat/db'
 import type { WebSocket as NodeWebSocket } from 'ws'
 import type { WSContext } from 'hono/ws'
 
@@ -103,20 +105,20 @@ app.get(
   upgradeWebSocket(async (c) => {
     // Path 1: upfront Bearer auth
     const authHeader = c.req.header('Authorization')
-    let upfrontAgentId: string | null = null
+    let upfrontAgent: { id: string; handle: string } | null = null
     if (authHeader?.startsWith('Bearer ')) {
-      upfrontAgentId = await authenticateWs(authHeader.slice(7))
-      if (!upfrontAgentId) {
+      upfrontAgent = await authenticateWs(authHeader.slice(7))
+      if (!upfrontAgent) {
         // Bad key — fail-closed, don't fall through to HELLO.
         return { onOpen: (_evt, ws) => { ws.close(1008, 'Invalid token') } }
       }
     }
 
-    if (upfrontAgentId) {
-      const agentId = upfrontAgentId
+    if (upfrontAgent) {
+      const { id: agentId, handle } = upfrontAgent
       return {
         onOpen: (_evt, ws) => {
-          const { onClose } = handleWsConnection(agentId, ws)
+          const { onClose } = handleWsConnection(agentId, handle, ws)
           ws.raw?.addEventListener('close', onClose)
         },
         onMessage: (_evt, _ws) => {
@@ -152,8 +154,8 @@ app.get(
             return
           }
 
-          const id = await authenticateWs(data.api_key)
-          if (!id) {
+          const agent = await authenticateWs(data.api_key)
+          if (!agent) {
             try { ws.close(1008, 'Invalid token') } catch { /* already closed */ }
             return
           }
@@ -164,7 +166,7 @@ app.get(
           }
           authenticated = true
 
-          const { onClose } = handleWsConnection(id, ws)
+          const { onClose } = handleWsConnection(agent.id, agent.handle, ws)
           ws.raw?.addEventListener('close', onClose)
 
           // ACK so the client knows auth succeeded before trusting the session.
@@ -348,7 +350,7 @@ const server = serve({ fetch: app.fetch, port })
 injectWebSocket(server)
 
 // Graceful shutdown — clean up before Fly.io kills the process
-function gracefulShutdown(signal: string) {
+async function gracefulShutdown(signal: string) {
   console.log(`[shutdown] ${signal} received — closing gracefully`)
 
   // 1. Stop accepting new connections
@@ -360,20 +362,38 @@ function gracefulShutdown(signal: string) {
   stopAllHeartbeats()
   stopAllDashboardHeartbeats()
 
-  // 3. Close all WebSocket connections with a clean code
+  // 3. Batch-offline all locally connected agents BEFORE closing sockets.
+  //    This broadcasts presence.update offline to their contacts via pub/sub
+  //    (which is still alive at this point). Best-effort — a crash skips
+  //    this and the 5-min Redis TTL self-heals.
+  try {
+    const connectedIds = getAllConnectedAgentIds()
+    if (connectedIds.length > 0) {
+      const handleMap = await getAgentHandlesByIds(connectedIds)
+      const agents = connectedIds
+        .filter((id) => handleMap.has(id))
+        .map((id) => ({ id, handle: handleMap.get(id)! }))
+      await clearPresenceBatch(agents)
+      console.log(`[shutdown] Marked ${agents.length} agents offline`)
+    }
+  } catch (err) {
+    console.error('[shutdown] Presence cleanup failed:', err)
+  }
+
+  // 4. Close all WebSocket connections with a clean code
   closeAllConnections(1001, 'Server shutting down')
   closeAllOwnerConnections(1001, 'Server shutting down')
 
-  // 4. Stop the webhook worker polling loop. Any in-flight fetches will
+  // 5. Stop the webhook worker polling loop. Any in-flight fetches will
   //    complete within their 10s timeout; rows claimed but not finalized
   //    before shutdown will be reclaimed by the next worker after the 60s
   //    stale-delivering cutoff in claim_webhook_deliveries.
   stopWebhookWorker()
 
-  // 5. Disconnect Redis pub/sub
+  // 6. Disconnect Redis pub/sub
   shutdownPubSub()
 
-  // 5. Give in-flight requests time to finish, then force exit
+  // 7. Give in-flight requests time to finish, then force exit
   setTimeout(() => {
     console.log('[shutdown] Force exit after timeout')
     process.exit(0)

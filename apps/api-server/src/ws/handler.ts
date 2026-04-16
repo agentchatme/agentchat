@@ -1,9 +1,10 @@
 import { createHash } from 'node:crypto'
 import type { WebSocket } from 'ws'
 import { findAgentByApiKeyHash, getPausedByOwner } from '@agentchat/db'
-import { addConnection, removeConnection } from './registry.js'
+import { addConnection, removeConnection, isOnline } from './registry.js'
 import { syncUndelivered } from '../services/message.service.js'
 import { deliverToSocket } from './pubsub.js'
+import { setPresence, clearPresence, refreshPresenceTTL } from '../services/presence.service.js'
 import type { WSContext } from 'hono/ws'
 
 const HEARTBEAT_INTERVAL = 30_000 // 30 seconds
@@ -13,18 +14,51 @@ const PONG_TIMEOUT = 10_000 // 10 seconds to respond to ping
 const heartbeats = new Map<WSContext, NodeJS.Timeout>()
 const pongTimers = new Map<WSContext, NodeJS.Timeout>()
 
-export async function authenticateWs(token: string): Promise<string | null> {
+/**
+ * Authenticate a WebSocket connection. Returns the agent's id AND handle
+ * so the caller can pass both into handleWsConnection (presence broadcasts
+ * need the handle on the wire, not just the internal id).
+ */
+export async function authenticateWs(
+  token: string,
+): Promise<{ id: string; handle: string } | null> {
   const hash = createHash('sha256').update(token).digest('hex')
   const agent = await findAgentByApiKeyHash(hash)
   if (!agent) return null
-  return agent.id
+  return { id: agent.id as string, handle: agent.handle as string }
 }
 
-export function handleWsConnection(agentId: string, ws: WSContext) {
+/**
+ * Set up a fully-authenticated WS connection: register in the connection
+ * map, set presence to online, start heartbeat, drain undelivered messages.
+ *
+ * Returns an `onClose` callback the caller must wire to the socket's close
+ * event so cleanup (presence offline, heartbeat stop, registry remove) runs
+ * exactly once.
+ */
+export function handleWsConnection(
+  agentId: string,
+  handle: string,
+  ws: WSContext,
+) {
+  // Track whether this is the FIRST connection for this agent. If so,
+  // the agent just came online and we need to broadcast presence.
+  const wasOnline = isOnline(agentId)
   addConnection(agentId, ws)
 
+  // Set presence to online only on FIRST connection. Additional
+  // connections (multi-device / reconnect) don't re-broadcast —
+  // contacts already know the agent is online.
+  if (!wasOnline) {
+    setPresence(agentId, handle, 'online', null, true).catch(() => {})
+  } else {
+    // Still refresh TTL so the key doesn't expire while the agent has
+    // an active connection.
+    refreshPresenceTTL(agentId).catch(() => {})
+  }
+
   // Start heartbeat ping/pong cycle
-  startHeartbeat(agentId, ws)
+  startHeartbeat(agentId, handle, ws)
 
   // On connect, drain all undelivered messages to THIS specific socket.
   // Sending via sendToAgent → pub/sub would fan the drain back out to every
@@ -38,6 +72,12 @@ export function handleWsConnection(agentId: string, ws: WSContext) {
     onClose: () => {
       stopHeartbeat(ws)
       removeConnection(agentId, ws)
+
+      // Only broadcast offline when the LAST connection for this agent
+      // closes. If they still have other sockets, they're still online.
+      if (!isOnline(agentId)) {
+        clearPresence(agentId, handle).catch(() => {})
+      }
     },
   }
 }
@@ -85,7 +125,7 @@ async function drainUndelivered(agentId: string, ws: WSContext) {
   }
 }
 
-function startHeartbeat(agentId: string, ws: WSContext) {
+function startHeartbeat(agentId: string, handle: string, ws: WSContext) {
   const raw = ws.raw as WebSocket | undefined
 
   const interval = setInterval(() => {
@@ -93,6 +133,9 @@ function startHeartbeat(agentId: string, ws: WSContext) {
       if (!raw || raw.readyState !== 1) {
         stopHeartbeat(ws)
         removeConnection(agentId, ws)
+        if (!isOnline(agentId)) {
+          clearPresence(agentId, handle).catch(() => {})
+        }
         return
       }
 
@@ -108,22 +151,32 @@ function startHeartbeat(agentId: string, ws: WSContext) {
         }
         stopHeartbeat(ws)
         removeConnection(agentId, ws)
+        if (!isOnline(agentId)) {
+          clearPresence(agentId, handle).catch(() => {})
+        }
       }, PONG_TIMEOUT)
 
       pongTimers.set(ws, timeout)
 
-      // Listen for pong — clears the timeout
+      // Listen for pong — clears the timeout AND refreshes presence TTL
       raw.once('pong', () => {
         const timer = pongTimers.get(ws)
         if (timer) {
           clearTimeout(timer)
           pongTimers.delete(ws)
         }
+        // Refresh the Redis presence TTL + Postgres last_seen on every pong.
+        // This is the heartbeat-driven "proof of life" that keeps the 5-min
+        // TTL from expiring while the agent is connected.
+        refreshPresenceTTL(agentId).catch(() => {})
       })
     } catch {
       // Connection already dead — clean up
       stopHeartbeat(ws)
       removeConnection(agentId, ws)
+      if (!isOnline(agentId)) {
+        clearPresence(agentId, handle).catch(() => {})
+      }
     }
   }, HEARTBEAT_INTERVAL)
 

@@ -61,6 +61,14 @@ export function closeAgentConnections(agentId: string, code: number, reason: str
   connections.delete(agentId)
 }
 
+/**
+ * Return every agent id with at least one active local connection.
+ * Used during graceful shutdown to batch-offline all connected agents.
+ */
+export function getAllConnectedAgentIds(): string[] {
+  return Array.from(connections.keys())
+}
+
 /** Total count of live sockets across all agents. Used by the metrics gauge. */
 export function getTotalConnectionCount(): number {
   let total = 0

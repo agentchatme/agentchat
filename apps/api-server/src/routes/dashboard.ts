@@ -46,6 +46,7 @@ import {
   getAgentEventsForOwner,
   getAgentContactsForOwner,
   getAgentBlocksForOwner,
+  getAgentPresenceForOwner,
   pauseAgent,
   unpauseAgent,
   DashboardError,
@@ -696,6 +697,24 @@ dashboard.post('/ws/ticket', dashboardAuthMiddleware, async (c) => {
   const ownerId = c.get('ownerId')
   const ticket = issueTicket(ownerId)
   return c.json({ ticket, expires_in: 30 })
+})
+
+// GET /dashboard/agents/:handle/presence — Get live presence for an owned agent
+// The owner doesn't need contact-scoping — they own the agent, so they can
+// always see its presence state. Returns the same Presence shape as the
+// agent-facing GET /v1/presence/:handle.
+dashboard.get('/agents/:handle/presence', dashboardAuthMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  try {
+    const ownerId = c.get('ownerId')
+    const result = await getAgentPresenceForOwner(ownerId, handle)
+    return c.json(result)
+  } catch (e) {
+    if (e instanceof DashboardError) {
+      return c.json({ code: e.code, message: e.message }, e.status as 404)
+    }
+    throw e
+  }
 })
 
 // DELETE /dashboard/agents/:handle — Release the claim

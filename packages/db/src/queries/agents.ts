@@ -157,6 +157,54 @@ export async function setPausedByOwner(
   if (error) throw error
 }
 
+/**
+ * Stamp last_seen_at to NOW. Called on every WS heartbeat pong and on
+ * explicit presence SET so the column always reflects the most recent
+ * proof-of-life. Single UPDATE, no SELECT, no round-trip waste.
+ */
+export async function updateLastSeen(agentId: string): Promise<void> {
+  const { error } = await getSupabaseClient()
+    .from('agents')
+    .update({ last_seen_at: new Date().toISOString() })
+    .eq('id', agentId)
+  if (error) throw error
+}
+
+/**
+ * Read last_seen_at for one agent. Returns ISO string or null (never connected).
+ */
+export async function getLastSeen(agentId: string): Promise<string | null> {
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('last_seen_at')
+    .eq('id', agentId)
+    .single()
+  if (error) return null
+  return (data?.last_seen_at as string | null) ?? null
+}
+
+/**
+ * Resolve a batch of handles to agent ids in one round-trip.
+ * Used by POST /v1/presence/batch so callers can query by handle.
+ * Returns a Map<handle, id> — only includes active/restricted agents.
+ */
+export async function getAgentIdsByHandles(
+  handles: string[],
+): Promise<Map<string, string>> {
+  if (handles.length === 0) return new Map()
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('id, handle')
+    .in('handle', handles)
+    .in('status', ['active', 'restricted'])
+  if (error) throw error
+  const out = new Map<string, string>()
+  for (const row of data ?? []) {
+    out.set(row.handle as string, row.id as string)
+  }
+  return out
+}
+
 export async function insertAgent(agent: {
   id: string
   handle: string
