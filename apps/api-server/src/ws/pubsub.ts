@@ -288,8 +288,8 @@ export function publishPresence(
 /**
  * Deliver a presence update to every local subscriber socket. Iterates
  * the subscriber list, checks which agents have connections on THIS server,
- * and pushes the event. Also pushes to dashboard owner sockets via the
- * owner registry so the dashboard gets real-time presence updates.
+ * and pushes the event. Dashboard gets presence via the REST endpoint
+ * GET /dashboard/agents/:handle/presence (polling, not push).
  */
 function deliverPresenceLocally(
   subscriberIds: string[],

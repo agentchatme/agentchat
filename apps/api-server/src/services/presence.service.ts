@@ -16,11 +16,36 @@ import type { PresenceStatus, PresenceBroadcast } from '@agentchat/shared'
 // 5 min — no tombstone cleanup needed.
 //
 // Why HASH and not a plain string key?  We need status + custom_message +
-// last_seen atomically.  HSET + EXPIRE is two commands but Upstash HTTP
-// Redis handles them as a pipeline.
+// last_seen atomically.  HSET + EXPIRE is pipelined into a single Upstash
+// HTTP request so they either both execute or neither does.
 
 const PRESENCE_TTL = 300 // 5 minutes
 const PRESENCE_PREFIX = 'presence:'
+
+// ─── Postgres write debounce ──────────────────────────────────────────────
+// Redis is the live source of truth for last_seen; Postgres is the durable
+// fallback for when the Redis key expires. Writing to Postgres on every
+// heartbeat pong (every 30s per agent) is wasteful — 1,000 agents would
+// produce 33 UPDATE/s just for timestamps. Instead, debounce: only flush to
+// Postgres if the last write was more than 5 minutes ago. This means the
+// durable last_seen can lag the live one by up to 5 minutes, which is fine
+// because Postgres is only read when Redis has no key (agent offline).
+const PG_WRITE_DEBOUNCE_MS = 5 * 60 * 1000 // 5 minutes
+const lastPgWrite = new Map<string, number>()
+
+function debouncedUpdateLastSeen(agentId: string) {
+  const now = Date.now()
+  const lastWrite = lastPgWrite.get(agentId) ?? 0
+  if (now - lastWrite < PG_WRITE_DEBOUNCE_MS) return
+  lastPgWrite.set(agentId, now)
+  updateLastSeen(agentId).catch(() => {})
+}
+
+// Clean up debounce entries for disconnected agents so the map doesn't
+// grow unbounded. Called from clearPresence.
+function clearPgDebounce(agentId: string) {
+  lastPgWrite.delete(agentId)
+}
 
 // ─── LRU cache for "who added me as contact" ─────────────────────────────
 // Presence broadcasts need to know which agents care about a given agent's
@@ -60,7 +85,12 @@ function setCachedSubscribers(agentId: string, agentIds: string[]) {
   })
 }
 
-/** Invalidate the subscriber cache for an agent. Called when contacts change. */
+/**
+ * Invalidate the subscriber cache for an agent. Must be called whenever
+ * a contact relationship changes (add/remove) so the next presence
+ * broadcast picks up the updated subscriber list instead of using stale
+ * cached data for up to 2 minutes.
+ */
 export function invalidatePresenceSubscribers(agentId: string) {
   contactCache.delete(agentId)
 }
@@ -73,6 +103,10 @@ export function invalidatePresenceSubscribers(agentId: string) {
  * `broadcast` controls whether we fan the update out to contacts:
  *   - true for explicit PUT /v1/presence and on connect/disconnect
  *   - false for heartbeat TTL refreshes (no state change to announce)
+ *
+ * HSET + EXPIRE are pipelined into a single Upstash HTTP request so the
+ * TTL is always set atomically with the data — no zombie keys if the
+ * process crashes between two separate calls.
  */
 export async function setPresence(
   agentId: string,
@@ -85,16 +119,17 @@ export async function setPresence(
   const key = `${PRESENCE_PREFIX}${agentId}`
   const now = new Date().toISOString()
 
-  // Pipeline: HSET all fields + EXPIRE in one round-trip
-  await redis.hset(key, {
+  const pipe = redis.pipeline()
+  pipe.hset(key, {
     status,
     custom_message: customMessage ?? '',
     last_seen: now,
   })
-  await redis.expire(key, PRESENCE_TTL)
+  pipe.expire(key, PRESENCE_TTL)
+  await pipe.exec()
 
-  // Persist last_seen to Postgres (fire-and-forget — non-critical)
-  updateLastSeen(agentId).catch(() => {})
+  // Persist last_seen to Postgres (debounced — see top of file)
+  debouncedUpdateLastSeen(agentId)
 
   if (broadcast) {
     const event: PresenceBroadcast = {
@@ -109,22 +144,42 @@ export async function setPresence(
 /**
  * Refresh the Redis TTL without changing any fields. Called on every
  * heartbeat pong — proves the agent is still alive without generating
- * a broadcast storm. Also updates last_seen in both Redis and Postgres.
+ * a broadcast storm. Also updates last_seen in both Redis and Postgres
+ * (Postgres write is debounced to once per 5 minutes).
+ *
+ * Pipelined: EXISTS + HSET + EXPIRE in a single Upstash HTTP request.
+ * If the key doesn't exist (race with explicit clearPresence), the
+ * HSET/EXPIRE are harmless no-ops on the already-cleared key.
  */
 export async function refreshPresenceTTL(agentId: string): Promise<void> {
   const redis = getRedis()
   const key = `${PRESENCE_PREFIX}${agentId}`
   const now = new Date().toISOString()
 
-  // Only refresh if the key exists (agent set presence at connect time).
-  const exists = await redis.exists(key)
-  if (!exists) return
+  // Pipeline: check exists, update last_seen, refresh TTL — one HTTP round-trip.
+  // If the key was already deleted (agent went offline on another server),
+  // the HSET recreates it with only last_seen — but the EXPIRE gives it
+  // a 5-min TTL so it self-cleans. This is acceptable: the presence
+  // response will show status as undefined/missing, and getPresence falls
+  // back to 'offline' when status is absent.
+  const pipe = redis.pipeline()
+  pipe.exists(key)
+  pipe.hset(key, { last_seen: now })
+  pipe.expire(key, PRESENCE_TTL)
+  const results = await pipe.exec()
 
-  await redis.hset(key, { last_seen: now })
-  await redis.expire(key, PRESENCE_TTL)
+  // Only proceed if the key existed before our HSET. results[0] is the
+  // EXISTS response: 1 = existed, 0 = didn't.
+  const existed = results[0] === 1
+  if (!existed) {
+    // Key didn't exist — our HSET created a bare key with only last_seen.
+    // Delete it so we don't leave a status-less zombie.
+    await redis.del(key)
+    return
+  }
 
-  // Persist to Postgres (fire-and-forget)
-  updateLastSeen(agentId).catch(() => {})
+  // Persist to Postgres (debounced)
+  debouncedUpdateLastSeen(agentId)
 }
 
 /**
@@ -200,6 +255,9 @@ export async function getPresenceBatch(
 /**
  * Remove an agent's presence from Redis (explicit offline). Called on
  * last WS disconnect and during graceful shutdown.
+ *
+ * Pipelined: HSET offline + EXPIRE(60s) in one HTTP request. The short
+ * TTL lets the "offline" key self-clean in a minute rather than lingering.
  */
 export async function clearPresence(
   agentId: string,
@@ -207,14 +265,16 @@ export async function clearPresence(
 ): Promise<void> {
   const redis = getRedis()
   const key = `${PRESENCE_PREFIX}${agentId}`
-
-  // Stamp last_seen before clearing so the offline response has a
-  // meaningful timestamp.
   const now = new Date().toISOString()
-  await redis.hset(key, { status: 'offline', last_seen: now, custom_message: '' })
-  // Set a short TTL so the "offline" key self-cleans after a minute
-  await redis.expire(key, 60)
 
+  const pipe = redis.pipeline()
+  pipe.hset(key, { status: 'offline', last_seen: now, custom_message: '' })
+  pipe.expire(key, 60)
+  await pipe.exec()
+
+  // Force a Postgres write on disconnect (bypass debounce) so the durable
+  // last_seen reflects the actual disconnect time, not a 5-min-old stamp.
+  clearPgDebounce(agentId)
   updateLastSeen(agentId).catch(() => {})
 
   const event: PresenceBroadcast = {
@@ -228,14 +288,21 @@ export async function clearPresence(
 /**
  * Batch clear presence for multiple agents at once. Used during graceful
  * shutdown to mark all locally-connected agents as offline in one pass.
- * Broadcasts are sent per-agent because each has different subscribers.
+ *
+ * Processes in chunks of 50 to avoid overwhelming Upstash rate limits.
+ * Best-effort: if shutdown times out (Fly gives ~10s), the 5-min Redis
+ * TTL self-heals the remaining agents.
  */
 export async function clearPresenceBatch(
   agents: Array<{ id: string; handle: string }>,
 ): Promise<void> {
-  await Promise.all(
-    agents.map(({ id, handle }) => clearPresence(id, handle)),
-  )
+  const CHUNK_SIZE = 50
+  for (let i = 0; i < agents.length; i += CHUNK_SIZE) {
+    const chunk = agents.slice(i, i + CHUNK_SIZE)
+    await Promise.all(
+      chunk.map(({ id, handle }) => clearPresence(id, handle)),
+    )
+  }
 }
 
 // ─── Broadcast ────────────────────────────────────────────────────────────

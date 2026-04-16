@@ -15,6 +15,7 @@ import {
 } from '@agentchat/db'
 import { fireWebhooks } from './webhook.service.js'
 import { evaluateEnforcement } from './enforcement.service.js'
+import { invalidatePresenceSubscribers } from './presence.service.js'
 
 // ─── Push gating helper ────────────────────────────────────────────────────
 // Skip non-message push events when the recipient is fully paused by their
@@ -62,6 +63,11 @@ export async function addToContacts(agentId: string, targetHandle: string) {
   }
 
   await addContact(agentId, target.id)
+
+  // Invalidate the target's presence subscriber cache so the next broadcast
+  // from the target includes the new contact in its fan-out list.
+  invalidatePresenceSubscribers(target.id)
+
   return { handle: target.handle, display_name: target.display_name }
 }
 
@@ -71,6 +77,10 @@ export async function removeFromContacts(agentId: string, targetHandle: string) 
   if (!existed) {
     throw new ContactError('NOT_FOUND', `@${targetHandle} is not in your contacts`, 404)
   }
+
+  // Invalidate the target's presence subscriber cache so the caller stops
+  // receiving presence broadcasts from the removed contact's perspective.
+  invalidatePresenceSubscribers(target.id)
 }
 
 export async function getContacts(agentId: string, limit = 50, offset = 0) {
