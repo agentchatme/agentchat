@@ -73,6 +73,38 @@ const securityHeaders = [
 ]
 
 const nextConfig: NextConfig = {
+  // Client-side router cache. Next 15 defaults dynamic-page staleTime
+  // to 0, which means every navigation re-fetches the RSC payload
+  // from scratch — including re-running server components and all
+  // their data fetches. For a chat dashboard where the owner flips
+  // between the same 2–4 recent threads repeatedly, that is the
+  // difference between a ~300ms click and a 0ms click.
+  //
+  // Raising `dynamic` to 300s turns the router cache into a warm
+  // cache for ~5 minutes per route segment. Clicking Bob → Carol →
+  // back to Bob inside 5 min serves Bob's full page (layout + RSC
+  // + messages) from the in-memory client cache with zero network,
+  // zero server render, zero paint delay. That is the WhatsApp-like
+  // behavior the dashboard is missing today: after the first visit
+  // a thread is "warm" and feels instant on revisit.
+  //
+  // `static` at 300s keeps static segments (the agent-workspace
+  // layout chrome) cached for the same window so the chat header
+  // never refetches when the handle is unchanged.
+  //
+  // Live updates (new-message-arrived-while-you-were-elsewhere) are
+  // a follow-up: the dashboard will subscribe to the api-server's
+  // WebSocket and call router.refresh() on `message.new` events to
+  // invalidate the cache entry for the affected thread. Until then,
+  // the worst-case staleness is 5 minutes, which is acceptable for
+  // a read-only lurker view — and the owner can always hit the
+  // browser reload to force-refresh.
+  experimental: {
+    staleTimes: {
+      dynamic: 300,
+      static: 300,
+    },
+  },
   async rewrites() {
     return [
       {
