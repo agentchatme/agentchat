@@ -4,6 +4,7 @@ import type { WsMessage } from '@agentchat/shared'
 import { updateDeliveryStatus } from '@agentchat/db'
 import { getConnections, closeAgentConnections } from './registry.js'
 import { deliverLocallyToOwner, closeOwnerConnections } from './owner-registry.js'
+import { safeSend } from './safe-send.js'
 
 const CHANNEL_FANOUT = 'agentchat:ws:fanout'
 const CHANNEL_CONTROL = 'agentchat:ws:control'
@@ -217,11 +218,11 @@ function deliverLocally(agentId: string, message: WsMessage) {
   let delivered = false
 
   for (const ws of connections) {
-    try {
-      ws.send(raw)
+    // safeSend enforces the per-socket bufferedAmount ceiling — a slow
+    // consumer that's fallen behind gets closed with 1013 instead of
+    // accumulating heap. The reconnect's sync drain catches them up.
+    if (safeSend(ws, raw)) {
       delivered = true
-    } catch {
-      // Dead connection — cleanup happens on close event
     }
   }
 
@@ -250,11 +251,7 @@ export function deliverToSocket(
   agentId: string,
   message: WsMessage,
 ): boolean {
-  try {
-    ws.send(JSON.stringify(message))
-  } catch {
-    return false
-  }
+  if (!safeSend(ws, JSON.stringify(message))) return false
   if (message.type === 'message.new' && message.payload?.id) {
     updateDeliveryStatus(message.payload.id as string, agentId, 'delivered').catch(() => {
       // Non-critical — sync on reconnect will catch it
@@ -300,11 +297,7 @@ function deliverPresenceLocally(
   for (const subscriberId of subscriberIds) {
     const conns = getConnections(subscriberId)
     for (const ws of conns) {
-      try {
-        ws.send(raw)
-      } catch {
-        // Dead socket — cleanup on close event
-      }
+      safeSend(ws, raw)
     }
   }
 }

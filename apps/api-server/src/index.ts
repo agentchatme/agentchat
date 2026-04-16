@@ -1,3 +1,4 @@
+import './instrument.js' // MUST be first — Sentry hooks node internals at init
 import './env.js' // Validate env vars immediately — crash on missing credentials
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
@@ -28,7 +29,6 @@ import {
   closeAllOwnerConnections,
 } from './ws/owner-registry.js'
 import { consumeTicket } from './ws/ticket-store.js'
-import { startWebhookWorker, stopWebhookWorker } from './services/webhook-worker.js'
 import { clearPresenceBatch } from './services/presence.service.js'
 import { getAgentHandlesByIds } from '@agentchat/db'
 import type { WebSocket as NodeWebSocket } from 'ws'
@@ -40,35 +40,65 @@ const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 // Global middleware
 app.use('*', requestLogger)
 
-// CORS — public API with API-key auth, so the origin header is NOT the
-// authentication boundary (the API key is). Defaulting to "*" lets any
-// browser-hosted agent call the API via fetch(), which matches how other
-// public APIs (Stripe, Twilio) behave. Operators can lock it down by
-// setting CORS_ORIGINS=https://app.example.com,https://staging.example.com
-// when they want to restrict the dashboard or internal tooling.
+// CORS — split per surface so dashboard cookie-auth and agent Bearer-auth
+// don't share a policy. The audit (§2.10) called out that wildcard +
+// credentials is a CSRF surface; we keep wildcard scoped to the routes
+// where the API key IS the auth boundary (no cookies, no shared origin
+// trust) and force an explicit allowlist on the cookie-auth dashboard.
 //
-// credentials: false — we never use cookies, only the Authorization header,
-// so wildcard origin is actually allowed here (credentialed wildcard isn't).
+// /v1/*  — agent API. Auth = `Authorization: Bearer <api_key>`. Browser
+//   origin is NOT a trust boundary; the key is. Defaulting to `*` lets
+//   any browser-hosted agent call us, matching Stripe/Twilio. Operators
+//   may still pin it via CORS_ORIGINS for internal tooling.
 //
-// exposeHeaders: Retry-After so browser rate-limit responses can be read
-// by the SDK — fetch() hides non-whitelisted response headers otherwise.
-// Server-Timing is exposed so Chrome DevTools can render the per-phase
-// timing bars for /dashboard/* requests on the Network tab even when
-// the dashboard is served from a different origin than the API.
+// /dashboard/* — owner UI. Auth = signed session cookie. Wildcard +
+//   credentials is the textbook CSRF amplifier; we never serve `*` here.
+//   DASHBOARD_ORIGINS must be set for browsers to reach the dashboard
+//   API at all (defaults to a closed allowlist in production). Local dev
+//   commonly sets DASHBOARD_ORIGINS=http://localhost:3001.
+//
+// exposeHeaders: Retry-After lets the SDK read 429 backoff hints (fetch
+//   hides non-whitelisted response headers otherwise). X-Backlog-Warning
+//   surfaces the soft 5K-undelivered signal. Server-Timing is for browser
+//   devtools on the cross-origin dashboard requests.
 const corsOriginsRaw = process.env['CORS_ORIGINS']?.trim() ?? ''
 const corsOrigin: string | string[] =
   corsOriginsRaw === '' || corsOriginsRaw === '*'
     ? '*'
     : corsOriginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
 
+const dashboardOriginsRaw = process.env['DASHBOARD_ORIGINS']?.trim() ?? ''
+const dashboardOrigins: string[] =
+  dashboardOriginsRaw === ''
+    ? []
+    : dashboardOriginsRaw.split(',').map((s) => s.trim()).filter(Boolean)
+
+// Agent API (Bearer auth, no cookies). Wildcard origin is acceptable
+// because the API key — not the browser origin — is the auth credential.
 app.use(
-  '*',
+  '/v1/*',
   cors({
     origin: corsOrigin,
-    allowHeaders: ['Authorization', 'Content-Type'],
-    exposeHeaders: ['Retry-After', 'Server-Timing'],
+    allowHeaders: ['Authorization', 'Content-Type', 'Idempotency-Key'],
+    exposeHeaders: ['Retry-After', 'X-Backlog-Warning', 'Idempotent-Replay'],
     maxAge: 600,
     credentials: false,
+  }),
+)
+
+// Dashboard (cookie auth). Strict allowlist + credentials. If
+// DASHBOARD_ORIGINS is unset, we deny every cross-origin request — the
+// dashboard MUST be deployed with the env var pointing at its origin
+// before browsers can call it. Same-origin (no Origin header, or the
+// dashboard served from the API origin) is unaffected.
+app.use(
+  '/dashboard/*',
+  cors({
+    origin: (origin) => (dashboardOrigins.includes(origin) ? origin : null),
+    allowHeaders: ['Content-Type'],
+    exposeHeaders: ['Retry-After', 'Server-Timing'],
+    maxAge: 600,
+    credentials: true,
   }),
 )
 
@@ -274,13 +304,13 @@ function stopAllDashboardHeartbeats() {
 
 app.get(
   '/v1/ws/dashboard',
-  upgradeWebSocket((c) => {
+  upgradeWebSocket(async (c) => {
     // Ticket consume happens at upgrade time (inside the handler factory)
     // so an invalid/expired ticket closes the socket on its very first
     // frame. Reading it here (not inside onOpen) lets us fail-fast without
     // allocating a heartbeat.
     const ticket = c.req.query('ticket') ?? ''
-    const ownerId = ticket ? consumeTicket(ticket) : null
+    const ownerId = ticket ? await consumeTicket(ticket) : null
 
     if (!ownerId) {
       return {
@@ -331,17 +361,23 @@ app.route('/v1/webhooks', webhookRoutes)
 app.route('/v1/directory', directoryRoutes)
 app.route('/v1/uploads', uploadRoutes)
 app.route('/v1/attachments', attachmentRoutes)
-app.route('/v1/metrics', metricsRoutes)
+// /internal/* is the convention for endpoints that are not part of the
+// public API surface. Operators can lock the path prefix to private IPs
+// at the load balancer / Fly proxy layer; clients have no business hitting
+// it. The METRICS_TOKEN env var still gates access in case the prefix
+// rule isn't in place.
+app.route('/internal/metrics', metricsRoutes)
 app.route('/v1/openapi.json', openapiRoutes)
 app.route('/dashboard', dashboardRoutes)
 
 // Initialize Redis pub/sub for multi-server WebSocket fan-out
 initPubSub(process.env['REDIS_URL'])
 
-// Start the durable webhook-delivery worker. It polls webhook_deliveries
-// on an interval and uses FOR UPDATE SKIP LOCKED so multi-server deploys
-// don't double-process the same row.
-startWebhookWorker()
+// Webhook delivery polling lives in the dedicated `worker` process group
+// (apps/api-server/src/worker.ts) so a request burst on the api process
+// can't starve fan-out and a slow webhook receiver can't tie up the
+// request loop. Both processes ship the same image; fly.toml [processes]
+// picks the entrypoint.
 
 // Start server
 const port = Number(process.env['PORT']) || 3000
@@ -384,13 +420,7 @@ async function gracefulShutdown(signal: string) {
   closeAllConnections(1001, 'Server shutting down')
   closeAllOwnerConnections(1001, 'Server shutting down')
 
-  // 5. Stop the webhook worker polling loop. Any in-flight fetches will
-  //    complete within their 10s timeout; rows claimed but not finalized
-  //    before shutdown will be reclaimed by the next worker after the 60s
-  //    stale-delivering cutoff in claim_webhook_deliveries.
-  stopWebhookWorker()
-
-  // 6. Disconnect Redis pub/sub
+  // 5. Disconnect Redis pub/sub
   shutdownPubSub()
 
   // 7. Give in-flight requests time to finish, then force exit

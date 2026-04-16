@@ -16,6 +16,23 @@ import type {
 } from '@agentchat/shared'
 import { AgentChatError } from './errors.js'
 
+// Parse the X-Backlog-Warning header. Format: `<handle>=<count>`. Returns
+// null on missing or malformed values — a malformed warning is not worth
+// throwing over since the message itself succeeded. Handle values may
+// contain '=' in unrelated future schemes, so split on the FIRST '='
+// rather than the last; the count must be the rightmost token.
+function parseBacklogWarning(header: string | null): BacklogWarning | null {
+  if (!header) return null
+  const eq = header.indexOf('=')
+  if (eq <= 0 || eq === header.length - 1) return null
+  const recipientHandle = header.slice(0, eq).trim()
+  const countStr = header.slice(eq + 1).trim()
+  const undeliveredCount = Number(countStr)
+  if (!recipientHandle) return null
+  if (!Number.isFinite(undeliveredCount) || !Number.isInteger(undeliveredCount)) return null
+  return { recipientHandle, undeliveredCount }
+}
+
 function generateClientMsgId(): string {
   // Uses the standard Web Crypto API — supported in Node 14.17+ and every
   // modern browser. Falls back to a hex-random string for exotic runtimes.
@@ -34,9 +51,42 @@ function generateClientMsgId(): string {
   return `cmsg_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
 }
 
+/**
+ * Soft backlog warning surfaced from POST /v1/messages. The server fires
+ * this when the recipient's undelivered envelope count crosses a soft
+ * threshold (currently 5,000 — half the 10K hard cap that triggers
+ * RECIPIENT_BACKLOGGED). Direct sends only — group sends report
+ * backlogged members via the `skipped_recipients` array on the message
+ * body instead.
+ *
+ * Treat this as advisory: the message was successfully stored. But a
+ * sustained warning means the recipient is processing slower than you're
+ * sending and a 429 is in your future — back off, batch, or redesign
+ * the workload before you hit the hard wall.
+ */
+export interface BacklogWarning {
+  recipientHandle: string
+  undeliveredCount: number
+}
+
+export type BacklogWarningHandler = (warning: BacklogWarning) => void
+
+export interface SendMessageResult {
+  message: Message
+  /** Non-null when the server included an X-Backlog-Warning header. */
+  backlogWarning: BacklogWarning | null
+}
+
 export interface AgentChatClientOptions {
   apiKey: string
   baseUrl?: string
+  /**
+   * Optional callback fired whenever a send response includes an
+   * X-Backlog-Warning header. Convenience hook for centralized
+   * logging / metrics — the same warning is also returned synchronously
+   * on the sendMessage() result, so application code can react inline.
+   */
+  onBacklogWarning?: BacklogWarningHandler
 }
 
 interface RegisterOptions {
@@ -94,13 +144,29 @@ interface ContactListResult {
 export class AgentChatClient {
   private apiKey: string
   private baseUrl: string
+  private onBacklogWarning?: BacklogWarningHandler
 
   constructor(options: AgentChatClientOptions) {
     this.apiKey = options.apiKey
     this.baseUrl = options.baseUrl ?? 'https://api.agentchat.me'
+    this.onBacklogWarning = options.onBacklogWarning
   }
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const { data } = await this.requestWithHeaders<T>(method, path, body)
+    return data
+  }
+
+  // Variant that surfaces response headers to the caller. Keeps the
+  // header-aware paths (sendMessage's X-Backlog-Warning, future Retry-After
+  // handling) explicit instead of plumbing a second return through every
+  // call site. Header-blind callers stay on `request()` — same parse cost
+  // either way, the difference is whether they get the headers reference.
+  private async requestWithHeaders<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ data: T; headers: Headers }> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
       headers: {
@@ -119,7 +185,7 @@ export class AgentChatClient {
       )
     }
 
-    return data as T
+    return { data: data as T, headers: res.headers }
   }
 
   // --- Static registration methods (no API key needed) ---
@@ -267,22 +333,49 @@ export class AgentChatClient {
    * two must be set — the request is rejected otherwise. Group sends
    * skip the direct-only cold-outreach and block/inbox_mode checks but
    * still pay the per-second rate limit and payload size cap.
+   *
+   * Returns `{ message, backlogWarning }`. `backlogWarning` is non-null
+   * when the recipient is approaching the per-recipient undelivered cap;
+   * the message was still stored, but a sustained warning is the cue to
+   * back off before the next send hits 429 RECIPIENT_BACKLOGGED.
    */
-  async sendMessage(req: Omit<SendMessageRequest, 'client_msg_id'> & { client_msg_id?: string }) {
+  async sendMessage(
+    req: Omit<SendMessageRequest, 'client_msg_id'> & { client_msg_id?: string },
+  ): Promise<SendMessageResult> {
     const body: SendMessageRequest = {
       ...req,
       client_msg_id: req.client_msg_id ?? generateClientMsgId(),
     }
-    return this.request<Message>('POST', '/v1/messages', body)
+    const { data, headers } = await this.requestWithHeaders<Message>(
+      'POST',
+      '/v1/messages',
+      body,
+    )
+    const backlogWarning = parseBacklogWarning(headers.get('x-backlog-warning'))
+    if (backlogWarning && this.onBacklogWarning) {
+      this.onBacklogWarning(backlogWarning)
+    }
+    return { message: data, backlogWarning }
   }
 
+  /**
+   * Fetch conversation history. Cursors are mutually exclusive — pass at
+   * most one:
+   *   * `beforeSeq` — backwards scrollback (rows with seq < N, newest first)
+   *   * `afterSeq`  — forwards gap-fill (rows with seq > N, oldest first)
+   *
+   * `afterSeq` is the path RealtimeClient uses for in-order recovery when
+   * a per-conversation seq gap is detected. Application code rarely needs
+   * it directly; pass `beforeSeq` for normal pagination.
+   */
   async getMessages(
     conversationId: string,
-    options?: { limit?: number; beforeSeq?: number },
+    options?: { limit?: number; beforeSeq?: number; afterSeq?: number },
   ) {
     const params = new URLSearchParams()
     params.set('limit', String(options?.limit ?? 50))
     if (options?.beforeSeq !== undefined) params.set('before_seq', String(options.beforeSeq))
+    if (options?.afterSeq !== undefined) params.set('after_seq', String(options.afterSeq))
     return this.request<Message[]>(
       'GET',
       `/v1/messages/${encodeURIComponent(conversationId)}?${params.toString()}`,

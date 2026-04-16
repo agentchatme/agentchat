@@ -10,15 +10,19 @@ wsConnectionsCurrent.set(() => getTotalConnectionCount())
 const metrics = new Hono()
 
 /**
- * GET /v1/metrics — Prometheus text exposition format.
+ * GET /internal/metrics — Prometheus text exposition format.
+ *
+ * Mounted under /internal/* so it stays cleanly separated from the public
+ * /v1 API. Operators can lock /internal/* at the LB to a private CIDR and
+ * scrape it from a sidecar Prometheus / Grafana Agent over Fly's 6PN.
  *
  * Auth: if METRICS_TOKEN is set in env, the request must provide a
  * matching `Authorization: Bearer <token>` header. Without the env var,
  * the endpoint is unauthenticated — that's fine when the api-server sits
  * behind a private network or the operator is deliberately opting into
- * a public /metrics. We chose token-over-no-auth instead of API-key auth
- * because the Prometheus ecosystem assumes a dedicated scrape token and
- * integrating it with agent API keys would muddle the auth boundary.
+ * a public /metrics. Token-over-API-key here because the Prometheus
+ * ecosystem assumes a dedicated scrape credential and reusing agent API
+ * keys would muddle the auth boundary.
  */
 metrics.get('/', (c) => {
   const expected = process.env['METRICS_TOKEN']

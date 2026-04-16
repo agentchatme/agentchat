@@ -225,3 +225,67 @@ export const wsConnectionsCurrent = gauge(
   'Current number of authenticated WebSocket connections.',
   () => 0, // will be replaced by registry at boot
 )
+
+export const wsBackpressureCloses = counter(
+  'agentchat_ws_backpressure_closes_total',
+  'WebSocket sockets force-closed for exceeding the send-buffer ceiling.',
+)
+
+export const webhooksDead = gauge(
+  'agentchat_webhook_deliveries_dead',
+  'Webhook deliveries currently in the dead-letter queue (status=dead).',
+  () => 0, // worker overrides via setProvider on boot
+)
+
+// Number of webhook endpoints whose circuit breaker is currently OPEN
+// (all delivery attempts skipped pending cooldown). Sustained non-zero
+// here means a customer's receiver is sick — pair with the deliveries
+// counter labeled outcome=failed to tell "many endpoints flapping" from
+// "one endpoint hard down".
+export const webhookCircuitsOpen = gauge(
+  'agentchat_webhook_circuits_open',
+  'Webhook endpoints with an OPEN circuit breaker (deliveries paused).',
+  () => 0, // dlq-probe overrides via setProvider on boot
+)
+
+// Drift between the cached agents.undelivered_count counter and the
+// authoritative SUM via COUNT(message_deliveries WHERE status='stored').
+// Should always be 0. Sustained non-zero means a code path mutated a
+// delivery's status without going through the trigger that maintains
+// the counter — bug, partition skew, or a manual UPDATE somewhere.
+// Sign convention: counter_sum - actual_count, so positive = counter
+// over-counted, negative = counter under-counted.
+export const undeliveredCountDrift = gauge(
+  'agentchat_undelivered_count_drift',
+  'Drift between agents.undelivered_count sum and COUNT of stored deliveries.',
+  () => 0, // dlq-probe overrides via setProvider on boot
+)
+
+// ─── Group deletion fan-out queue (migration 030) ─────────────────────────
+//
+// Per-recipient durable queue drained by group-deletion-fanout-worker.
+// The dead gauge + outcome counter pair tells operators the same story
+// the webhook metrics do: "are deliveries succeeding / failing / giving
+// up?". Tick duration histogram surfaces backpressure (slow DB, slow
+// webhook enqueue) before it becomes a queue-depth problem.
+
+export const groupDeletionFanout = counter(
+  'agentchat_group_deletion_fanout_total',
+  'Group-deletion fan-out outcomes per recipient row, labeled by outcome.',
+)
+
+export const groupDeletionFanoutDead = gauge(
+  'agentchat_group_deletion_fanout_dead',
+  'Group-deletion fan-out rows currently in the dead-letter queue (status=dead).',
+  () => 0, // dlq-probe overrides via setProvider on boot
+)
+
+// Buckets sized to the realistic tick range: a healthy tick (cache-warm,
+// no failures) lands in 10–100ms; a slow tick (DB blip, large batch with
+// many fireWebhooks fan-outs) lands in the seconds bucket; anything past
+// 30s is a problem worth alerting on.
+export const groupDeletionFanoutTickSeconds = histogram(
+  'agentchat_group_deletion_fanout_tick_seconds',
+  'Wall-clock duration of one fan-out worker tick (claim + process + finalize).',
+  [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30],
+)

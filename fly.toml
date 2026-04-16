@@ -4,13 +4,70 @@ primary_region = "sjc"
 [build]
   dockerfile = "apps/api-server/Dockerfile"
 
+# ─── Process groups ─────────────────────────────────────────────────────────
+# Two roles, one image. fly.io spawns a Machine per (process, region) pair.
+#
+#   api    — Hono HTTP + WebSocket; takes public traffic on port 3000.
+#   worker — webhook delivery polling; no public port. /internal/metrics
+#            on 9091 is scrapable over Fly's 6PN private network.
+#
+# Splitting is what lets the api process scale on connection count while
+# the worker scales on backlog depth — and stops a request burst from
+# starving fan-out (and vice versa).
+[processes]
+  api    = "node dist/index.js"
+  worker = "node dist/worker.js"
+
+# ─── Public HTTP (api process only) ────────────────────────────────────────
+# processes = ["api"] is the critical line — without it Fly would route
+# inbound HTTP to worker machines too and they'd 404 every request.
+#
+# min_machines_running = 3 (N+1 over the smallest HA size). Two would
+# *survive* a single eviction, but only by routing 100% of WebSocket
+# connections onto the lone surviving Machine — exactly the moment its
+# fd ceiling and CPU budget matter most. Three keeps live load on N
+# while a Machine reboots/redeploys, and absorbs a *second* eviction
+# (e.g. Fly host migration during a deploy) without dropping below the
+# minimum-viable two. Cost delta from 2→3 is one shared-cpu-1x machine
+# in primary_region; the deploy/maintenance window safety is worth it
+# at the volumes we're targeting.
 [http_service]
   internal_port = 3000
   force_https = true
-  auto_stop_machines = "stop"
+  auto_stop_machines = "off"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 3
+  processes = ["api"]
 
+# ─── Worker scaling ────────────────────────────────────────────────────────
+# Worker has no [http_service] (no public surface), so this metadata block
+# carries the same N+1 guarantee for the worker pool. Three workers means
+# we keep two hot when one is rebooting, and a deploy that overlaps with
+# a host eviction still leaves at least one worker draining the webhook
+# and group-deletion-fanout queues. Below three, a deploy that hits a
+# slow Machine stop can briefly pause both queues — which the durable
+# claim pattern survives but adds avoidable end-to-end latency.
+[[services]]
+  processes = ["worker"]
+  internal_port = 9091
+  protocol = "tcp"
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 3
+
+  [[services.tcp_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+
+# ─── Deploy strategy ───────────────────────────────────────────────────────
+# Rolling so we never have ZERO machines on a process during deploy. Fly's
+# default for HA-sized apps, but it's worth pinning explicitly so a future
+# fly.toml diff doesn't silently flip to "immediate".
+[deploy]
+  strategy = "rolling"
+
+# ─── Health check (api process) ────────────────────────────────────────────
 [checks]
   [checks.health]
     type = "http"
@@ -19,7 +76,18 @@ primary_region = "sjc"
     interval = "15s"
     timeout = "5s"
     grace_period = "10s"
+    processes = ["api"]
+
+# ─── VM size ───────────────────────────────────────────────────────────────
+# shared-cpu-1x @ 512MB is the cost-optimized starting size — covers the
+# pino logger + Sentry agent + Hono runtime + a few thousand WebSocket
+# fds without paging. Bump to 1024MB or shared-cpu-2x once we see
+# sustained heap pressure or CPU > 70% on the api group.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
 
 [env]
   NODE_ENV = "production"
   PORT = "3000"
+  WORKER_PORT = "9091"

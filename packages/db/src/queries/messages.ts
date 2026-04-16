@@ -162,17 +162,27 @@ export async function getConversationMessages(
   limit = 50,
   beforeSeq?: number,
   hiddenAfter?: string | null,
-  opts: { joinedSeq?: number; scopeToRecipient?: boolean } = {},
+  opts: { joinedSeq?: number; scopeToRecipient?: boolean; afterSeq?: number } = {},
 ) {
+  // Sort direction follows the cursor: backwards-paging (`beforeSeq`, the
+  // common scrollback case) returns DESC so the freshest message lands at
+  // index 0; forwards-paging (`afterSeq`, used by SDK gap-fill) returns
+  // ASC so the SDK can drain consecutively into its per-conversation
+  // ordering buffer without re-sorting. Caller must not pass both.
+  const ascending = opts.afterSeq !== undefined
   let query = getSupabaseClient()
     .from('messages')
     .select('*')
     .eq('conversation_id', conversationId)
-    .order('seq', { ascending: false })
+    .order('seq', { ascending })
     .limit(limit)
 
   if (beforeSeq !== undefined) {
     query = query.lt('seq', beforeSeq)
+  }
+
+  if (opts.afterSeq !== undefined) {
+    query = query.gt('seq', opts.afterSeq)
   }
 
   if (opts.joinedSeq !== undefined) {

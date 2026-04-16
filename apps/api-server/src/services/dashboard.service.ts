@@ -3,6 +3,7 @@ import {
   findAgentByApiKeyHash,
   findOwnedAgentByHandle,
   insertOwnerAgent,
+  invalidateOwnerCache,
   listClaimedAgents,
   deleteOwnerAgent,
   setPausedByOwner,
@@ -140,6 +141,11 @@ export async function claimAgent(
     throw e
   }
 
+  // Drop the cached "agent X is unclaimed" entry from the previous null
+  // lookup so the very next message routes to this owner without waiting
+  // out the 30s null TTL.
+  await invalidateOwnerCache(agent.id)
+
   await emitEvent({
     actorType: 'owner',
     actorId: ownerId,
@@ -173,6 +179,9 @@ export async function releaseClaim(ownerId: string, handle: string) {
   if (!deleted) {
     throw new DashboardError('CLAIM_NOT_FOUND', 'Claim not found', 404)
   }
+  // Drop the cached owner mapping so the next message stops routing to the
+  // released owner immediately instead of waiting out the 5-min hit TTL.
+  await invalidateOwnerCache(agent.id)
   await emitEvent({
     actorType: 'owner',
     actorId: ownerId,

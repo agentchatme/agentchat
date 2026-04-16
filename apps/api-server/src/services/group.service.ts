@@ -15,7 +15,6 @@ import {
   getGroupMembers,
   getGroupMemberCount,
   getGroupParticipantRole,
-  getGroupPushRecipients,
   createGroupInvitation,
   findGroupInvitation,
   deleteGroupInvitation,
@@ -26,7 +25,6 @@ import {
   hasParticipantHistory,
   atomicSendMessage,
   getPausedByOwner,
-  listFullyPausedAgentIds,
 } from '@agentchat/db'
 import {
   GROUP_MAX_MEMBERS,
@@ -713,16 +711,6 @@ export async function deleteGroup(
     )
   }
 
-  // Pre-capture the fan-out recipient list. After the RPC runs,
-  // getGroupPushRecipients returns [] because every member is
-  // left_at != NULL. We still want to hit the WS + webhook paths for
-  // their final in-group event.
-  const recipientIds = await getGroupPushRecipients(
-    groupId,
-    Number.MAX_SAFE_INTEGER,
-    callerId,
-  )
-
   // Build the system event payload. We pass the inner union member
   // (without `data` wrapper) as p_system_content — the RPC wraps it in
   // `{ data: <payload> }` to match the MessageContent shape before
@@ -791,60 +779,23 @@ export async function deleteGroup(
     throw err
   }
 
-  // Fan-out. Each recipient gets:
-  //   1. message.new — the final 'group_deleted' system message so the
-  //      in-group timeline renders one last row before the group
-  //      disappears. Mirrors how every other system event behaves.
-  //   2. group.deleted — a dedicated event so SDKs can pop the group out
-  //      of their conversation list immediately without waiting to
-  //      parse the content.data.event string out of the message.new.
-  const systemMessagePayload = {
-    id: systemMsgId,
-    conversation_id: groupId,
-    sender: actor.handle,
-    client_msg_id: systemClientMsgId,
-    seq: outcome.seq,
-    type: 'system' as const,
-    content: { data: parsed.data },
-    metadata: {},
-    created_at: outcome.deleted_at,
-  }
-
-  const deletedPayload: DeletedGroupInfo = {
-    group_id: groupId,
-    deleted_by_handle: actor.handle,
-    deleted_at: outcome.deleted_at,
-  }
-
-  // Drop fully-paused recipients from the live fan-out — the system
-  // message + group.deleted envelope are already durable in the DB
-  // (system message via atomicSendMessage above; group.deleted_at is
-  // persisted on the conversations row), so a paused agent will catch
-  // up the next time they unpause and re-sync. Mirrors pushToGroup in
-  // message.service.ts: one batch query, then per-recipient skip.
-  const fullyPaused = await listFullyPausedAgentIds(recipientIds)
-  for (const recipientId of recipientIds) {
-    if (fullyPaused.has(recipientId)) continue
-    sendToAgent(recipientId, {
-      type: 'message.new',
-      payload: systemMessagePayload as unknown as Record<string, unknown>,
-    })
-    sendToAgent(recipientId, {
-      type: 'group.deleted',
-      payload: deletedPayload as unknown as Record<string, unknown>,
-    })
-    fireWebhooks(
-      recipientId,
-      'message.new',
-      systemMessagePayload as unknown as Record<string, unknown>,
-    )
-    fireWebhooks(
-      recipientId,
-      'group.deleted',
-      deletedPayload as unknown as Record<string, unknown>,
-    )
-  }
-
+  // Fan-out is durably enqueued by delete_group_atomic itself (mig 030):
+  // one row per (group_id, recipient_id) lands in group_deletion_fanout
+  // in the same transaction as the soft-delete. The background
+  // group-deletion-fanout-worker drains that queue, publishes the WS
+  // events through Redis pub/sub, and enqueues the webhook deliveries —
+  // all with retry, dead-letter, and metrics. We don't touch any of that
+  // here; the HTTP handler returns as soon as the delete commits.
+  //
+  // What recipients actually see, for completeness:
+  //   * message.new — the final 'group_deleted' system message so the
+  //     in-group timeline renders one last row before the group
+  //     disappears. Mirrors how every other system event behaves.
+  //   * group.deleted — a dedicated event so SDKs can pop the group out
+  //     of their conversation list immediately without waiting to parse
+  //     the content.data.event string out of the message.new.
+  // Both events are built by the worker by re-deriving from the system
+  // message id stored on the queue row.
   return { deleted_at: outcome.deleted_at }
 }
 

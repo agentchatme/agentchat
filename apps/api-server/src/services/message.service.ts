@@ -358,10 +358,24 @@ async function sendDirectMessage(
     messagesSent.inc({ outcome: 'replay' })
   }
 
+  // Surface the recipient's current backlog depth back to the caller so
+  // the route can attach a soft-warning header before the sender hits
+  // the 10K hard wall (RecipientBackloggedError). 5K is half the cap —
+  // gives senders ~5K-message runway to back off, slow down, or alert
+  // the recipient operator. Group sends rely on the per-recipient skip
+  // path inside send_message_atomic instead, so this signal is direct-
+  // only.
+  const recipientUndelivered =
+    typeof recipient.undelivered_count === 'number'
+      ? recipient.undelivered_count
+      : null
+
   return {
     message: publicMessage,
     isReplay: message.is_replay,
     skippedRecipients: [] as string[],
+    recipientHandle: recipient.handle as string,
+    recipientUndelivered,
   }
 }
 
@@ -561,6 +575,12 @@ async function sendGroupMessage(
     message: publicMessage,
     isReplay: message.is_replay,
     skippedRecipients: skippedHandles,
+    // Group sends don't surface a per-recipient backlog warning — the
+    // existing skipped_recipients list is the wire-level signal for the
+    // 10K hard wall, and aggregating across N recipients into one
+    // header would force a callsite to choose which one to name.
+    recipientHandle: null as string | null,
+    recipientUndelivered: null as number | null,
   }
 }
 
@@ -812,6 +832,7 @@ export async function getMessages(
   conversationId: string,
   limit = 50,
   beforeSeq?: number,
+  afterSeq?: number,
 ) {
   // Deleted-group short-circuit: former members read as 410 with
   // DeletedGroupInfo so the client can render "group was deleted by
@@ -852,6 +873,7 @@ export async function getMessages(
     {
       joinedSeq: participant.joinedSeq,
       scopeToRecipient: participant.conversationType === 'group',
+      afterSeq,
     },
   )
   return mapSenderHandles(messages)

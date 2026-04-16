@@ -29,10 +29,8 @@ messages.post('/', authMiddleware, async (c) => {
 
   try {
     const agentId = c.get('agentId')
-    const { message, isReplay, skippedRecipients } = await sendMessage(
-      agentId,
-      parsed.data,
-    )
+    const { message, isReplay, skippedRecipients, recipientHandle, recipientUndelivered } =
+      await sendMessage(agentId, parsed.data)
     // 200 on idempotent replay (no new side effects), 201 on first write.
     // §3.4.2: include `skipped_recipients` only when the group send actually
     // dropped a backlogged member, so direct sends and the common happy-path
@@ -41,7 +39,25 @@ messages.post('/', authMiddleware, async (c) => {
       skippedRecipients.length > 0
         ? { ...message, skipped_recipients: skippedRecipients }
         : message
-    return c.json(body, isReplay ? 200 : 201)
+
+    // Backlog soft-warning. The 10K cap inside send_message_atomic is the
+    // hard wall; this header fires at half the cap so a misbehaving
+    // sender or a stalled recipient gets visible signal long before
+    // their next send returns 429 RECIPIENT_BACKLOGGED. Direct-send
+    // only — group sends use skipped_recipients instead. Header value
+    // is a small machine-readable shape so SDKs can branch without
+    // reparsing free-form text.
+    const headers: Record<string, string> = {}
+    const BACKLOG_WARN_THRESHOLD = 5_000
+    if (
+      recipientHandle !== null &&
+      recipientUndelivered !== null &&
+      recipientUndelivered >= BACKLOG_WARN_THRESHOLD
+    ) {
+      headers['X-Backlog-Warning'] = `${recipientHandle}=${recipientUndelivered}`
+    }
+
+    return c.json(body, isReplay ? 200 : 201, headers)
   } catch (e) {
     if (e instanceof MessageError) {
       const headers: Record<string, string> = {}
@@ -132,7 +148,17 @@ messages.post('/sync/ack', authMiddleware, async (c) => {
   return c.json({ acked })
 })
 
-// GET /v1/messages/:conversation_id — Get conversation history (agent auth)
+// GET /v1/messages/:conversation_id — Get conversation history (agent auth).
+//
+// Cursors (mutually exclusive):
+//   before_seq — backwards scrollback; returns rows with seq < N, ordered DESC
+//   after_seq  — forwards gap-fill; returns rows with seq > N, ordered ASC
+//
+// `after_seq` exists for SDK gap recovery: when the realtime client sees a
+// gap in the per-conversation seq stream (e.g. message seq=8 then seq=12),
+// it calls this endpoint with after_seq=8 to fetch 9..11 and re-establish
+// in-order delivery to user handlers. The ASC ordering matches the SDK's
+// drain-then-emit pattern so it can apply rows directly without re-sorting.
 messages.get('/:conversation_id', authMiddleware, async (c) => {
   const conversationId = c.req.param('conversation_id')
   const limitRaw = Number(c.req.query('limit') ?? 50)
@@ -140,6 +166,9 @@ messages.get('/:conversation_id', authMiddleware, async (c) => {
   const beforeSeqRaw = c.req.query('before_seq')
   const beforeSeq =
     beforeSeqRaw !== undefined && beforeSeqRaw !== '' ? Number(beforeSeqRaw) : undefined
+  const afterSeqRaw = c.req.query('after_seq')
+  const afterSeq =
+    afterSeqRaw !== undefined && afterSeqRaw !== '' ? Number(afterSeqRaw) : undefined
 
   if (beforeSeq !== undefined && (!Number.isInteger(beforeSeq) || beforeSeq < 0)) {
     return c.json(
@@ -147,10 +176,25 @@ messages.get('/:conversation_id', authMiddleware, async (c) => {
       400,
     )
   }
+  if (afterSeq !== undefined && (!Number.isInteger(afterSeq) || afterSeq < 0)) {
+    return c.json(
+      { code: 'VALIDATION_ERROR', message: 'after_seq must be a non-negative integer' },
+      400,
+    )
+  }
+  if (beforeSeq !== undefined && afterSeq !== undefined) {
+    return c.json(
+      {
+        code: 'VALIDATION_ERROR',
+        message: 'before_seq and after_seq are mutually exclusive',
+      },
+      400,
+    )
+  }
 
   try {
     const agentId = c.get('agentId')
-    const msgs = await getMessages(agentId, conversationId, limit, beforeSeq)
+    const msgs = await getMessages(agentId, conversationId, limit, beforeSeq, afterSeq)
     return c.json(msgs)
   } catch (e) {
     if (e instanceof MessageError) {

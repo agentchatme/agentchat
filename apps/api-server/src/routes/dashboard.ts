@@ -695,7 +695,7 @@ dashboard.post('/agents/:handle/unpause', dashboardAuthMiddleware, async (c) => 
 // putting the session cookie on the URL. See WIRE-CONTRACT §1.
 dashboard.post('/ws/ticket', dashboardAuthMiddleware, async (c) => {
   const ownerId = c.get('ownerId')
-  const ticket = issueTicket(ownerId)
+  const ticket = await issueTicket(ownerId)
   return c.json({ ticket, expires_in: 30 })
 })
 

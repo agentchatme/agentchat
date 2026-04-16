@@ -827,22 +827,9 @@ registry.registerPath({
   },
 })
 
-// ─── Operator ──────────────────────────────────────────────────────────────
-
-registry.registerPath({
-  method: 'get',
-  path: '/v1/metrics',
-  summary: 'Prometheus metrics exposition',
-  description:
-    'If METRICS_TOKEN is set in env, requires `Authorization: Bearer <METRICS_TOKEN>`; otherwise public.',
-  responses: {
-    200: {
-      description: 'Prometheus text exposition',
-      content: { 'text/plain': { schema: z.string() } },
-    },
-    401: { description: 'Invalid or missing metrics token', content: { 'application/json': { schema: ErrorResponse } } },
-  },
-})
+// /internal/metrics is intentionally NOT documented in the public OpenAPI
+// — it lives outside /v1 and is operator-facing. Documenting it here would
+// surface a private endpoint to client SDK generators.
 
 // ─── Document generation ───────────────────────────────────────────────────
 

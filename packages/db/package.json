@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.0",
+    "@upstash/redis": "^1.34.0",
     "@agentchat/shared": "workspace:*"
   },
   "devDependencies": {

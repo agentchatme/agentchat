@@ -8,6 +8,7 @@ import {
   type WebhookDeliveryRow,
 } from '@agentchat/db'
 import { webhookDeliveries } from '../lib/metrics.js'
+import { logger } from '../lib/logger.js'
 import {
   getOpenWebhookIds,
   recordWebhookFailure,
@@ -36,8 +37,16 @@ import {
  * than mark a live receiver as failed.
  */
 
-const POLL_INTERVAL_MS = 5_000
-const BATCH_SIZE = 10
+// Poll cadence + claim batch jointly set the per-worker delivery ceiling:
+// roughly BATCH_SIZE / (POLL_INTERVAL_MS / 1000) per second per worker.
+// 50 / 1s = ~50/s/worker, × 2 worker machines = ~100/s steady state — sized
+// to the audit's "1M agents × 1 msg/day × 3 webhooks ≈ 100/s" projection
+// without burning through Postgres connection budget at idle. The receiver-
+// timeout is the hard ceiling (a batch of 50 can't drain faster than the
+// slowest of 50 parallel HTTP fetches), so the next tick reliably has work
+// queued for it instead of stacking re-entrant ticks.
+const POLL_INTERVAL_MS = 1_000
+const BATCH_SIZE = 50
 const REQUEST_TIMEOUT_MS = 10_000
 
 // Delays AFTER each failure, in milliseconds. Index N is the wait after the
@@ -57,8 +66,12 @@ const RETRY_DELAYS_MS = [
 const MAX_ATTEMPTS = RETRY_DELAYS_MS.length + 1 // initial + 8 retries = 9
 
 let pollTimer: NodeJS.Timeout | null = null
-let running = false
 let stopped = false
+// Track the in-flight tick promise so graceful shutdown can wait for it
+// to complete instead of leaving a half-claimed batch in 'delivering' for
+// the 60s stale-row reclaim window. Was previously a boolean — the
+// boolean was fine for re-entrancy but useless for shutdown coordination.
+let inFlight: Promise<void> | null = null
 
 export function startWebhookWorker() {
   if (pollTimer) return
@@ -69,42 +82,60 @@ export function startWebhookWorker() {
   // Fire an immediate tick so startup doesn't wait POLL_INTERVAL for the
   // first poll. Not awaited — the interval handles future ticks.
   void tick()
-  console.log(`[webhook-worker] started (poll=${POLL_INTERVAL_MS}ms, batch=${BATCH_SIZE})`)
+  logger.info(
+    { poll_ms: POLL_INTERVAL_MS, batch_size: BATCH_SIZE },
+    'webhook_worker_started',
+  )
 }
 
-export function stopWebhookWorker() {
+/** Stop polling and wait for the current tick (if any) to finish. Resolves
+ *  when the worker is fully quiesced, so SIGTERM handlers can sequence DB
+ *  shutdown after this without tearing connections out from under an
+ *  in-progress claim → fetch → mark cycle. */
+export async function stopWebhookWorker(): Promise<void> {
   stopped = true
   if (pollTimer) {
     clearInterval(pollTimer)
     pollTimer = null
   }
-  console.log('[webhook-worker] stopped')
+  if (inFlight) {
+    try {
+      await inFlight
+    } catch {
+      // tick() catches its own errors; this await only sees abnormal
+      // settle paths, which we ignore so shutdown still completes.
+    }
+  }
+  logger.info('webhook_worker_stopped')
 }
 
-async function tick() {
+function tick(): void {
   // Re-entrancy guard: if the previous tick is still processing (slow DB,
-  // high row count), skip this one rather than stacking work.
-  if (running || stopped) return
-  running = true
-  try {
-    // §3.4.3: pull the set of webhook ids currently behind an open circuit
-    // so the claim RPC leaves their rows in 'pending' (no attempt burn).
-    // The Lua evaluation also auto-promotes expired OPEN circuits into
-    // HALF_OPEN, letting the next claim pull exactly one probe row per
-    // recovering endpoint. Fails open on Redis outage.
-    const excludedWebhookIds = await getOpenWebhookIds()
-    const rows = await claimWebhookDeliveries(BATCH_SIZE, excludedWebhookIds)
-    if (rows.length === 0) return
+  // high row count), skip this one rather than stacking work. Tracking the
+  // promise (rather than a boolean flag) lets stopWebhookWorker await
+  // completion during graceful shutdown.
+  if (inFlight || stopped) return
+  inFlight = (async () => {
+    try {
+      // §3.4.3: pull the set of webhook ids currently behind an open
+      // circuit so the claim RPC leaves their rows in 'pending' (no
+      // attempt burn). The Lua evaluation also auto-promotes expired OPEN
+      // circuits into HALF_OPEN, letting the next claim pull exactly one
+      // probe row per recovering endpoint. Fails open on Redis outage.
+      const excludedWebhookIds = await getOpenWebhookIds()
+      const rows = await claimWebhookDeliveries(BATCH_SIZE, excludedWebhookIds)
+      if (rows.length === 0) return
 
-    // Fire all attempts in parallel — each row is independent and the HTTP
-    // fetch is the bottleneck. Settle them so one slow receiver can't block
-    // the whole batch from finalizing in the DB.
-    await Promise.allSettled(rows.map((row) => processRow(row)))
-  } catch (err) {
-    console.error('[webhook-worker] claim failed:', err)
-  } finally {
-    running = false
-  }
+      // Fire all attempts in parallel — each row is independent and the
+      // HTTP fetch is the bottleneck. Settle them so one slow receiver
+      // can't block the whole batch from finalizing in the DB.
+      await Promise.allSettled(rows.map((row) => processRow(row)))
+    } catch (err) {
+      logger.error({ err }, 'webhook_worker_tick_failed')
+    } finally {
+      inFlight = null
+    }
+  })()
 }
 
 async function processRow(row: WebhookDeliveryRow) {
@@ -155,8 +186,8 @@ async function scheduleNextAttempt(row: WebhookDeliveryRow, errText: string) {
   // the attempt that just failed.
   if (row.attempts >= MAX_ATTEMPTS) {
     webhookDeliveries.inc({ outcome: 'dead' })
-    await markWebhookDead(row.id, errText).catch((e) => {
-      console.error('[webhook-worker] markDead failed:', e)
+    await markWebhookDead(row.id, errText).catch((err) => {
+      logger.error({ err, delivery_id: row.id }, 'webhook_mark_dead_failed')
     })
     return
   }
@@ -164,8 +195,8 @@ async function scheduleNextAttempt(row: WebhookDeliveryRow, errText: string) {
   webhookDeliveries.inc({ outcome: 'failed' })
   const delayMs = RETRY_DELAYS_MS[row.attempts - 1] ?? RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - 1]!
   const nextAt = new Date(Date.now() + delayMs)
-  await scheduleWebhookRetry(row.id, nextAt, errText).catch((e) => {
-    console.error('[webhook-worker] scheduleRetry failed:', e)
+  await scheduleWebhookRetry(row.id, nextAt, errText).catch((err) => {
+    logger.error({ err, delivery_id: row.id }, 'webhook_schedule_retry_failed')
   })
 }
 

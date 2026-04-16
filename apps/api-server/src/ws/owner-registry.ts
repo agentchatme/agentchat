@@ -1,4 +1,5 @@
 import type { WSContext } from 'hono/ws'
+import { safeSend } from './safe-send.js'
 
 // Mirrors the agent registry (./registry.ts) but keyed on owner id for the
 // dashboard WS fan-out. The two maps stay separate because owners and agents
@@ -37,11 +38,10 @@ export function deliverLocallyToOwner(ownerId: string, message: unknown) {
 
   const raw = JSON.stringify(message)
   for (const ws of ownerConns) {
-    try {
-      ws.send(raw)
-    } catch {
-      // Dead connection — cleanup happens on close event
-    }
+    // safeSend enforces the per-socket bufferedAmount ceiling — a paused
+    // dashboard tab that's fallen behind gets closed with 1013 instead of
+    // ballooning the api-server heap. The dashboard's reconnect refetches.
+    safeSend(ws, raw)
   }
 }
 

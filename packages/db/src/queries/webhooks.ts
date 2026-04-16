@@ -162,3 +162,63 @@ export async function markWebhookDead(id: string, lastError: string): Promise<vo
     .eq('id', id)
   if (error) throw error
 }
+
+/**
+ * Count webhook_deliveries in the dead-letter queue (status='dead') that
+ * landed there within the last `windowMs` milliseconds. Used by the worker's
+ * DLQ-health probe — fed into the `agentchat_webhook_deliveries_dead` gauge
+ * for scrapers, and compared against a threshold to fire a Sentry alert when
+ * dead-letter growth points at a systemic delivery problem rather than a
+ * single bad receiver.
+ *
+ * Uses head:true + count:'exact' so PostgREST returns only the count without
+ * streaming row bodies — cheap enough to run on a 5-minute interval.
+ */
+export async function countDeadWebhookDeliveries(windowMs: number): Promise<number> {
+  const since = new Date(Date.now() - windowMs).toISOString()
+  const { count, error } = await getSupabaseClient()
+    .from('webhook_deliveries')
+    .select('id', { count: 'exact', head: true })
+    .eq('status', 'dead')
+    .gte('created_at', since)
+  if (error) throw error
+  return count ?? 0
+}
+
+/**
+ * Measure drift between the cached `agents.undelivered_count` (maintained
+ * by the bump/drop triggers in migrations 025/027) and the authoritative
+ * count of `message_deliveries` rows currently in `status='stored'`.
+ *
+ * The two should always be equal. A persistent non-zero drift means a
+ * code path bumped or transitioned an envelope without going through the
+ * trigger (manual UPDATE, partition skew, a future migration that forgot
+ * the trigger DDL). The dlq-probe scrapes this on its 5-minute tick so
+ * the drift gauge in metrics shows up on Grafana without a separate cron.
+ *
+ * Two independent parallel queries — at the gauge cadence (5 minutes)
+ * the inter-query race window is irrelevant; we're watching for
+ * sustained deltas in the hundreds-to-millions range, not single-row
+ * jitter. count:'exact' + head:true skips body streaming on both.
+ */
+export async function measureUndeliveredDrift(): Promise<{
+  counterSum: number
+  actualCount: number
+}> {
+  const supabase = getSupabaseClient()
+  const [sumRes, countRes] = await Promise.all([
+    supabase.rpc('sum_undelivered_count'),
+    supabase
+      .from('message_deliveries')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'stored'),
+  ])
+  if (sumRes.error) throw sumRes.error
+  if (countRes.error) throw countRes.error
+  const counterSum =
+    typeof sumRes.data === 'number' ? sumRes.data : Number(sumRes.data ?? 0)
+  return {
+    counterSum: Number.isFinite(counterSum) ? counterSum : 0,
+    actualCount: countRes.count ?? 0,
+  }
+}
