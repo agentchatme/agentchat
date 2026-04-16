@@ -100,11 +100,36 @@ export async function middleware(req: NextRequest) {
   }
 
   // Access token still has plenty of runway → pass through, no refresh.
+  // Re-stamp both cookies with explicit maxAge on every pass-through so
+  // they are always persistent. The initial login sets cookies through the
+  // Vercel rewrite proxy (Next config rewrites /dashboard/* → api-server),
+  // and the proxy may not forward the Max-Age attribute — the browser then
+  // treats them as session cookies that die on window close. Re-stamping
+  // here upgrades them to persistent cookies on the very first navigation
+  // after login, which is invisible to the user.
   if (access) {
     const exp = getJwtExp(access)
     const now = Math.floor(Date.now() / 1000)
     if (exp && exp - now > REFRESH_WINDOW_SECS) {
-      return NextResponse.next()
+      const response = NextResponse.next()
+      const secure = process.env.NODE_ENV === 'production'
+      response.cookies.set(ACCESS_COOKIE, access, {
+        httpOnly: true,
+        secure,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: exp - now,
+      })
+      if (refresh) {
+        response.cookies.set(REFRESH_COOKIE, refresh, {
+          httpOnly: true,
+          secure,
+          sameSite: 'lax',
+          path: '/',
+          maxAge: REFRESH_MAX_AGE,
+        })
+      }
+      return response
     }
   }
 
