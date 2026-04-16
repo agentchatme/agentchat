@@ -52,6 +52,8 @@ import {
 } from '../services/dashboard.service.js'
 import { getRedis } from '../lib/redis.js'
 import { emitEvent } from '../services/events.service.js'
+import { issueTicket } from '../ws/ticket-store.js'
+import { publishOwnerSignout } from '../ws/pubsub.js'
 
 const dashboard = new Hono()
 
@@ -432,6 +434,11 @@ dashboard.post('/auth/logout/all', dashboardAuthMiddleware, async (c) => {
   const ownerId = c.get('ownerId')
   const revoked = await deleteDashboardSessionsForOwner(ownerId)
   clearSessionCookies(c)
+  // Kick every dashboard WS on every host. Refresh tokens are gone, but
+  // existing open sockets were authenticated off an access token that may
+  // still verify for up to an hour — close them proactively so a stale
+  // tab can't keep receiving fan-out (WIRE-CONTRACT lurker invariant §5).
+  publishOwnerSignout(ownerId)
   await emitEvent({
     actorType: 'owner',
     actorId: ownerId,
@@ -679,6 +686,16 @@ dashboard.post('/agents/:handle/unpause', dashboardAuthMiddleware, async (c) => 
     }
     throw e
   }
+})
+
+// POST /dashboard/ws/ticket — Mint a one-shot WS ticket (30s TTL)
+// The dashboard hits this before opening /v1/ws/dashboard so the native
+// WebSocket constructor can pass the ticket as a query param without
+// putting the session cookie on the URL. See WIRE-CONTRACT §1.
+dashboard.post('/ws/ticket', dashboardAuthMiddleware, async (c) => {
+  const ownerId = c.get('ownerId')
+  const ticket = issueTicket(ownerId)
+  return c.json({ ticket, expires_in: 30 })
 })
 
 // DELETE /dashboard/agents/:handle — Release the claim

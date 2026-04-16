@@ -22,7 +22,15 @@ import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
 import { initPubSub, shutdownPubSub } from './ws/pubsub.js'
 import { closeAllConnections } from './ws/registry.js'
+import {
+  addOwnerConnection,
+  removeOwnerConnection,
+  closeAllOwnerConnections,
+} from './ws/owner-registry.js'
+import { consumeTicket } from './ws/ticket-store.js'
 import { startWebhookWorker, stopWebhookWorker } from './services/webhook-worker.js'
+import type { WebSocket as NodeWebSocket } from 'ws'
+import type { WSContext } from 'hono/ws'
 
 const app = new Hono()
 const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
@@ -180,6 +188,135 @@ app.get(
   }),
 )
 
+// Dashboard WebSocket — read-only push channel for the Next.js dashboard.
+//
+// Auth is the one-shot ticket at POST /dashboard/ws/ticket (see
+// WIRE-CONTRACT §1). The ticket is consumed on upgrade; we never accept
+// an unauthenticated dashboard socket. Any application-level frame from
+// the client is ignored — the channel is strictly server → client.
+//
+// Heartbeat mirrors the agent WS (ws/handler.ts): PING every 30s, close
+// if no PONG within 10s. Dashboard tabs get backgrounded heavily so a
+// dead socket is more common here than on the agent side.
+const DASHBOARD_WS_HEARTBEAT_INTERVAL = 30_000
+const DASHBOARD_WS_PONG_TIMEOUT = 10_000
+
+// Per-connection heartbeat bookkeeping, identical to the agent side.
+const dashboardHeartbeats = new Map<WSContext, NodeJS.Timeout>()
+const dashboardPongTimers = new Map<WSContext, NodeJS.Timeout>()
+
+function startDashboardHeartbeat(ownerId: string, ws: WSContext) {
+  const raw = ws.raw as NodeWebSocket | undefined
+
+  const interval = setInterval(() => {
+    try {
+      if (!raw || raw.readyState !== 1) {
+        stopDashboardHeartbeat(ws)
+        removeOwnerConnection(ownerId, ws)
+        return
+      }
+
+      raw.ping()
+
+      const timeout = setTimeout(() => {
+        try {
+          ws.close(1001, 'Heartbeat timeout')
+        } catch {
+          // Already closed
+        }
+        stopDashboardHeartbeat(ws)
+        removeOwnerConnection(ownerId, ws)
+      }, DASHBOARD_WS_PONG_TIMEOUT)
+
+      dashboardPongTimers.set(ws, timeout)
+
+      raw.once('pong', () => {
+        const timer = dashboardPongTimers.get(ws)
+        if (timer) {
+          clearTimeout(timer)
+          dashboardPongTimers.delete(ws)
+        }
+      })
+    } catch {
+      stopDashboardHeartbeat(ws)
+      removeOwnerConnection(ownerId, ws)
+    }
+  }, DASHBOARD_WS_HEARTBEAT_INTERVAL)
+
+  dashboardHeartbeats.set(ws, interval)
+}
+
+function stopDashboardHeartbeat(ws: WSContext) {
+  const interval = dashboardHeartbeats.get(ws)
+  if (interval) {
+    clearInterval(interval)
+    dashboardHeartbeats.delete(ws)
+  }
+  const timeout = dashboardPongTimers.get(ws)
+  if (timeout) {
+    clearTimeout(timeout)
+    dashboardPongTimers.delete(ws)
+  }
+}
+
+function stopAllDashboardHeartbeats() {
+  for (const [, interval] of dashboardHeartbeats) {
+    clearInterval(interval)
+  }
+  for (const [, timeout] of dashboardPongTimers) {
+    clearTimeout(timeout)
+  }
+  dashboardHeartbeats.clear()
+  dashboardPongTimers.clear()
+}
+
+app.get(
+  '/v1/ws/dashboard',
+  upgradeWebSocket((c) => {
+    // Ticket consume happens at upgrade time (inside the handler factory)
+    // so an invalid/expired ticket closes the socket on its very first
+    // frame. Reading it here (not inside onOpen) lets us fail-fast without
+    // allocating a heartbeat.
+    const ticket = c.req.query('ticket') ?? ''
+    const ownerId = ticket ? consumeTicket(ticket) : null
+
+    if (!ownerId) {
+      return {
+        onOpen: (_evt, ws) => {
+          try {
+            ws.close(1008, 'Invalid ticket')
+          } catch {
+            // Already closed
+          }
+        },
+      }
+    }
+
+    const boundOwnerId = ownerId
+    return {
+      onOpen: (_evt, ws) => {
+        addOwnerConnection(boundOwnerId, ws)
+        // First frame must be hello.ok so the client can confirm end-to-end
+        // auth before trusting the session (WIRE-CONTRACT §Events/hello.ok).
+        try {
+          ws.send(JSON.stringify({ type: 'hello.ok', owner_id: boundOwnerId }))
+        } catch {
+          // Connection already gone — cleanup fires via onClose
+        }
+        startDashboardHeartbeat(boundOwnerId, ws)
+      },
+      onMessage: (_evt, _ws) => {
+        // Read-only channel. Any client application frame is silently
+        // discarded (WIRE-CONTRACT §2 Client → server frames: none).
+      },
+      onClose: (_evt, ws) => {
+        stopDashboardHeartbeat(ws)
+        removeOwnerConnection(boundOwnerId, ws)
+      },
+    }
+  }),
+)
+
 // Mount routes
 app.route('/v1/register', registerRoutes)
 app.route('/v1/agents', agentRoutes)
@@ -221,9 +358,11 @@ function gracefulShutdown(signal: string) {
 
   // 2. Stop all heartbeat timers
   stopAllHeartbeats()
+  stopAllDashboardHeartbeats()
 
   // 3. Close all WebSocket connections with a clean code
   closeAllConnections(1001, 'Server shutting down')
+  closeAllOwnerConnections(1001, 'Server shutting down')
 
   // 4. Stop the webhook worker polling loop. Any in-flight fetches will
   //    complete within their 10s timeout; rows claimed but not finalized

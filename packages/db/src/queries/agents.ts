@@ -84,6 +84,29 @@ export async function findActiveAgentByEmail(email: string) {
 }
 
 /**
+ * Resolve a batch of agent ids to their handles in one round-trip.
+ * Used by the dashboard owner fan-out for group sends — we need an
+ * `agent_handle` for each recipient event, but the group push recipient
+ * set is returned as ids. Skips deleted agents (their handle is meaningless
+ * on the wire). Returns a Map keyed on agent id.
+ */
+export async function getAgentHandlesByIds(
+  ids: string[],
+): Promise<Map<string, string>> {
+  if (ids.length === 0) return new Map()
+  const { data, error } = await getSupabaseClient()
+    .from('agents')
+    .select('id, handle')
+    .in('id', ids)
+  if (error) throw error
+  const out = new Map<string, string>()
+  for (const row of data ?? []) {
+    out.set(row.id as string, row.handle as string)
+  }
+  return out
+}
+
+/**
  * Return the subset of agent ids whose paused_by_owner = 'full'.
  * Used by the group fan-out to drop fully-paused recipients before
  * pushing WS + webhook events. The caller already holds a candidate

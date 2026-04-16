@@ -3,21 +3,33 @@ import type { WSContext } from 'hono/ws'
 import type { WsMessage } from '@agentchat/shared'
 import { updateDeliveryStatus } from '@agentchat/db'
 import { getConnections, closeAgentConnections } from './registry.js'
+import { deliverLocallyToOwner, closeOwnerConnections } from './owner-registry.js'
 
 const CHANNEL_FANOUT = 'agentchat:ws:fanout'
 const CHANNEL_CONTROL = 'agentchat:ws:control'
+const OWNER_CHANNEL = 'agentchat:ws:owner-fanout'
 
 interface FanoutMessage {
   agentId: string
   message: WsMessage
 }
 
-interface ControlMessage {
-  type: 'disconnect'
-  agentId: string
-  code: number
-  reason: string
+interface OwnerFanoutMessage {
+  ownerId: string
+  message: unknown
 }
+
+type ControlMessage =
+  | {
+      type: 'disconnect'
+      agentId: string
+      code: number
+      reason: string
+    }
+  | {
+      kind: 'owner-signout'
+      ownerId: string
+    }
 
 let pub: Redis | null = null
 let sub: Redis | null = null
@@ -40,7 +52,7 @@ export function initPubSub(redisUrl?: string) {
   })
 
   sub.connect().then(() => {
-    sub!.subscribe(CHANNEL_FANOUT, CHANNEL_CONTROL).catch((err) => {
+    sub!.subscribe(CHANNEL_FANOUT, CHANNEL_CONTROL, OWNER_CHANNEL).catch((err) => {
       console.error('[pubsub] Subscribe failed:', err.message)
     })
   }).catch((err) => {
@@ -58,11 +70,26 @@ export function initPubSub(redisUrl?: string) {
       return
     }
 
+    if (channel === OWNER_CHANNEL) {
+      try {
+        const { ownerId, message } = JSON.parse(raw) as OwnerFanoutMessage
+        deliverLocallyToOwner(ownerId, message)
+      } catch {
+        // Malformed — skip
+      }
+      return
+    }
+
     if (channel === CHANNEL_CONTROL) {
       try {
         const msg = JSON.parse(raw) as ControlMessage
-        if (msg.type === 'disconnect') {
+        if ('type' in msg && msg.type === 'disconnect') {
           closeAgentConnections(msg.agentId, msg.code, msg.reason)
+        } else if ('kind' in msg && msg.kind === 'owner-signout') {
+          // Owner signed out of every device — evict dashboard sockets on
+          // every host so a stale tab can't keep receiving events past the
+          // refresh-token revocation.
+          closeOwnerConnections(msg.ownerId, 1008, 'Signed out')
         }
       } catch {
         // Malformed — skip
@@ -95,6 +122,44 @@ export function publishToAgent(agentId: string, message: WsMessage) {
   } else {
     // No pub/sub — deliver locally (single-server mode)
     deliverLocally(agentId, message)
+  }
+}
+
+/**
+ * Publish a dashboard message for an owner. Mirrors publishToAgent:
+ * when Redis is enabled, the publish loops back through the subscriber
+ * which calls deliverLocallyToOwner on every server (including this one).
+ * When Redis is disabled we deliver locally directly — single-server mode.
+ */
+export function publishToOwner(ownerId: string, message: unknown) {
+  if (pub) {
+    const payload: OwnerFanoutMessage = { ownerId, message }
+    pub.publish(OWNER_CHANNEL, JSON.stringify(payload)).catch(() => {
+      // Publish failed — fall back to local delivery so at least the
+      // dashboards on this host still get the event. Dashboards on other
+      // hosts re-sync on the next router.refresh() after any reconnect.
+      deliverLocallyToOwner(ownerId, message)
+    })
+  } else {
+    // No pub/sub — deliver locally (single-server mode)
+    deliverLocallyToOwner(ownerId, message)
+  }
+}
+
+/**
+ * Broadcast an owner sign-out to every API server. Used by
+ * POST /dashboard/auth/logout/all so every host drops the dashboard WS
+ * held by any tab authenticated as this owner. Falls back to local-only
+ * close when pub/sub is disabled.
+ */
+export function publishOwnerSignout(ownerId: string) {
+  const payload: ControlMessage = { kind: 'owner-signout', ownerId }
+  if (pub) {
+    pub.publish(CHANNEL_CONTROL, JSON.stringify(payload)).catch(() => {
+      closeOwnerConnections(ownerId, 1008, 'Signed out')
+    })
+  } else {
+    closeOwnerConnections(ownerId, 1008, 'Signed out')
   }
 }
 

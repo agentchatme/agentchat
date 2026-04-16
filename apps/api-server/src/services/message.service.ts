@@ -25,10 +25,12 @@ import {
   getGroupPushRecipients,
   getAttachmentById,
   listFullyPausedAgentIds,
+  findOwnerIdForAgent,
+  getAgentHandlesByIds,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
 import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
-import { sendToAgent } from '../ws/events.js'
+import { sendToAgent, sendToOwner } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
 import { resolveDeletedGroupInfoForCaller } from './group.service.js'
@@ -327,6 +329,18 @@ async function sendDirectMessage(
         // Push failed — that's fine, message is safe in DB
       })
     }
+    // Dashboard owner fan-out — runs independently of the recipient pause
+    // state because the owner WANTS to see what their claimed (even paused)
+    // agent is receiving. Only suppressed on replay, same as the agent push.
+    pushDirectToOwnerDashboards(
+      message as DashboardFanoutMessage,
+      senderId,
+      sender.handle,
+      recipient.id,
+      recipient.handle,
+    ).catch(() => {
+      // Fan-out failed — dashboard reconciles on next router.refresh()
+    })
   } else {
     messagesSent.inc({ outcome: 'replay' })
   }
@@ -485,11 +499,184 @@ async function sendGroupMessage(
         // Push failed — DB state is durable, sync/WS reconnect recovers it
       },
     )
+    // Dashboard owner fan-out runs in parallel with the agent push.
+    // It does its own getGroupPushRecipients lookup so the existing
+    // pushToGroup signature stays untouched.
+    pushGroupToOwnerDashboards(
+      message as DashboardFanoutMessage,
+      conversationId,
+      senderId,
+      sender.handle,
+      message.seq,
+    ).catch(() => {
+      // Fan-out failed — dashboard reconciles on next router.refresh()
+    })
   } else {
     messagesSent.inc({ outcome: 'replay' })
   }
 
   return { message: publicMessage, isReplay: message.is_replay }
+}
+
+// ─── Dashboard owner fan-out ──────────────────────────────────────────────
+// Runs alongside the existing agent push (sendToAgent) to feed every
+// dashboard tab a claimed owner has open. See WIRE-CONTRACT §Events/
+// message.new and §Server-side fan-out rules.
+//
+// Payload shape mirrors DashboardMessage at
+// apps/dashboard/src/lib/types.ts:57-72. sender_id is NEVER included.
+// For a freshly-stored message the delivery envelope fields collapse to
+// their "no envelope yet" defaults — the dashboard calls router.refresh()
+// on message.new anyway so the reconciled state arrives via the RPC.
+
+interface DashboardFanoutMessage {
+  id: string
+  conversation_id: string
+  sender_id: string
+  seq: number
+  type: string
+  content: Record<string, unknown>
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+function buildDashboardPayload(msg: DashboardFanoutMessage, isOwn: boolean) {
+  return {
+    id: msg.id,
+    conversation_id: msg.conversation_id,
+    is_own: isOwn,
+    seq: msg.seq,
+    type: msg.type,
+    content: msg.content,
+    metadata: msg.metadata,
+    created_at: msg.created_at,
+    // Freshly-stored: no delivery envelope state to report yet. The
+    // dashboard re-fetches through get_agent_messages_for_owner on
+    // router.refresh() to pick up delivered/read transitions.
+    delivery_id: null,
+    status: 'stored',
+    delivered_at: null,
+    read_at: null,
+  }
+}
+
+function buildDashboardEvent(
+  agentHandle: string,
+  conversationId: string,
+  msg: DashboardFanoutMessage,
+  isOwn: boolean,
+) {
+  return {
+    type: 'message.new',
+    agent_handle: agentHandle,
+    conversation_id: conversationId,
+    payload: buildDashboardPayload(msg, isOwn),
+  }
+}
+
+/**
+ * Fan out a direct-message event to both sides' owner dashboards.
+ * If both sides resolve to the same owner (a rare self-to-self claim
+ * topology, but possible if one owner claims two agents pinging each
+ * other) we emit BOTH events — sender view first, then recipient view
+ * — so the dashboard sees both halves of the conversation.
+ */
+async function pushDirectToOwnerDashboards(
+  msg: DashboardFanoutMessage,
+  senderId: string,
+  senderHandle: string,
+  recipientId: string,
+  recipientHandle: string,
+) {
+  const [senderOwner, recipientOwner] = await Promise.all([
+    findOwnerIdForAgent(senderId).catch(() => null),
+    findOwnerIdForAgent(recipientId).catch(() => null),
+  ])
+
+  // Sender view first — matches WIRE-CONTRACT §3 ordering when the same
+  // owner claims both sides.
+  if (senderOwner) {
+    sendToOwner(
+      senderOwner,
+      buildDashboardEvent(senderHandle, msg.conversation_id, msg, true),
+    )
+  }
+  if (recipientOwner) {
+    sendToOwner(
+      recipientOwner,
+      buildDashboardEvent(recipientHandle, msg.conversation_id, msg, false),
+    )
+  }
+}
+
+/**
+ * Fan out a group-message event to every recipient's owner + the sender's
+ * owner. Dedupe is per-ownerId within the recipient loop so an owner who
+ * claims multiple members of the same group doesn't see the same message
+ * twice. The sender branch always runs, after the recipient loop, and is
+ * deliberately NOT deduped against recipients because the is_own flag
+ * differs between the two views (WIRE-CONTRACT §Server-side fan-out #2).
+ *
+ * The recipient set is fetched via a fresh getGroupPushRecipients call so
+ * the existing pushToGroup signature stays untouched. The query is cheap
+ * relative to the N owner lookups that follow, and keeps this helper
+ * independent of the agent push path.
+ */
+async function pushGroupToOwnerDashboards(
+  msg: DashboardFanoutMessage,
+  conversationId: string,
+  senderId: string,
+  senderHandle: string,
+  messageSeq: number,
+) {
+  const recipientIds = await getGroupPushRecipients(
+    conversationId,
+    messageSeq,
+    senderId,
+  )
+  if (recipientIds.length === 0) {
+    // Still fan out the sender view even if there are no live recipients
+    // (everyone else is fully-paused or has left mid-send).
+    const senderOwner = await findOwnerIdForAgent(senderId).catch(() => null)
+    if (senderOwner) {
+      sendToOwner(
+        senderOwner,
+        buildDashboardEvent(senderHandle, conversationId, msg, true),
+      )
+    }
+    return
+  }
+
+  // Resolve recipient owners + handles in parallel so large groups pay
+  // one round-trip per dependency instead of serializing them.
+  const [owners, handleMap] = await Promise.all([
+    Promise.all(recipientIds.map((id) => findOwnerIdForAgent(id).catch(() => null))),
+    getAgentHandlesByIds(recipientIds).catch(() => new Map<string, string>()),
+  ])
+
+  const seen = new Set<string>()
+  for (let i = 0; i < recipientIds.length; i++) {
+    const ownerId = owners[i]
+    if (!ownerId) continue
+    if (seen.has(ownerId)) continue
+    seen.add(ownerId)
+    const recipientId = recipientIds[i]!
+    const handle = handleMap.get(recipientId)
+    if (!handle) continue // agent row missing (soft-deleted mid-send)
+    sendToOwner(
+      ownerId,
+      buildDashboardEvent(handle, conversationId, msg, false),
+    )
+  }
+
+  // Sender branch — always runs as a separate event.
+  const senderOwner = await findOwnerIdForAgent(senderId).catch(() => null)
+  if (senderOwner) {
+    sendToOwner(
+      senderOwner,
+      buildDashboardEvent(senderHandle, conversationId, msg, true),
+    )
+  }
 }
 
 // Exported for unit testing. Call site is local; nothing outside this
