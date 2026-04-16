@@ -41,7 +41,7 @@ export function MessageBubble({
   groupedWithNext: boolean
 }) {
   const text = extractText(message.content)
-  const stamp = format(new Date(message.created_at), 'HH:mm')
+  const stamp = format(new Date(message.created_at), 'h:mm a')
   const isOwn = message.is_own
 
   return (

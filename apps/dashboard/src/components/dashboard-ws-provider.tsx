@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 
 // Owns the single dashboard WebSocket for the lifetime of the (app)
@@ -49,9 +49,15 @@ export function DashboardWsProvider({
   children: React.ReactNode
 }) {
   const router = useRouter()
+  const [, startTransition] = useTransition()
 
-  // Everything mutable lives in refs so the effect body can stay a
-  // single-run mount/unmount — no re-runs on router identity churn.
+  // Stable ref so the mount-once effect can always call the current
+  // router without depending on its identity (which changes after
+  // every router.refresh(), and would re-run the effect → close WS →
+  // reconnect → refresh → infinite loop).
+  const routerRef = useRef(router)
+  routerRef.current = router
+
   const wsRef = useRef<WebSocket | null>(null)
   const backoffRef = useRef<number>(BACKOFF_INITIAL_MS)
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -59,6 +65,7 @@ export function DashboardWsProvider({
   const dormantRef = useRef<boolean>(false)
   const unmountedRef = useRef<boolean>(false)
   const helloReceivedRef = useRef<boolean>(false)
+  const isInitialConnectRef = useRef<boolean>(true)
 
   useEffect(() => {
     const wsBase = process.env.NEXT_PUBLIC_WS_URL
@@ -145,21 +152,22 @@ export function DashboardWsProvider({
         }
 
         if (frame.type === 'hello.ok') {
-          // Auth confirmed end-to-end. Reset backoff so the next close
-          // starts from 1s again. A post-reconnect router.refresh()
-          // covers any delta that landed during the disconnect.
           helloReceivedRef.current = true
           backoffRef.current = BACKOFF_INITIAL_MS
-          router.refresh()
+          // On reconnect, refresh to catch missed messages. Skip the
+          // very first connect — the page is already fresh from the
+          // initial navigation and a redundant refresh would blink.
+          if (!isInitialConnectRef.current) {
+            startTransition(() => { routerRef.current.refresh() })
+          }
+          isInitialConnectRef.current = false
           return
         }
 
-        // Ignore anything that arrives before hello.ok — protocol
-        // says hello.ok is always first, anything earlier is noise.
         if (!helloReceivedRef.current) return
 
         if (frame.type === 'message.new') {
-          router.refresh()
+          startTransition(() => { routerRef.current.refresh() })
           return
         }
 
@@ -233,7 +241,9 @@ export function DashboardWsProvider({
       clearVisibilityTimer()
       closeSocket()
     }
-  }, [router])
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once;
+  // router is accessed via routerRef to avoid re-running on identity change
+  }, [])
 
   return <>{children}</>
 }

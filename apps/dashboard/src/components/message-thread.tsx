@@ -103,5 +103,5 @@ function formatDivider(iso: string): string {
   if (isYesterday(d)) return 'Yesterday'
   const daysAgo = differenceInCalendarDays(new Date(), d)
   if (daysAgo < 7) return format(d, 'EEEE')
-  return format(d, 'dd/MM/yyyy')
+  return format(d, 'MMMM d, yyyy')
 }

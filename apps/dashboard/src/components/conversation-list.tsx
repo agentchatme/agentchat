@@ -270,9 +270,9 @@ function subtitleFor(c: ConversationSummary): string {
 // WhatsApp / Telegram / iMessage desktop list behavior.
 function formatListTimestamp(iso: string): string {
   const d = new Date(iso)
-  if (isToday(d)) return format(d, 'HH:mm')
+  if (isToday(d)) return format(d, 'h:mm a')
   if (isYesterday(d)) return 'Yesterday'
   const daysAgo = differenceInCalendarDays(new Date(), d)
   if (daysAgo < 7) return format(d, 'EEEE')
-  return format(d, 'dd/MM/yyyy')
+  return format(d, 'MMM d, yyyy')
 }

@@ -178,5 +178,5 @@ function formatTimestamp(iso: string): string {
   if (ageMs < weekMs) {
     return `${formatDistanceToNowStrict(d)} ago`
   }
-  return format(d, 'dd/MM/yyyy')
+  return format(d, 'MMM d, yyyy')
 }
