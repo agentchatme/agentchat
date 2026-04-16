@@ -63,7 +63,7 @@
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
 
-  --chat-bg: oklch(0.97 0.001 286);
+  --chat-bg: oklch(0.99 0 0);
   --chat-incoming-bg: oklch(0.93 0.003 286);
   --chat-incoming-fg: oklch(0.16 0.006 286);
   --chat-outgoing-bg: oklch(0.55 0.20 252);
