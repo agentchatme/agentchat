@@ -26,8 +26,8 @@
  * The --chat-* tokens at the bottom are the ONLY colored surface in
  * the product. They are deliberately scoped to the chat panel so the
  * messenger styling (§3.1.2) does not leak into the rest of the
- * admin UI. iMessage-reference: incoming bubbles are neutral, the
- * claimed agent's outgoing bubbles are the accent blue.
+ * admin UI. iMessage/Twitter-reference: outgoing bubbles are blue,
+ * incoming bubbles are neutral gray.
  */
 
 @custom-variant dark (&:is(.dark *));
@@ -63,20 +63,12 @@
   --input: oklch(0.92 0.004 286.32);
   --ring: oklch(0.705 0.015 286.067);
 
-  /* Chat panel tokens — scoped, do not reuse anywhere else in the UI.
-   * The bubbles are still WhatsApp-reference (outgoing mint green,
-   * neutral incoming) so ownership scans the same way, but the chat
-   * *background* is deliberately pulled into our own zinc hue (286)
-   * rather than the beige of WhatsApp Web. That way the thread area
-   * reads as part of the admin surface family instead of looking like
-   * a copy-paste skin. These tokens must never leak outside components
-   * under the chat pane (§3.1.2 visual scoping). */
-  --chat-bg: oklch(0.985 0.003 85);
-  --chat-incoming-bg: oklch(1 0 0);
-  --chat-incoming-fg: oklch(0.2 0.01 230);
-  --chat-outgoing-bg: oklch(0.94 0.08 145);
-  --chat-outgoing-fg: oklch(0.2 0.01 230);
-  --chat-meta: oklch(0.55 0.015 230);
+  --chat-bg: oklch(0.97 0.001 286);
+  --chat-incoming-bg: oklch(0.93 0.003 286);
+  --chat-incoming-fg: oklch(0.16 0.006 286);
+  --chat-outgoing-bg: oklch(0.55 0.20 252);
+  --chat-outgoing-fg: oklch(0.99 0 0);
+  --chat-meta: oklch(0.50 0.012 286);
 }
 
 .dark {
@@ -108,19 +100,12 @@
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.552 0.016 285.938);
 
-  /* Dark-mode chat palette: bubbles keep their WhatsApp Desktop
-   * character (deep teal outgoing, slate incoming) but the chat
-   * background shifts to our zinc hue (286) so the thread column
-   * sits in the same color family as the admin chrome instead of
-   * the teal/blue cast of WhatsApp. Sits slightly above --background
-   * (0.141) and below --card (0.18) so the pane still reads as a
-   * distinct surface. */
-  --chat-bg: oklch(0.165 0.006 286);
-  --chat-incoming-bg: oklch(0.27 0.015 230);
-  --chat-incoming-fg: oklch(0.94 0.005 230);
-  --chat-outgoing-bg: oklch(0.38 0.08 175);
-  --chat-outgoing-fg: oklch(0.94 0.005 230);
-  --chat-meta: oklch(0.67 0.015 230);
+  --chat-bg: oklch(0.16 0.004 286);
+  --chat-incoming-bg: oklch(0.26 0.005 286);
+  --chat-incoming-fg: oklch(0.93 0 0);
+  --chat-outgoing-bg: oklch(0.60 0.17 245);
+  --chat-outgoing-fg: oklch(0.98 0 0);
+  --chat-meta: oklch(0.62 0.01 286);
 }
 
 @theme inline {
