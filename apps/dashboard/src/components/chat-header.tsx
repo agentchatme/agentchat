@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Settings2 } from 'lucide-react'
 
 import type { AgentProfile } from '@/lib/types'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { AgentAvatar } from '@/components/agent-avatar'
 import { Button } from '@/components/ui/button'
 import { StatusDot } from '@/components/status-dot'
 import { ChatHeaderMenu } from '@/components/chat-header-menu'
@@ -21,15 +21,9 @@ import { ChatHeaderMenu } from '@/components/chat-header-menu'
 // a clean grid intersection instead of a 1px-offset cross.
 
 export function ChatHeader({ profile }: { profile: AgentProfile }) {
-  const initial = (profile.display_name ?? profile.handle)
-    .charAt(0)
-    .toUpperCase()
-
   return (
     <header className="bg-background flex h-[65px] shrink-0 items-center gap-3.5 border-b px-6">
-      <Avatar className="size-10">
-        <AvatarFallback>{initial}</AvatarFallback>
-      </Avatar>
+      <AgentAvatar className="size-10" />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span className="truncate text-[17px] font-semibold tracking-tight">

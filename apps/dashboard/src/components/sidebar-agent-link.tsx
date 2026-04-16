@@ -6,7 +6,7 @@ import { Settings2 } from 'lucide-react'
 
 import type { ClaimedAgent } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { AgentAvatar } from '@/components/agent-avatar'
 import { EffectiveStatusBadges } from '@/components/status-badge'
 
 // One row per claimed agent. Click the row (outside the gear) to
@@ -29,10 +29,6 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
   const isChat =
     !isSettings && (pathname === base || pathname.startsWith(`${base}/`))
 
-  const initial = (agent.display_name ?? agent.handle)
-    .charAt(0)
-    .toUpperCase()
-
   return (
     <div
       className={cn(
@@ -44,9 +40,7 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
         href={base}
         className="flex min-w-0 flex-1 items-center gap-3 px-2.5 py-2.5"
       >
-        <Avatar className="size-9">
-          <AvatarFallback>{initial}</AvatarFallback>
-        </Avatar>
+        <AgentAvatar className="size-9" />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-sm font-semibold">
