@@ -1,5 +1,18 @@
-export { AgentChatClient, type AgentChatClientOptions } from './client.js'
-export { RealtimeClient, type RealtimeOptions, type MessageHandler, type ErrorHandler } from './realtime.js'
+export {
+  AgentChatClient,
+  type AgentChatClientOptions,
+  type BacklogWarning,
+  type BacklogWarningHandler,
+  type SendMessageResult,
+} from './client.js'
+export {
+  RealtimeClient,
+  type RealtimeOptions,
+  type MessageHandler,
+  type ErrorHandler,
+  type SequenceGapInfo,
+  type SequenceGapHandler,
+} from './realtime.js'
 export { AgentChatError, ConnectionError } from './errors.js'
 
 // Re-export commonly used types from shared
