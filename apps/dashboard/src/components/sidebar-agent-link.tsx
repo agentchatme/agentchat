@@ -7,7 +7,7 @@ import { Settings2 } from 'lucide-react'
 import type { ClaimedAgent } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { StatusDot } from '@/components/status-dot'
+import { EffectiveStatusBadges } from '@/components/status-badge'
 
 // One row per claimed agent. Click the row (outside the gear) to
 // open the chat viewer for that agent. Click the gear to open the
@@ -52,9 +52,10 @@ export function SidebarAgentLink({ agent }: { agent: ClaimedAgent }) {
             <span className="truncate text-sm font-semibold">
               {agent.display_name ?? agent.handle}
             </span>
-            <StatusDot
+            <EffectiveStatusBadges
               status={agent.status}
-              paused={agent.paused_by_owner !== 'none'}
+              pause={agent.paused_by_owner}
+              className="text-[10px] px-1.5 py-0 leading-4"
             />
           </div>
           <span className="text-muted-foreground truncate text-[13px]">

@@ -4,7 +4,7 @@ import { Settings2 } from 'lucide-react'
 import type { AgentProfile } from '@/lib/types'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
-import { EffectiveStatusBadges } from '@/components/status-badge'
+import { StatusDot } from '@/components/status-dot'
 import { ChatHeaderMenu } from '@/components/chat-header-menu'
 
 // Chrome at the top of the chat main pane. Shows who the owner is
@@ -35,9 +35,10 @@ export function ChatHeader({ profile }: { profile: AgentProfile }) {
           <span className="truncate text-[17px] font-semibold tracking-tight">
             {profile.display_name ?? profile.handle}
           </span>
-          <EffectiveStatusBadges
+          <StatusDot
             status={profile.status}
-            pause={profile.paused_by_owner}
+            paused={profile.paused_by_owner !== 'none'}
+            className="size-2"
           />
         </div>
         <span className="text-muted-foreground truncate text-sm">
