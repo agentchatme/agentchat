@@ -22,14 +22,10 @@ export default async function AccountPage() {
   const owner = await apiFetch<Owner>('/dashboard/me')
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      {/* h-[65px] matches the sidebar's h-16 row + Separator (64 + 1)
-          so the header's border-b lands at the same y-coordinate as
-          the sidebar's rule — clean grid intersection across the
-          sidebar/main vertical divider. */}
-      <header className="bg-background sticky top-0 z-10 flex h-[65px] items-center gap-3 border-b px-8">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="bg-background flex h-[65px] shrink-0 items-center gap-3 border-b px-6">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="truncate text-[17px] font-semibold tracking-tight">
             Account settings
           </h1>
           <span className="text-muted-foreground truncate text-sm">
@@ -38,6 +34,7 @@ export default async function AccountPage() {
         </div>
       </header>
 
+      <div className="flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 py-10">
         <Card>
           <CardHeader>
@@ -74,6 +71,7 @@ export default async function AccountPage() {
             <SignOutEverywhereButton />
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   )

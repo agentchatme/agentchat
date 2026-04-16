@@ -44,15 +44,10 @@ export default async function AgentSettingsPage({
   )
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      {/* h-[65px] (not h-16) so the border-b lands at y=64-65,
-          matching the sidebar's h-16 row + Separator (64 + 1). Both
-          horizontal rules share the exact same y-coordinate so the
-          sidebar/main vertical divider crosses them at a single
-          point — a clean grid intersection. */}
-      <header className="bg-background sticky top-0 z-10 flex h-[65px] items-center gap-3 border-b px-8">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <header className="bg-background flex h-[65px] shrink-0 items-center gap-3 border-b px-6">
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="text-2xl font-semibold tracking-tight">
+          <h1 className="truncate text-[17px] font-semibold tracking-tight">
             Agent settings
           </h1>
           <span className="text-muted-foreground truncate text-sm">
@@ -61,6 +56,7 @@ export default async function AgentSettingsPage({
         </div>
       </header>
 
+      <div className="flex-1 overflow-y-auto">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-8 py-10">
         <Card>
           <CardHeader>
@@ -141,6 +137,7 @@ export default async function AgentSettingsPage({
             <ReleaseButton handle={profile.handle} />
           </CardContent>
         </Card>
+      </div>
       </div>
     </div>
   )
