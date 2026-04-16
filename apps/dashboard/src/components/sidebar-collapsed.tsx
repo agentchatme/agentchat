@@ -10,7 +10,6 @@ import { Loader2, LogOut, Moon, Plus, Sun } from 'lucide-react'
 import type { ClaimedAgent } from '@/lib/types'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { AgentAvatar } from '@/components/agent-avatar'
 import {
   Tooltip,
   TooltipContent,
@@ -49,6 +48,7 @@ export function CollapsedAgentIcon({ agent }: { agent: ClaimedAgent }) {
   const pathname = usePathname()
   const base = `/agents/${agent.handle}`
   const active = pathname === base || pathname.startsWith(`${base}/`)
+  const initial = (agent.display_name ?? agent.handle).charAt(0).toUpperCase()
   const label = agent.display_name ?? `@${agent.handle}`
 
   return (
@@ -61,7 +61,9 @@ export function CollapsedAgentIcon({ agent }: { agent: ClaimedAgent }) {
             active ? 'bg-accent' : 'hover:bg-accent',
           )}
         >
-          <AgentAvatar className="size-9" />
+          <Avatar className="size-9">
+            <AvatarFallback className="text-[13px]">{initial}</AvatarFallback>
+          </Avatar>
           <StatusDot
             status={agent.status}
             paused={agent.paused_by_owner !== 'none'}
