@@ -17,6 +17,7 @@ import type { NextConfig } from 'next'
 // D1 local dev, the rewrite below is enough.
 
 const apiBase = process.env['API_BASE'] ?? 'http://localhost:3000'
+const wsUrl = process.env['NEXT_PUBLIC_WS_URL'] ?? ''
 const isProd = process.env.NODE_ENV === 'production'
 
 // Hardened security headers applied to every dashboard response. The
@@ -55,7 +56,7 @@ const securityHeaders = [
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data:",
-      "connect-src 'self'",
+      `connect-src 'self'${wsUrl ? ` ${wsUrl}` : ''}`,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
