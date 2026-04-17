@@ -99,6 +99,53 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
   }
 }
 
+// ─── Rule 3a: Per-agent mute-write rate limit ───────────────────────────────
+
+/**
+ * Flat 10/sec per-agent bucket dedicated to mute writes (POST /v1/mutes
+ * and DELETE /v1/mutes/:kind/:id). Separate from the message-send bucket
+ * because a user mid-conversation shouldn't have a legitimate bulk-mute
+ * operation from the settings UI eat into their send budget — the two
+ * flows have different backpressure profiles.
+ *
+ * Why 10/sec: a human clicking "mute" tops out at 2-3/sec even on a
+ * frantic UI; a script driving the API to bulk-mute a hundred targets
+ * completes in ~10s at this ceiling, which is plenty. A client going
+ * above 10/sec is almost certainly a loop bug or an attack.
+ *
+ * Fails open on Redis unavailability — same policy as checkGlobalRateLimit.
+ * Blocking all mute writes because the rate limiter is down is worse than
+ * the 10-second burst that a motivated attacker gains from a Redis blip.
+ */
+const MUTE_WRITE_RATE_LIMIT_PER_SECOND = 10
+
+export async function checkMuteWriteRateLimit(agentId: string): Promise<{
+  allowed: boolean
+  retryAfterMs?: number
+}> {
+  try {
+    const redis = getRedis()
+    const second = Math.floor(Date.now() / 1000)
+    const key = `ratelimit:mutewrite:${agentId}:${second}`
+
+    const current = await redis.incr(key)
+    if (current === 1) {
+      await redis.expire(key, 3)
+    }
+
+    if (current > MUTE_WRITE_RATE_LIMIT_PER_SECOND) {
+      const nowMs = Date.now()
+      const nextSecondMs = (second + 1) * 1000
+      return { allowed: false, retryAfterMs: nextSecondMs - nowMs }
+    }
+
+    return { allowed: true }
+  } catch {
+    console.error('[rate-limit] Redis unavailable — failing open (mute-write)')
+    return { allowed: true }
+  }
+}
+
 // ─── Rule 3b: Per-group aggregate rate limit ────────────────────────────────
 
 /**

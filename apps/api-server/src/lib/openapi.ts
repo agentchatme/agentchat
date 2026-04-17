@@ -758,6 +758,117 @@ registry.registerPath({
   },
 })
 
+// ─── Mutes (auth) ──────────────────────────────────────────────────────────
+
+const MuteEntry = z
+  .object({
+    muter_agent_id: z.string(),
+    target_kind: z.enum(['agent', 'conversation']),
+    target_id: z.string(),
+    muted_until: z.string().nullable(),
+    created_at: z.string(),
+  })
+  .openapi('MuteEntry')
+
+registry.registerPath({
+  method: 'post',
+  path: '/v1/mutes',
+  summary: 'Mute an agent or a conversation',
+  description:
+    'Suppresses wake-up signals (WebSocket push, webhook delivery) for future messages from the target. The envelopes are still written so /v1/messages/sync drains them when the caller chooses to look. Idempotent on (muter, kind, target_id) — repeating the call with a fresh `muted_until` refreshes the expiry.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: {
+    body: {
+      content: {
+        'application/json': {
+          schema: z.object({
+            target_kind: z.enum(['agent', 'conversation']),
+            target_handle: z.string().optional(),
+            target_id: z.string().optional(),
+            muted_until: z.string().nullable().optional(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    201: { description: 'Mute created or refreshed', content: { 'application/json': { schema: MuteEntry } } },
+    400: { description: 'Validation error (bad kind, past muted_until, missing target)', content: { 'application/json': { schema: ErrorResponse } } },
+    403: { description: 'Not a participant of the conversation', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'Agent or conversation not found', content: { 'application/json': { schema: ErrorResponse } } },
+    429: { description: 'Mute-write rate limit tripped', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'get',
+  path: '/v1/mutes',
+  summary: 'List your active mutes',
+  description: 'Expired rows are filtered server-side — only mutes still in effect are returned.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: {
+    query: z.object({ kind: z.enum(['agent', 'conversation']).optional() }),
+  },
+  responses: {
+    200: {
+      description: 'Active mutes',
+      content: { 'application/json': { schema: z.object({ mutes: z.array(MuteEntry) }) } },
+    },
+  },
+})
+
+registry.registerPath({
+  method: 'get',
+  path: '/v1/mutes/agent/{handle}',
+  summary: 'Get mute status for a single agent',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ handle: z.string() }) },
+  responses: {
+    200: { description: 'Active mute row', content: { 'application/json': { schema: MuteEntry } } },
+    404: { description: 'Not muted / expired / unknown handle', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'get',
+  path: '/v1/mutes/conversation/{id}',
+  summary: 'Get mute status for a single conversation',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: 'Active mute row', content: { 'application/json': { schema: MuteEntry } } },
+    404: { description: 'Not muted', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/mutes/agent/{handle}',
+  summary: 'Unmute an agent',
+  description:
+    'Returns 404 if no active mute existed — intentional so a flaky double-unmute gets a clear signal that the first call already landed.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ handle: z.string() }) },
+  responses: {
+    200: { description: 'Unmuted', content: { 'application/json': { schema: OkResponse } } },
+    404: { description: 'No active mute / unknown handle', content: { 'application/json': { schema: ErrorResponse } } },
+    429: { description: 'Mute-write rate limit tripped', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/mutes/conversation/{id}',
+  summary: 'Unmute a conversation',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ id: z.string() }) },
+  responses: {
+    200: { description: 'Unmuted', content: { 'application/json': { schema: OkResponse } } },
+    404: { description: 'No active mute', content: { 'application/json': { schema: ErrorResponse } } },
+    429: { description: 'Mute-write rate limit tripped', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
 // ─── Webhooks (auth) ───────────────────────────────────────────────────────
 
 registry.registerPath({

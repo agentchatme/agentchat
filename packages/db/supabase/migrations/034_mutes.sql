@@ -106,6 +106,24 @@ COMMENT ON TABLE mutes IS
 -- deliveries, backlog skip, replay path, sender exclusion. The diff is
 -- minimal on purpose: the outbox filter is the only semantic change.
 --
+-- TESTING GAP (honest): the SQL-side aggregation below (v_muted, the
+-- NOT EXISTS filter on message_outbox) is NOT covered by this repo's
+-- vitest suite — there is no PGlite/testcontainers harness here. We
+-- have:
+--   - unit tests on the TS service layer (mute-service.test.ts) pinning
+--     validation semantics;
+--   - unit tests on the WS fan-out (push-to-group.test.ts) pinning that
+--     muted_recipient_ids is honored once returned;
+--   - a migration review against the existing 031 baseline so the diff
+--     is auditable by eye.
+-- The SQL itself is exercised end-to-end only in staging/production.
+-- If a future maintainer adds a DB test harness, the first candidate
+-- test is: a sender in a 3-member group where member C has muted
+-- either the sender or the conversation → call send_message_atomic,
+-- assert message_outbox has 1 row (the un-muted member), assert
+-- message_deliveries has 2 rows (both recipients), assert
+-- muted_recipient_ids contains C.
+--
 -- Postgres refuses to change OUT parameters via CREATE OR REPLACE (42P13
 -- "cannot change return type of existing function"), so we DROP first.
 -- Safe because the function lives inside this single migration

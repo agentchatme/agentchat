@@ -8,8 +8,27 @@ import {
   getMuteForAgent,
   MuteError,
 } from '../services/mute.service.js'
+import { checkMuteWriteRateLimit } from '../services/enforcement.service.js'
 
 const mutes = new Hono()
+
+// Apply the mute-write rate limit. 429 with Retry-After ms so clients can
+// back off mechanically. Fails open on Redis outage (see enforcement
+// service for rationale). Called from POST + DELETE paths; GETs are on
+// the global per-request budget at the edge and don't need their own
+// bucket.
+async function guardMuteWriteRate(c: Context, muterAgentId: string) {
+  const check = await checkMuteWriteRateLimit(muterAgentId)
+  if (check.allowed) return null
+  return c.json(
+    {
+      code: 'RATE_LIMITED',
+      message: 'Too many mute writes per second',
+      retry_after_ms: check.retryAfterMs,
+    },
+    429,
+  )
+}
 
 type MuteErrorStatus = 400 | 403 | 404
 
@@ -58,6 +77,9 @@ async function resolveTarget(kind: string, pathValue: string): Promise<string> {
 // side effects (enforcement eval, webhooks) beyond the row write.
 mutes.post('/', authMiddleware, async (c) => {
   const muterAgentId = c.get('agentId')
+
+  const rateLimited = await guardMuteWriteRate(c, muterAgentId)
+  if (rateLimited) return rateLimited
 
   let body: unknown
   try {
@@ -198,6 +220,9 @@ mutes.delete('/agent/:handle', authMiddleware, async (c) => {
   const muterAgentId = c.get('agentId')
   const handle = c.req.param('handle')
 
+  const rateLimited = await guardMuteWriteRate(c, muterAgentId)
+  if (rateLimited) return rateLimited
+
   try {
     const targetId = await resolveTarget('agent', handle)
     await removeMuteForAgent({ muterAgentId, targetKind: 'agent', targetId })
@@ -212,6 +237,9 @@ mutes.delete('/agent/:handle', authMiddleware, async (c) => {
 mutes.delete('/conversation/:id', authMiddleware, async (c) => {
   const muterAgentId = c.get('agentId')
   const id = c.req.param('id')
+
+  const rateLimited = await guardMuteWriteRate(c, muterAgentId)
+  if (rateLimited) return rateLimited
 
   try {
     await removeMuteForAgent({ muterAgentId, targetKind: 'conversation', targetId: id })

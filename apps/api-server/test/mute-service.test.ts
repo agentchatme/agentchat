@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // decisions, not integration behavior.
 
 const findAgentByIdMock = vi.fn()
-const getConversationMock = vi.fn()
+const findConversationByIdMock = vi.fn()
 const isParticipantMock = vi.fn()
 const createMuteMock = vi.fn()
 const removeMuteMock = vi.fn()
@@ -24,7 +24,7 @@ const getMuteStatusMock = vi.fn()
 
 vi.mock('@agentchat/db', () => ({
   findAgentById: findAgentByIdMock,
-  getConversation: getConversationMock,
+  findConversationById: findConversationByIdMock,
   isParticipant: isParticipantMock,
   createMute: createMuteMock,
   removeMute: removeMuteMock,
@@ -41,7 +41,7 @@ const {
 
 beforeEach(() => {
   findAgentByIdMock.mockReset()
-  getConversationMock.mockReset()
+  findConversationByIdMock.mockReset()
   isParticipantMock.mockReset()
   createMuteMock.mockReset()
   removeMuteMock.mockReset()
@@ -68,7 +68,7 @@ describe('createMuteForAgent — validation', () => {
   })
 
   it('allows self-participant muting of a group conversation', async () => {
-    getConversationMock.mockResolvedValue({ id: 'conv_group', type: 'group' })
+    findConversationByIdMock.mockResolvedValue({ id: 'conv_group', type: 'group' })
     isParticipantMock.mockResolvedValue(true)
     createMuteMock.mockResolvedValue({
       muter_agent_id: 'agt_alice',
@@ -119,7 +119,7 @@ describe('createMuteForAgent — validation', () => {
   })
 
   it('returns CONVERSATION_NOT_FOUND when the target conversation does not exist', async () => {
-    getConversationMock.mockRejectedValue(new Error('no rows'))
+    findConversationByIdMock.mockResolvedValue(null)
     await expect(
       createMuteForAgent({
         muterAgentId: 'agt_alice',
@@ -130,8 +130,24 @@ describe('createMuteForAgent — validation', () => {
     expect(createMuteMock).not.toHaveBeenCalled()
   })
 
+  it('surfaces real DB errors from findConversationById (does not mask as NOT_FOUND)', async () => {
+    // Regression pin: the earlier implementation wrapped getConversation in
+    // try/catch and translated *any* throw into CONVERSATION_NOT_FOUND, which
+    // silently swallowed transient DB outages as 404s. findConversationById
+    // returns null only for "no rows" and re-throws everything else.
+    findConversationByIdMock.mockRejectedValue(new Error('connection reset'))
+    await expect(
+      createMuteForAgent({
+        muterAgentId: 'agt_alice',
+        targetKind: 'conversation',
+        targetId: 'conv_xyz',
+      }),
+    ).rejects.toThrow('connection reset')
+    expect(createMuteMock).not.toHaveBeenCalled()
+  })
+
   it('returns NOT_PARTICIPANT when the muter is not in the conversation', async () => {
-    getConversationMock.mockResolvedValue({ id: 'conv_xyz', type: 'group' })
+    findConversationByIdMock.mockResolvedValue({ id: 'conv_xyz', type: 'group' })
     isParticipantMock.mockResolvedValue(false)
     await expect(
       createMuteForAgent({

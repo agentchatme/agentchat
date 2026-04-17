@@ -4,7 +4,7 @@ import {
   listMutes,
   getMuteStatus,
   findAgentById,
-  getConversation,
+  findConversationById,
   isParticipant,
   type MuteRow,
   type MuteTargetKind,
@@ -111,14 +111,10 @@ export async function createMuteForAgent(input: CreateMuteInput): Promise<MuteRo
       throw new MuteError('AGENT_NOT_FOUND', `Agent ${targetId} not found`, 404)
     }
   } else {
-    // targetKind === 'conversation'
-    let convo: Awaited<ReturnType<typeof getConversation>> | null = null
-    try {
-      convo = await getConversation(targetId)
-    } catch {
-      // getConversation throws on "no rows" via .single(); treat as 404.
-      convo = null
-    }
+    // targetKind === 'conversation'. findConversationById returns null on
+    // missing row but propagates real DB errors — so a network blip no
+    // longer gets silently rebranded as "conversation not found".
+    const convo = await findConversationById(targetId)
     if (!convo) {
       throw new MuteError('CONVERSATION_NOT_FOUND', `Conversation ${targetId} not found`, 404)
     }

@@ -416,6 +416,25 @@ export async function getConversation(conversationId: string) {
   return data
 }
 
+/**
+ * Like getConversation but returns null on "no rows" instead of throwing,
+ * and still surfaces real errors (network, permissions). Use this when
+ * the caller needs to DISTINGUISH a missing row from an infrastructure
+ * failure — e.g. a service-layer existence check that must map missing
+ * to 404 and everything else to 500. getConversation collapses both into
+ * a thrown error, which is fine for internal call sites but wrong for
+ * input-validation paths.
+ */
+export async function findConversationById(conversationId: string) {
+  const { data, error } = await getSupabaseClient()
+    .from('conversations')
+    .select('*')
+    .eq('id', conversationId)
+    .maybeSingle()
+  if (error) throw error
+  return data
+}
+
 export async function markConversationEstablished(conversationId: string) {
   const { error } = await getSupabaseClient()
     .from('conversations')
