@@ -141,6 +141,25 @@ interface ContactListResult {
   offset: number
 }
 
+// Mute target kinds accepted by POST /v1/mutes. Mirrors the
+// MuteTargetKind enum in the DB layer.
+export type MuteTargetKind = 'agent' | 'conversation'
+
+// Shape returned by POST /v1/mutes and GET /v1/mutes/.../:id. Fields
+// mirror the `mutes` row; muted_until is ISO-8601 or null for
+// indefinite mutes.
+export interface MuteEntry {
+  muter_agent_id: string
+  target_kind: MuteTargetKind
+  target_id: string
+  muted_until: string | null
+  created_at: string
+}
+
+interface MuteListResult {
+  mutes: MuteEntry[]
+}
+
 export class AgentChatClient {
   private apiKey: string
   private baseUrl: string
@@ -560,6 +579,82 @@ export class AgentChatClient {
 
   async reportAgent(handle: string, reason?: string) {
     return this.request<void>('POST', `/v1/contacts/${encodeURIComponent(handle)}/report`, reason ? { reason } : {})
+  }
+
+  // --- Mutes ---
+  //
+  // Mute suppresses real-time push (WS + webhook) from a specific agent
+  // or a specific conversation, without blocking/leaving. Envelopes
+  // still land in /v1/messages/sync and the unread counter still bumps,
+  // so the muter can catch up on their own schedule. The sender sees a
+  // normal "delivered" receipt — no mute signal leaks across the wire.
+  //
+  // All mute APIs are idempotent:
+  //   - Re-muting with a different mutedUntil refreshes the expiry.
+  //   - Unmuting a non-muted target returns 404; the SDK throws
+  //     AgentChatError with code='NOT_FOUND', which callers can ignore
+  //     if they only care about the end state.
+
+  async muteAgent(handle: string, options?: { mutedUntil?: string | null }) {
+    return this.request<MuteEntry>('POST', '/v1/mutes', {
+      target_kind: 'agent',
+      target_handle: handle,
+      muted_until: options?.mutedUntil ?? null,
+    })
+  }
+
+  async muteConversation(
+    conversationId: string,
+    options?: { mutedUntil?: string | null },
+  ) {
+    return this.request<MuteEntry>('POST', '/v1/mutes', {
+      target_kind: 'conversation',
+      target_id: conversationId,
+      muted_until: options?.mutedUntil ?? null,
+    })
+  }
+
+  async unmuteAgent(handle: string) {
+    return this.request<void>('DELETE', `/v1/mutes/agent/${encodeURIComponent(handle)}`)
+  }
+
+  async unmuteConversation(conversationId: string) {
+    return this.request<void>('DELETE', `/v1/mutes/conversation/${encodeURIComponent(conversationId)}`)
+  }
+
+  async listMutes(options?: { kind?: MuteTargetKind }) {
+    const params = new URLSearchParams()
+    if (options?.kind) params.set('kind', options.kind)
+    const qs = params.toString()
+    return this.request<MuteListResult>('GET', `/v1/mutes${qs ? `?${qs}` : ''}`)
+  }
+
+  // Returns null if there is no active mute for that target; returns
+  // the MuteEntry otherwise. Swallows the 404 that the server returns
+  // for the "not muted" case — on the SDK surface null is the natural
+  // "nothing here" signal.
+  async getAgentMuteStatus(handle: string): Promise<MuteEntry | null> {
+    try {
+      return await this.request<MuteEntry>(
+        'GET',
+        `/v1/mutes/agent/${encodeURIComponent(handle)}`,
+      )
+    } catch (err) {
+      if (err instanceof AgentChatError && err.status === 404) return null
+      throw err
+    }
+  }
+
+  async getConversationMuteStatus(conversationId: string): Promise<MuteEntry | null> {
+    try {
+      return await this.request<MuteEntry>(
+        'GET',
+        `/v1/mutes/conversation/${encodeURIComponent(conversationId)}`,
+      )
+    } catch (err) {
+      if (err instanceof AgentChatError && err.status === 404) return null
+      throw err
+    }
   }
 
   // --- Presence ---
