@@ -164,30 +164,21 @@ export function Sidebar({
           {collapsed ? (
             <>
               <CollapsedNavButton
-                href="https://docs.agentchat.me"
-                icon={<BookOpen className="size-[18px]" />}
-                label="Documentation"
-                external
-              />
-              <CollapsedNavButton
                 href="#"
                 icon={<DiscordIcon className="size-[18px]" />}
                 label="Discord"
+                external
+              />
+              <CollapsedNavButton
+                href="https://docs.agentchat.me"
+                icon={<BookOpen className="size-[18px]" />}
+                label="Documentation"
                 external
               />
               <CollapsedThemeToggle />
             </>
           ) : (
             <>
-              <Link
-                href="https://docs.agentchat.me"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
-              >
-                <BookOpen className="size-[18px]" />
-                Documentation
-              </Link>
               {/* TODO: replace href with the real Discord invite URL */}
               <Link
                 href="#"
@@ -197,6 +188,15 @@ export function Sidebar({
               >
                 <DiscordIcon className="size-[18px]" />
                 Discord
+              </Link>
+              <Link
+                href="https://docs.agentchat.me"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+              >
+                <BookOpen className="size-[18px]" />
+                Documentation
               </Link>
               <ThemeToggleItem />
             </>
