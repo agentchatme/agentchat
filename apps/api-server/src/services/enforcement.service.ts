@@ -6,7 +6,9 @@ import {
   GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND,
   GROUP_INVITES_PER_DAY,
 } from '@agentchat/shared'
+import { Sentry } from '../instrument.js'
 import { getRedis } from '../lib/redis.js'
+import { logger } from '../lib/logger.js'
 import { publishDisconnect } from '../ws/pubsub.js'
 
 // ─── Rule 1: Cold Outreach Cap ─────────────────────────────────────────────
@@ -100,6 +102,75 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
 // ─── Rule 3b: Per-group aggregate rate limit ────────────────────────────────
 
 /**
+ * Alerting thresholds for group-aggregate rate-limit hits.
+ *
+ * The Prometheus counter `agentchat_rate_limit_hits_total{rule="group_aggregate"}`
+ * records every hit. A background Grafana/Alertmanager rule is the right long-
+ * term home for threshold alerts, but we don't have Alertmanager running yet —
+ * so this in-code Sentry fire-on-spike mirrors the pattern used for the pub/sub
+ * disconnect alert in ws/pubsub.ts:280. It's process-local (3-machine fleet →
+ * each machine has its own counter), which means the effective fleet-wide
+ * threshold is roughly 3× whatever we set here — but the asymmetry is fine for
+ * a floor on "something is very wrong in a specific group."
+ *
+ * Tuning:
+ *   - Legit background rate should be ~0 hits/minute. Honest agents do not
+ *     sustainably exceed 20/sec aggregate (the cap). Hitting the cap at all
+ *     implies either an attack, a looped agent, or a misconfigured notification
+ *     bridge.
+ *   - 30 hits/minute on one machine = ~1 hit every 2 seconds sustained. That's
+ *     well above any transient-burst scenario (a poll-style "everyone reply"
+ *     that tips the cap for 1-2 seconds generates 1-3 hits, not 30).
+ *   - Cooldown of 5 minutes between alerts prevents Sentry spam during a
+ *     sustained attack — on-call gets one page, not 60.
+ */
+const GROUP_AGGREGATE_ALERT_THRESHOLD_PER_MIN = 30
+const GROUP_AGGREGATE_ALERT_COOLDOWN_MS = 5 * 60 * 1000
+const GROUP_AGGREGATE_ALERT_WINDOW_MS = 60 * 1000
+
+let groupAggregateHitsInWindow = 0
+let groupAggregateWindowStartedAt = Date.now()
+let groupAggregateLastAlertAt = 0
+let groupAggregateLastOffendingConvId: string | null = null
+
+function recordGroupAggregateHit(conversationId: string): void {
+  const now = Date.now()
+
+  if (now - groupAggregateWindowStartedAt >= GROUP_AGGREGATE_ALERT_WINDOW_MS) {
+    groupAggregateHitsInWindow = 0
+    groupAggregateWindowStartedAt = now
+  }
+
+  groupAggregateHitsInWindow += 1
+  groupAggregateLastOffendingConvId = conversationId
+
+  const overThreshold = groupAggregateHitsInWindow > GROUP_AGGREGATE_ALERT_THRESHOLD_PER_MIN
+  const outsideCooldown = now - groupAggregateLastAlertAt > GROUP_AGGREGATE_ALERT_COOLDOWN_MS
+
+  if (overThreshold && outsideCooldown) {
+    groupAggregateLastAlertAt = now
+    Sentry.captureMessage('group_aggregate_rate_limit_spike', {
+      level: 'warning',
+      tags: { component: 'enforcement', rule: 'group_aggregate' },
+      extra: {
+        hits_in_last_minute: groupAggregateHitsInWindow,
+        threshold_per_min: GROUP_AGGREGATE_ALERT_THRESHOLD_PER_MIN,
+        most_recent_offender_conversation_id: groupAggregateLastOffendingConvId,
+        cap_per_second: GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND,
+      },
+    })
+    logger.warn(
+      {
+        hits_in_last_minute: groupAggregateHitsInWindow,
+        threshold_per_min: GROUP_AGGREGATE_ALERT_THRESHOLD_PER_MIN,
+        most_recent_offender_conversation_id: groupAggregateLastOffendingConvId,
+      },
+      'group_aggregate_rate_limit_spike',
+    )
+  }
+}
+
+/**
  * Per-second sliding window on total sends INTO a group, across all members.
  *
  * Keyed on conversation_id — every member's send increments the SAME bucket.
@@ -116,6 +187,10 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
  * downstream per-recipient backlog cap (migration 028:245, v_cap = 10,000)
  * remains the last line of defense against unbounded queue growth if Redis
  * is simultaneously unreachable AND an attack is in progress.
+ *
+ * Every cap hit is recorded in `rateLimitHits{rule='group_aggregate'}` for
+ * Prometheus and also passes through `recordGroupAggregateHit` which fires a
+ * Sentry alert on sustained spikes (see docstring above).
  */
 export async function checkGroupAggregateRateLimit(conversationId: string): Promise<{
   allowed: boolean
@@ -132,6 +207,7 @@ export async function checkGroupAggregateRateLimit(conversationId: string): Prom
     }
 
     if (current > GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND) {
+      recordGroupAggregateHit(conversationId)
       const nowMs = Date.now()
       const nextSecondMs = (second + 1) * 1000
       return { allowed: false, retryAfterMs: nextSecondMs - nowMs }
@@ -142,6 +218,20 @@ export async function checkGroupAggregateRateLimit(conversationId: string): Prom
     console.error('[group-aggregate-rate-limit] Redis unavailable — failing open')
     return { allowed: true }
   }
+}
+
+/**
+ * Test-only: resets the in-process hit counter and last-alert timestamp. The
+ * production alert path is module-level state for a reason (a single counter
+ * per process is the correct granularity for this alert), but tests need to
+ * reset between cases. Exported with an underscore prefix so it's obvious at
+ * the call site that this is not part of the public surface.
+ */
+export function _resetGroupAggregateAlertStateForTests(): void {
+  groupAggregateHitsInWindow = 0
+  groupAggregateWindowStartedAt = Date.now()
+  groupAggregateLastAlertAt = 0
+  groupAggregateLastOffendingConvId = null
 }
 
 // ─── Rule 4: Group invite cap ───────────────────────────────────────────────
