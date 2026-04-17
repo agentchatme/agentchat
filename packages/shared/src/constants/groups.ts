@@ -1,9 +1,21 @@
-/** Hard cap on active members per group. Chosen for Phase 1 to keep
- *  per-message fan-out bounded: each send writes N-1 delivery envelope rows
- *  plus N-1 pub/sub publishes plus N-1 webhook enqueues. At 100 members
- *  that's ~100 rows + ~100 pushes per group send, well within Postgres
- *  and Redis throughput for Phase 1 scale. */
-export const GROUP_MAX_MEMBERS = 100
+/** Hard cap on active members per group.
+ *
+ *  The infrastructure-safe ceiling for this cap is determined by peak
+ *  fan-out per group send, not by the member count itself: each send
+ *  writes N-1 delivery rows, N-1 pub/sub publishes, and N-1 webhook
+ *  enqueues. What bounds the WORST CASE is the per-group aggregate rate
+ *  limit (GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND) — with it in place, peak
+ *  fan-out per group is `agg_rate × (N-1)` regardless of how many senders
+ *  are bursting. Per-recipient silent-drop math is effectively size-
+ *  independent under that cap (~8–9 min to the 10k recipient backlog wall
+ *  whether N=100 or N=256).
+ *
+ *  256 was picked as the first bump because it matches a proven peer
+ *  benchmark (old WhatsApp / Messenger / Signal group ceiling), is
+ *  comfortably within current fleet capacity with the aggregate rate
+ *  limit in place, and leaves headroom to raise further (512 / 1024) once
+ *  we've validated real workloads at this size. */
+export const GROUP_MAX_MEMBERS = 256
 
 /** Per-sender cap on group invites sent in a rolling 24h window. Flat,
  *  all agents. Belt-and-suspenders against "create 10,000 pending
