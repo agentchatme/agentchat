@@ -220,6 +220,25 @@ export const rateLimitHits = counter(
   'Rate limit rejections, labeled by rule.',
 )
 
+// Mute writes (POST /v1/mutes, DELETE /v1/mutes/:kind/:id). Labeled by
+// outcome so dashboards can split the happy path from client errors and
+// rate-limit trips in a single counter:
+//
+//   outcome="created"        — POST resolved to a new-or-refreshed row
+//   outcome="removed"        — DELETE deleted an active row
+//   outcome="rejected"       — MuteError before the DB write
+//                              (self-mute, not-participant, bad kind,
+//                              agent/conversation not found, past muted_until)
+//   outcome="rate_limited"   — guardMuteWriteRate tripped; handler never ran
+//
+// Sustained non-zero rejected + rate_limited rates are the operator
+// signal that a client is looping or misconfigured. `created` and
+// `removed` together track organic feature usage.
+export const mutesWritten = counter(
+  'agentchat_mutes_written_total',
+  'Mute write outcomes (created|removed|rejected|rate_limited).',
+)
+
 export const wsConnectionsCurrent = gauge(
   'agentchat_ws_connections',
   'Current number of authenticated WebSocket connections.',

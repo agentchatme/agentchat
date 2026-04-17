@@ -9,10 +9,17 @@ import {
   type MuteRow,
   type MuteTargetKind,
 } from '@agentchat/db'
+import { logger } from '../lib/logger.js'
+import { mutesWritten } from '../lib/metrics.js'
 
 // Typed error mirroring ContactError so route handlers can map
 // (code, status) to HTTP the same way. Keeping the shape identical avoids
 // a second error-mapping helper in the route layer.
+//
+// Every throw of MuteError inside this file also bumps the
+// `mutesWritten{outcome="rejected"}` counter with the error code as a
+// label so dashboards can see which validation path is firing without
+// having to grep logs. The counter is declared centrally in lib/metrics.ts.
 export class MuteError extends Error {
   code: string
   status: number
@@ -23,6 +30,15 @@ export class MuteError extends Error {
     this.code = code
     this.status = status
   }
+}
+
+// Small helper: throw a MuteError and bump the rejected counter in one
+// place. Keeping it inline (rather than a decorator or wrapper) means the
+// throw site in the caller still shows the exact condition that tripped,
+// which makes grep-by-code easier.
+function rejectMute(code: string, message: string, status: number): never {
+  mutesWritten.inc({ outcome: 'rejected', code })
+  throw new MuteError(code, message, status)
 }
 
 const VALID_KINDS: ReadonlySet<MuteTargetKind> = new Set(['agent', 'conversation'])
@@ -41,21 +57,21 @@ const VALID_KINDS: ReadonlySet<MuteTargetKind> = new Set(['agent', 'conversation
 function parseMutedUntil(raw: string | null | undefined): string | null {
   if (raw === undefined || raw === null) return null
   if (typeof raw !== 'string') {
-    throw new MuteError('VALIDATION_ERROR', 'muted_until must be an ISO-8601 string or null', 400)
+    rejectMute('VALIDATION_ERROR', 'muted_until must be an ISO-8601 string or null', 400)
   }
   const ts = Date.parse(raw)
   if (Number.isNaN(ts)) {
-    throw new MuteError('VALIDATION_ERROR', 'muted_until is not a valid ISO-8601 timestamp', 400)
+    rejectMute('VALIDATION_ERROR', 'muted_until is not a valid ISO-8601 timestamp', 400)
   }
   if (ts <= Date.now()) {
-    throw new MuteError('VALIDATION_ERROR', 'muted_until must be in the future', 400)
+    rejectMute('VALIDATION_ERROR', 'muted_until must be in the future', 400)
   }
   return new Date(ts).toISOString()
 }
 
 function assertValidKind(kind: string): asserts kind is MuteTargetKind {
   if (!VALID_KINDS.has(kind as MuteTargetKind)) {
-    throw new MuteError(
+    rejectMute(
       'VALIDATION_ERROR',
       `target_kind must be 'agent' or 'conversation', got '${kind}'`,
       400,
@@ -97,18 +113,18 @@ export async function createMuteForAgent(input: CreateMuteInput): Promise<MuteRo
   assertValidKind(targetKind)
 
   if (!targetId || typeof targetId !== 'string') {
-    throw new MuteError('VALIDATION_ERROR', 'target_id is required', 400)
+    rejectMute('VALIDATION_ERROR', 'target_id is required', 400)
   }
 
   const mutedUntil = parseMutedUntil(input.mutedUntil)
 
   if (targetKind === 'agent') {
     if (targetId === muterAgentId) {
-      throw new MuteError('SELF_MUTE', 'Cannot mute yourself', 400)
+      rejectMute('SELF_MUTE', 'Cannot mute yourself', 400)
     }
     const target = await findAgentById(targetId)
     if (!target) {
-      throw new MuteError('AGENT_NOT_FOUND', `Agent ${targetId} not found`, 404)
+      rejectMute('AGENT_NOT_FOUND', `Agent ${targetId} not found`, 404)
     }
   } else {
     // targetKind === 'conversation'. findConversationById returns null on
@@ -116,11 +132,11 @@ export async function createMuteForAgent(input: CreateMuteInput): Promise<MuteRo
     // longer gets silently rebranded as "conversation not found".
     const convo = await findConversationById(targetId)
     if (!convo) {
-      throw new MuteError('CONVERSATION_NOT_FOUND', `Conversation ${targetId} not found`, 404)
+      rejectMute('CONVERSATION_NOT_FOUND', `Conversation ${targetId} not found`, 404)
     }
     const participant = await isParticipant(targetId, muterAgentId)
     if (!participant) {
-      throw new MuteError(
+      rejectMute(
         'NOT_PARTICIPANT',
         'You must be a participant of the conversation to mute it',
         403,
@@ -128,12 +144,30 @@ export async function createMuteForAgent(input: CreateMuteInput): Promise<MuteRo
     }
   }
 
-  return createMute({
+  const row = await createMute({
     muter_agent_id: muterAgentId,
     target_kind: targetKind,
     target_id: targetId,
     muted_until: mutedUntil,
   })
+
+  // Happy-path counter + structured audit line. Info-level because a
+  // successful mute is operator-relevant signal (feature-usage curve,
+  // abuse pattern detection) but not a warn/error event. The row itself
+  // is idempotent on the natural key — this will fire again on a refresh
+  // call, which is the correct behavior: every write that lands is worth
+  // counting even if it's just an expiry refresh.
+  mutesWritten.inc({ outcome: 'created', kind: targetKind })
+  logger.info(
+    {
+      muter_agent_id: muterAgentId,
+      target_kind: targetKind,
+      target_id: targetId,
+      muted_until: mutedUntil,
+    },
+    'mute_created',
+  )
+  return row
 }
 
 export interface RemoveMuteInput {
@@ -153,8 +187,18 @@ export async function removeMuteForAgent(input: RemoveMuteInput): Promise<void> 
 
   const existed = await removeMute(muterAgentId, targetKind, targetId)
   if (!existed) {
-    throw new MuteError('NOT_FOUND', 'No active mute found for that target', 404)
+    rejectMute('NOT_FOUND', 'No active mute found for that target', 404)
   }
+
+  mutesWritten.inc({ outcome: 'removed', kind: targetKind })
+  logger.info(
+    {
+      muter_agent_id: muterAgentId,
+      target_kind: targetKind,
+      target_id: targetId,
+    },
+    'mute_removed',
+  )
 }
 
 /**

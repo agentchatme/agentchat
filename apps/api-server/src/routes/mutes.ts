@@ -9,6 +9,7 @@ import {
   MuteError,
 } from '../services/mute.service.js'
 import { checkMuteWriteRateLimit } from '../services/enforcement.service.js'
+import { mutesWritten, rateLimitHits } from '../lib/metrics.js'
 
 const mutes = new Hono()
 
@@ -20,6 +21,13 @@ const mutes = new Hono()
 async function guardMuteWriteRate(c: Context, muterAgentId: string) {
   const check = await checkMuteWriteRateLimit(muterAgentId)
   if (check.allowed) return null
+  // Two counters on the same event, by design: the generic
+  // `rateLimitHits{rule='mute_write'}` lets the rate-limit dashboard
+  // panel show this alongside global/cold-outreach/group-aggregate on
+  // one chart, and `mutesWritten{outcome='rate_limited'}` keeps the
+  // mute-specific counter self-contained for the mute panel.
+  rateLimitHits.inc({ rule: 'mute_write' })
+  mutesWritten.inc({ outcome: 'rate_limited' })
   return c.json(
     {
       code: 'RATE_LIMITED',
