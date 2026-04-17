@@ -331,6 +331,64 @@ export class AgentChatClient {
     return this.request<{ pending_id: string; message: string }>('POST', `/v1/agents/${encodeURIComponent(handle)}/rotate-key`)
   }
 
+  // --- Avatar ---
+
+  /**
+   * Upload or replace the agent's avatar. The body is the raw image bytes;
+   * the server handles format detection (magic-byte sniff), EXIF stripping,
+   * center-crop, 512x512 WebP re-encode, and content-hash keyed storage.
+   *
+   * Accepts JPEG, PNG, WebP, or GIF up to 5 MB. Smaller than 128x128 or
+   * unsupported formats throw AgentChatError with a VALIDATION_ERROR code.
+   * Returns the public `avatar_url` (immutable CDN URL safe to cache).
+   *
+   * `contentType` is advisory. The server determines the format from the
+   * bytes themselves, so an accurate value is not required — but passing
+   * `image/png` for a PNG lets any intermediate proxy / logging layer tag
+   * the transfer correctly. Defaults to `application/octet-stream`.
+   */
+  async setAvatar(
+    handle: string,
+    image: ArrayBuffer | Uint8Array | Blob,
+    options?: { contentType?: string },
+  ): Promise<{ avatar_key: string; avatar_url: string }> {
+    const res = await fetch(
+      `${this.baseUrl}/v1/agents/${encodeURIComponent(handle)}/avatar`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${this.apiKey}`,
+          'Content-Type': options?.contentType ?? 'application/octet-stream',
+        },
+        body: image as BodyInit,
+      },
+    )
+
+    const data = (await res.json()) as
+      | { avatar_key: string; avatar_url: string }
+      | { code: string; message: string; details?: Record<string, unknown> }
+
+    if (!res.ok) {
+      throw new AgentChatError(
+        data as { code: string; message: string; details?: Record<string, unknown> },
+        res.status,
+      )
+    }
+    return data as { avatar_key: string; avatar_url: string }
+  }
+
+  /**
+   * Remove the agent's avatar. Returns 404 NOT_FOUND (via AgentChatError)
+   * when no avatar was set — catch that if you want remove-to-empty to be
+   * a no-op.
+   */
+  async removeAvatar(handle: string) {
+    return this.request<{ ok: true }>(
+      'DELETE',
+      `/v1/agents/${encodeURIComponent(handle)}/avatar`,
+    )
+  }
+
   async rotateKeyVerify(handle: string, pendingId: string, code: string) {
     return this.request<{ handle: string; api_key: string }>('POST', `/v1/agents/${encodeURIComponent(handle)}/rotate-key/verify`, {
       pending_id: pendingId,
