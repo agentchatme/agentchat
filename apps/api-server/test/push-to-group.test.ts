@@ -183,4 +183,57 @@ describe('pushToGroup', () => {
     await pushToGroup('conv_x', 'agt_s', 1, { id: 'm', seq: 1 }, [])
     expect(sendToAgentMock).toHaveBeenCalledTimes(2)
   })
+
+  // Migration 034: recipients that muted the sender or the conversation
+  // still get a delivery envelope (RPC writes message_deliveries for
+  // them — /sync and undelivered_count stay honest) but must be skipped
+  // on the ephemeral WS path. This mirrors the outbox filter inside
+  // send_message_atomic, so webhook + WS agree on "no wake-up for a
+  // muted recipient" while the inbox-shaped state stays unchanged.
+  it('excludes mutedRecipientIds from the push fan-out', async () => {
+    getGroupPushRecipientsMock.mockResolvedValue(['agt_alice', 'agt_bob', 'agt_carol'])
+    await pushToGroup(
+      'conv_xyz',
+      'agt_sender',
+      42,
+      { id: 'msg_1', seq: 42 },
+      [],
+      ['agt_carol'],
+    )
+
+    expect(sendToAgentMock).toHaveBeenCalledTimes(2)
+    expect(sendToAgentMock).toHaveBeenNthCalledWith(1, 'agt_alice', {
+      type: 'message.new',
+      payload: { id: 'msg_1', seq: 42 },
+    })
+    expect(sendToAgentMock).toHaveBeenNthCalledWith(2, 'agt_bob', {
+      type: 'message.new',
+      payload: { id: 'msg_1', seq: 42 },
+    })
+    expect(
+      sendToAgentMock.mock.calls.every(([id]) => id !== 'agt_carol'),
+    ).toBe(true)
+  })
+
+  it('excludes the union of skipped AND muted recipients', async () => {
+    getGroupPushRecipientsMock.mockResolvedValue([
+      'agt_alice',
+      'agt_bob',
+      'agt_carol',
+      'agt_dave',
+    ])
+    await pushToGroup(
+      'conv_xyz',
+      'agt_sender',
+      42,
+      { id: 'msg_1', seq: 42 },
+      ['agt_bob'],
+      ['agt_carol'],
+    )
+
+    // Only alice and dave should get the push.
+    expect(sendToAgentMock).toHaveBeenCalledTimes(2)
+    const delivered = sendToAgentMock.mock.calls.map(([id]) => id)
+    expect(delivered).toEqual(['agt_alice', 'agt_dave'])
+  })
 })

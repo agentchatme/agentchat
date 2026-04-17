@@ -31,5 +31,10 @@ export const ConversationListItem = z.object({
   group_member_count: z.number().int().nonnegative().nullable(),
   last_message_at: z.string().datetime().nullable(),
   updated_at: z.string().datetime(),
+  // Per-agent mute state. Covers both DMs the caller has muted (either the
+  // conversation itself or the counterparty agent) and groups the caller
+  // has muted. Present on every row so the client can render the muted
+  // badge without a second request.
+  is_muted: z.boolean(),
 })
 export type ConversationListItem = z.infer<typeof ConversationListItem>

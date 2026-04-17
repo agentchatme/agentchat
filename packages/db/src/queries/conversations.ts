@@ -1,4 +1,5 @@
 import { getSupabaseClient } from '../client.js'
+import { listMutedConversationIds, listMutedAgentIds } from './mutes.js'
 
 export async function findDirectConversation(agentA: string, agentB: string): Promise<string | null> {
   const { data, error } = await getSupabaseClient()
@@ -185,21 +186,44 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     }),
   )
 
-  // Map direct conv id → counterparty handle/display_name. A direct conv
-  // always has exactly one other participant in Phase 1, but we tolerate
-  // zero (other side purged) by leaving participants empty.
+  // Map direct conv id → counterparty agent id/handle/display_name. A
+  // direct conv always has exactly one other participant in Phase 1, but
+  // we tolerate zero (other side purged) by leaving participants empty.
   const directParticipantMap = new Map<
     string,
-    { handle: string; display_name: string | null }
+    { agent_id: string; handle: string; display_name: string | null }
   >()
   for (const row of directParticipantsRes.data ?? []) {
     const agent = agentMap.get(row.agent_id as string)
     if (!agent) continue
     directParticipantMap.set(row.conversation_id as string, {
+      agent_id: agent.id as string,
       handle: agent.handle as string,
       display_name: (agent.display_name as string | null) ?? null,
     })
   }
+
+  // Mute fan-out — two batch lookups against `mutes` keyed on the calling
+  // agent. Done here so the list endpoint can stamp is_muted on each row
+  // without N per-row queries. Conversation-kind mutes cover both DMs and
+  // groups the caller has explicitly silenced; agent-kind mutes apply to
+  // the DM counterparty (group membership doesn't imply you want to mute
+  // the chatty individual out of every other group too). Both calls run
+  // in parallel with each other but after we've resolved the DM
+  // counterparty set — we only query for counterparties that actually
+  // exist in this page of conversations, keeping the IN-list small.
+  const counterpartyAgentIds = [
+    ...new Set(
+      [...directParticipantMap.values()].map((p) => p.agent_id),
+    ),
+  ]
+  const [mutedConvIds, mutedCounterpartyIds] = await Promise.all([
+    listMutedConversationIds(agentId).catch(() => [] as string[]),
+    listMutedAgentIds(agentId, counterpartyAgentIds).catch(
+      () => new Set<string>(),
+    ),
+  ])
+  const mutedConvSet = new Set(mutedConvIds)
 
   return capped.map((conv) => {
     const id = conv.id as string
@@ -218,13 +242,23 @@ export async function getAgentConversations(agentId: string, limit = 50) {
         last_message_is_own: lastMsg?.is_own ?? false,
         last_message_type: lastMsg?.type ?? null,
         updated_at: conv.updated_at as string,
+        is_muted: mutedConvSet.has(id),
       }
     }
     const counterparty = directParticipantMap.get(id)
+    // DM is muted if the caller silenced the conversation itself OR
+    // silenced the counterparty agent (mute-the-person applies across
+    // every DM with them, which today is exactly one row but keeps the
+    // semantics right if multi-device DMs ever land).
+    const isMuted =
+      mutedConvSet.has(id) ||
+      (counterparty !== undefined && mutedCounterpartyIds.has(counterparty.agent_id))
     return {
       id,
       type,
-      participants: counterparty ? [counterparty] : [],
+      participants: counterparty
+        ? [{ handle: counterparty.handle, display_name: counterparty.display_name }]
+        : [],
       group_name: null,
       group_avatar_url: null,
       group_member_count: null,
@@ -233,6 +267,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
       last_message_is_own: lastMsg?.is_own ?? false,
       last_message_type: lastMsg?.type ?? null,
       updated_at: conv.updated_at as string,
+      is_muted: isMuted,
     }
   })
 }

@@ -10,6 +10,7 @@ import { messageRoutes } from './routes/messages.js'
 import { conversationRoutes } from './routes/conversations.js'
 import { groupRoutes } from './routes/groups.js'
 import { contactRoutes } from './routes/contacts.js'
+import { muteRoutes } from './routes/mutes.js'
 import { presenceRoutes } from './routes/presence.js'
 import { webhookRoutes } from './routes/webhooks.js'
 import { directoryRoutes } from './routes/directory.js'
@@ -392,6 +393,7 @@ app.route('/v1/messages', messageRoutes)
 app.route('/v1/conversations', conversationRoutes)
 app.route('/v1/groups', groupRoutes)
 app.route('/v1/contacts', contactRoutes)
+app.route('/v1/mutes', muteRoutes)
 app.route('/v1/presence', presenceRoutes)
 app.route('/v1/webhooks', webhookRoutes)
 app.route('/v1/directory', directoryRoutes)

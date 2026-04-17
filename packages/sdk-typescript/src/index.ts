@@ -4,6 +4,8 @@ export {
   type BacklogWarning,
   type BacklogWarningHandler,
   type SendMessageResult,
+  type MuteEntry,
+  type MuteTargetKind,
 } from './client.js'
 export {
   RealtimeClient,

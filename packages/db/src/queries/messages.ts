@@ -86,6 +86,7 @@ export async function atomicSendMessage(params: {
     created_at: string
     is_replay: boolean
     skipped_recipient_ids: string[]
+    muted_recipient_ids: string[]
   }
 }
 

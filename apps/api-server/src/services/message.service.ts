@@ -337,14 +337,24 @@ async function sendDirectMessage(
     messagesSent.inc({ outcome: 'ok' })
     const recipientFullyPaused =
       (recipient.paused_by_owner as string | null) === 'full'
-    if (!recipientFullyPaused) {
+    // Mute check: agent-level mute (recipient muted sender) or DM-level mute
+    // (recipient muted this conversation) collapses to the same signal from
+    // send_message_atomic — either way the recipient's id appears in
+    // muted_recipient_ids and we suppress the real-time WS push. Envelope
+    // still lives in message_deliveries (RPC writes it unconditionally), so
+    // /messages/sync and the unread counter stay accurate; only the wake-up
+    // event is withheld. Outbox/webhook fan-out is filtered at the RPC
+    // (migration 034) so we don't need to repeat that here.
+    const recipientMuted = (message.muted_recipient_ids ?? []).includes(recipient.id)
+    if (!recipientFullyPaused && !recipientMuted) {
       pushToRecipient(recipient.id, publicMessage).catch(() => {
         // Push failed — that's fine, message is safe in DB
       })
     }
     // Dashboard owner fan-out — runs independently of the recipient pause
-    // state because the owner WANTS to see what their claimed (even paused)
-    // agent is receiving. Only suppressed on replay, same as the agent push.
+    // state AND of mute, because the owner WANTS to see what their claimed
+    // agent is receiving regardless of the agent's own preferences. Only
+    // suppressed on replay, same as the agent push.
     pushDirectToOwnerDashboards(
       message as DashboardFanoutMessage,
       senderId,
@@ -568,6 +578,7 @@ async function sendGroupMessage(
       message.seq,
       publicMessage,
       skippedIds,
+      message.muted_recipient_ids ?? [],
     ).catch(() => {
       // Push failed — DB state is durable, sync/WS reconnect recovers it
     })
@@ -776,6 +787,7 @@ export async function pushToGroup(
   messageSeq: number,
   message: Record<string, unknown>,
   skippedRecipientIds: readonly string[] = [],
+  mutedRecipientIds: readonly string[] = [],
 ) {
   // Single round-trip: active, non-departed, non-late-joiner, non-sender.
   // Returns agent ids directly so we avoid the handle→agent N+1 roundtrip
@@ -788,7 +800,13 @@ export async function pushToGroup(
   // §3.4.2: backlogged members have no envelope — exclude them from the
   // WS + webhook fan-out so a received event always matches a stored row.
   const skipped = new Set(skippedRecipientIds)
-  const recipientIds = rawRecipientIds.filter((id) => !skipped.has(id))
+  // Muted members DO have an envelope (RPC still writes message_deliveries
+  // for them — so /sync and the unread counter stay honest), but we don't
+  // wake them up on the real-time channel. Membership comes from
+  // send_message_atomic, which merged agent-kind and conversation-kind
+  // mutes into one set keyed by recipient id.
+  const muted = new Set(mutedRecipientIds)
+  const recipientIds = rawRecipientIds.filter((id) => !skipped.has(id) && !muted.has(id))
   // Drop any recipients whose owner has full-paused them. The DB envelopes
   // in message_deliveries still exist, so the message drains normally once
   // the pause lifts — we only skip the real-time fan-out for now. One
@@ -816,6 +834,7 @@ function toPublicMessage(msg: Record<string, unknown>, senderHandle: string) {
     sender_id: _sender,
     is_replay: _replay,
     skipped_recipient_ids: _skipped,
+    muted_recipient_ids: _muted,
     ...rest
   } = msg
   return { ...rest, sender: senderHandle }
