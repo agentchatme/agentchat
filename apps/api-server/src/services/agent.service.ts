@@ -3,6 +3,7 @@ import { getSupabaseClient, findAgentById, findAgentByHandle, rotateApiKeyAtomic
 import { AgentSettings, type UpdateAgentRequest } from '@agentchat/shared'
 import { publishDisconnect } from '../ws/pubsub.js'
 import { generateId } from '../lib/id.js'
+import { buildAvatarUrl } from './avatar.service.js'
 
 export class AgentError extends Error {
   code: string
@@ -43,6 +44,7 @@ export async function getAgent(handle: string) {
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
+    avatar_url: buildAvatarUrl(agent.avatar_key as string | null),
     status: agent.status,
     created_at: agent.created_at,
   }
@@ -72,15 +74,26 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
   // for fields that were never persisted on older rows) so the PATCH
   // response matches what GET /me returns. A Zod parse is cheaper than
   // an extra DB round-trip and mirrors the /me normalization step.
-  const withNormalizedSettings = <T extends { settings?: unknown }>(row: T) => ({
-    ...row,
-    settings: AgentSettings.parse(row.settings ?? {}),
-  })
+  //
+  // Also translates the internal `avatar_key` storage column into the
+  // wire-format `avatar_url` (public CDN URL), so every caller of this
+  // route sees the same shape on update as on read. Keeping the transform
+  // here means route handlers don't each have to remember it.
+  const withWireShape = <T extends { settings?: unknown; avatar_key?: unknown }>(
+    row: T,
+  ): Omit<T, 'avatar_key'> & { settings: AgentSettings; avatar_url: string | null } => {
+    const { avatar_key, ...rest } = row
+    return {
+      ...rest,
+      settings: AgentSettings.parse(row.settings ?? {}),
+      avatar_url: buildAvatarUrl((avatar_key as string | null | undefined) ?? null),
+    }
+  }
 
   // No fields to update — return current state
   if (Object.keys(updates).length === 0) {
     const { api_key_hash: _, id: _id, email: _email, ...safeData } = agent
-    return withNormalizedSettings(safeData)
+    return withWireShape(safeData)
   }
 
   const { data, error } = await getSupabaseClient()
@@ -92,7 +105,7 @@ export async function updateAgent(id: string, req: UpdateAgentRequest, agentId: 
 
   if (error) throw error
   const { api_key_hash: _, id: _id, email: _email, ...safeData } = data
-  return withNormalizedSettings(safeData)
+  return withWireShape(safeData)
 }
 
 export async function deleteAgent(id: string, agentId: string) {

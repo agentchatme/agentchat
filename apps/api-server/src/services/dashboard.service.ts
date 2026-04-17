@@ -14,6 +14,7 @@ import {
   listBlocks,
 } from '@agentchat/db'
 import { emitEvent } from './events.service.js'
+import { buildAvatarUrl } from './avatar.service.js'
 import {
   peekRateLimitCounter,
   incrRateLimitCounter,
@@ -161,6 +162,7 @@ export async function claimAgent(
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
+    avatar_url: buildAvatarUrl((agent.avatar_key as string | null | undefined) ?? null),
     status: agent.status,
     paused_by_owner: agent.paused_by_owner ?? 'none',
     claimed_at: new Date().toISOString(),
@@ -206,6 +208,9 @@ export async function listAgentsForOwner(ownerId: string) {
         handle: agent.handle as string,
         display_name: (agent.display_name as string | null) ?? null,
         description: (agent.description as string | null) ?? null,
+        avatar_url: buildAvatarUrl(
+          (agent.avatar_key as string | null | undefined) ?? null,
+        ),
         status,
         paused_by_owner: (agent.paused_by_owner as string | null) ?? 'none',
         claimed_at: r.claimed_at as string,
@@ -221,6 +226,7 @@ export async function getAgentProfile(ownerId: string, handle: string) {
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
+    avatar_url: buildAvatarUrl((agent.avatar_key as string | null | undefined) ?? null),
     status: agent.status,
     paused_by_owner: agent.paused_by_owner ?? 'none',
     email_masked: maskEmail(agent.email as string),
@@ -262,7 +268,20 @@ const MSG_LIMIT = 50
 
 export async function getAgentConversationsForOwner(ownerId: string, handle: string) {
   const agent = await requireOwnedAgent(ownerId, handle)
-  return getAgentConversations(agent.id as string, CONV_LIMIT)
+  const rows = await getAgentConversations(agent.id as string, CONV_LIMIT)
+  // The DB query returns each participant with an internal `avatar_key`
+  // (storage path). Translate to the wire-format `avatar_url` at this
+  // boundary so the dashboard never sees raw storage keys.
+  return rows.map((row) => ({
+    ...row,
+    participants: row.participants.map((p) => {
+      const { avatar_key, ...rest } = p
+      return {
+        ...rest,
+        avatar_url: buildAvatarUrl(avatar_key),
+      }
+    }),
+  }))
 }
 
 export async function getAgentMessagesForOwner(
@@ -318,7 +337,17 @@ export async function getAgentContactsForOwner(
   handle: string,
 ) {
   const agent = await requireOwnedAgent(ownerId, handle)
-  return listContacts(agent.id as string, CONTACT_LIMIT, 0)
+  const result = await listContacts(agent.id as string, CONTACT_LIMIT, 0)
+  // Translate avatar_key → avatar_url at the service boundary: the
+  // storage key is an internal detail, the URL is the public contract.
+  // Same pattern as listAgentsForOwner / getAgentConversationsForOwner.
+  return {
+    ...result,
+    contacts: result.contacts.map((c) => {
+      const { avatar_key, ...rest } = c
+      return { ...rest, avatar_url: buildAvatarUrl(avatar_key) }
+    }),
+  }
 }
 
 export async function getAgentBlocksForOwner(
@@ -326,7 +355,14 @@ export async function getAgentBlocksForOwner(
   handle: string,
 ) {
   const agent = await requireOwnedAgent(ownerId, handle)
-  return listBlocks(agent.id as string, BLOCK_LIMIT, 0)
+  const result = await listBlocks(agent.id as string, BLOCK_LIMIT, 0)
+  return {
+    ...result,
+    blocks: result.blocks.map((b) => {
+      const { avatar_key, ...rest } = b
+      return { ...rest, avatar_url: buildAvatarUrl(avatar_key) }
+    }),
+  }
 }
 
 // ─── Events ────────────────────────────────────────────────────────────────

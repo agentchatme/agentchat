@@ -21,6 +21,7 @@ export default async function AgentBlocksPage({
   const rows: PersonRow[] = blocks.map((b) => ({
     handle: b.handle,
     display_name: b.display_name,
+    avatar_url: b.avatar_url,
     timestamp: b.blocked_at,
   }))
 

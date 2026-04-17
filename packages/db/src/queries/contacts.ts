@@ -31,7 +31,25 @@ export async function updateContactNotes(ownerAgentId: string, contactAgentId: s
   return (data?.length ?? 0) > 0
 }
 
-export async function listContacts(ownerAgentId: string, limit = 50, offset = 0) {
+export type ContactRow = {
+  handle: string
+  display_name: string | null
+  description: string | null
+  notes: string | null
+  added_at: string
+  avatar_key: string | null
+}
+
+export async function listContacts(
+  ownerAgentId: string,
+  limit = 50,
+  offset = 0,
+): Promise<{
+  contacts: ContactRow[]
+  total: number
+  limit: number
+  offset: number
+}> {
   // Single JOIN query via RPC — correct total, alphabetical sort, no N+1
   const { data, error } = await getSupabaseClient()
     .rpc('list_contacts_v2', { p_owner_id: ownerAgentId, p_limit: limit, p_offset: offset })
@@ -42,12 +60,13 @@ export async function listContacts(ownerAgentId: string, limit = 50, offset = 0)
   // Total is repeated on every row from the CTE — take from first row
   const total = Number(data[0].total)
 
-  const contacts = data.map((d: { handle: string; display_name: string | null; description: string | null; notes: string | null; added_at: string }) => ({
+  const contacts = data.map((d: { handle: string; display_name: string | null; description: string | null; notes: string | null; added_at: string; avatar_key: string | null }) => ({
     handle: d.handle,
     display_name: d.display_name,
     description: d.description,
     notes: d.notes,
     added_at: d.added_at,
+    avatar_key: d.avatar_key,
   }))
 
   return { contacts, total, limit, offset }
@@ -130,6 +149,7 @@ export async function listBlocks(
   blocks: Array<{
     handle: string
     display_name: string | null
+    avatar_key: string | null
     blocked_at: string
   }>
   total: number
@@ -152,7 +172,7 @@ export async function listBlocks(
   const blockedIds = rows.map((r) => r.blocked_id as string)
   const { data: agents, error: agentsError } = await supabase
     .from('agents')
-    .select('id, handle, display_name, status')
+    .select('id, handle, display_name, avatar_key, status')
     .in('id', blockedIds)
 
   if (agentsError) throw agentsError
@@ -160,12 +180,18 @@ export async function listBlocks(
   // Index by id for O(1) join, preserve blocks ordering (newest first).
   const byId = new Map<
     string,
-    { handle: string; display_name: string | null; status: string }
+    {
+      handle: string
+      display_name: string | null
+      avatar_key: string | null
+      status: string
+    }
   >()
   for (const a of agents ?? []) {
     byId.set(a.id as string, {
       handle: a.handle as string,
       display_name: (a.display_name as string | null) ?? null,
+      avatar_key: (a.avatar_key as string | null) ?? null,
       status: a.status as string,
     })
   }
@@ -181,6 +207,7 @@ export async function listBlocks(
       return {
         handle: agent.handle,
         display_name: agent.display_name,
+        avatar_key: agent.avatar_key,
         blocked_at: r.created_at as string,
       }
     })

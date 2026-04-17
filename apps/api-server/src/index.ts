@@ -31,6 +31,7 @@ import {
 } from './ws/owner-registry.js'
 import { consumeTicket } from './ws/ticket-store.js'
 import { clearPresenceBatch } from './services/presence.service.js'
+import { verifyAvatarBucket } from './services/avatar.service.js'
 import { getAgentHandlesByIds } from '@agentchat/db'
 import type { WebSocket as NodeWebSocket } from 'ws'
 import type { WSContext } from 'hono/ws'
@@ -410,6 +411,12 @@ app.route('/dashboard', dashboardRoutes)
 
 // Initialize Redis pub/sub for multi-server WebSocket fan-out
 initPubSub(process.env['REDIS_URL'])
+
+// Fire-and-forget probe of the public `avatars` storage bucket. If the
+// bucket is missing or misconfigured we log loudly and keep serving —
+// avatar writes will 503 on their own, but the rest of the API stays
+// up. This is a config sanity check, not a gate.
+void verifyAvatarBucket()
 
 // Webhook delivery polling lives in the dedicated `worker` process group
 // (apps/api-server/src/worker.ts) so a request burst on the api process

@@ -135,10 +135,18 @@ export async function getAgentConversations(agentId: string, limit = 50) {
   ]
   const { data: counterpartyAgents, error: agentErr } =
     counterpartyIds.length === 0
-      ? { data: [] as Array<{ id: string; handle: string; display_name: string | null }>, error: null }
+      ? {
+          data: [] as Array<{
+            id: string
+            handle: string
+            display_name: string | null
+            avatar_key: string | null
+          }>,
+          error: null,
+        }
       : await getSupabaseClient()
           .from('agents')
-          .select('id, handle, display_name')
+          .select('id, handle, display_name, avatar_key')
           .in('id', counterpartyIds)
   if (agentErr) throw agentErr
   const agentMap = new Map(
@@ -186,12 +194,17 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     }),
   )
 
-  // Map direct conv id → counterparty agent id/handle/display_name. A
-  // direct conv always has exactly one other participant in Phase 1, but
+  // Map direct conv id → counterparty agent id/handle/display_name/avatar_key.
+  // A direct conv always has exactly one other participant in Phase 1, but
   // we tolerate zero (other side purged) by leaving participants empty.
   const directParticipantMap = new Map<
     string,
-    { agent_id: string; handle: string; display_name: string | null }
+    {
+      agent_id: string
+      handle: string
+      display_name: string | null
+      avatar_key: string | null
+    }
   >()
   for (const row of directParticipantsRes.data ?? []) {
     const agent = agentMap.get(row.agent_id as string)
@@ -200,6 +213,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
       agent_id: agent.id as string,
       handle: agent.handle as string,
       display_name: (agent.display_name as string | null) ?? null,
+      avatar_key: (agent.avatar_key as string | null | undefined) ?? null,
     })
   }
 
@@ -233,7 +247,11 @@ export async function getAgentConversations(agentId: string, limit = 50) {
       return {
         id,
         type,
-        participants: [] as Array<{ handle: string; display_name: string | null }>,
+        participants: [] as Array<{
+          handle: string
+          display_name: string | null
+          avatar_key: string | null
+        }>,
         group_name: (conv.name as string | null) ?? null,
         group_avatar_url: (conv.avatar_url as string | null) ?? null,
         group_member_count: groupCountsRes.get(id) ?? 0,
@@ -257,7 +275,13 @@ export async function getAgentConversations(agentId: string, limit = 50) {
       id,
       type,
       participants: counterparty
-        ? [{ handle: counterparty.handle, display_name: counterparty.display_name }]
+        ? [
+            {
+              handle: counterparty.handle,
+              display_name: counterparty.display_name,
+              avatar_key: counterparty.avatar_key,
+            },
+          ]
         : [],
       group_name: null,
       group_avatar_url: null,
@@ -380,7 +404,7 @@ export async function getConversationParticipants(conversationId: string) {
   const agentIds = data.map((d) => d.agent_id)
   const { data: agents, error: agentError } = await getSupabaseClient()
     .from('agents')
-    .select('id, handle, display_name')
+    .select('id, handle, display_name, avatar_key')
     .in('id', agentIds)
 
   if (agentError) throw agentError
@@ -390,7 +414,11 @@ export async function getConversationParticipants(conversationId: string) {
     .filter((d) => agentMap.has(d.agent_id))
     .map((d) => {
       const agent = agentMap.get(d.agent_id)!
-      return { handle: agent.handle, display_name: agent.display_name }
+      return {
+        handle: agent.handle,
+        display_name: agent.display_name,
+        avatar_key: (agent.avatar_key as string | null | undefined) ?? null,
+      }
     })
 }
 

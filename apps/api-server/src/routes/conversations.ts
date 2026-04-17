@@ -6,6 +6,7 @@ import {
   hideConversationForAgent,
   isParticipant,
 } from '@agentchat/db'
+import { buildAvatarUrl } from '../services/avatar.service.js'
 
 const conversations = new Hono()
 
@@ -13,14 +14,31 @@ const conversations = new Hono()
 conversations.get('/', authMiddleware, async (c) => {
   const agentId = c.get('agentId')
   const convs = await getAgentConversations(agentId)
-  return c.json(convs)
+  // DB returns participants with internal `avatar_key`; translate to
+  // wire-format `avatar_url` before responding so callers never see raw
+  // storage paths.
+  const wire = convs.map((conv) => ({
+    ...conv,
+    participants: conv.participants.map((p) => {
+      const { avatar_key, ...rest } = p
+      return {
+        ...rest,
+        avatar_url: buildAvatarUrl(avatar_key),
+      }
+    }),
+  }))
+  return c.json(wire)
 })
 
 // GET /v1/conversations/:id/participants — List participants (agent auth)
 conversations.get('/:id/participants', authMiddleware, async (c) => {
   const conversationId = c.req.param('id')
   const participants = await getConversationParticipants(conversationId)
-  return c.json(participants)
+  const wire = participants.map((p) => {
+    const { avatar_key, ...rest } = p
+    return { ...rest, avatar_url: buildAvatarUrl(avatar_key) }
+  })
+  return c.json(wire)
 })
 
 // DELETE /v1/conversations/:id — Per-agent soft-delete (hide).

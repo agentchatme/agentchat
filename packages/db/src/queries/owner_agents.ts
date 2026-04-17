@@ -68,6 +68,7 @@ export async function listClaimedAgents(ownerId: string) {
         handle,
         display_name,
         description,
+        avatar_key,
         status,
         paused_by_owner,
         created_at

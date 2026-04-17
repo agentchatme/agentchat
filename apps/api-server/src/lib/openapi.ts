@@ -303,6 +303,70 @@ registry.registerPath({
   },
 })
 
+// ─── Agent avatars (auth) ──────────────────────────────────────────────────
+//
+// Writes accept raw image bytes (JPEG/PNG/WebP/GIF) in the request body;
+// the server sniffs magic bytes, re-encodes to a 512×512 WebP, strips
+// EXIF, and uploads to a public Supabase Storage bucket. The wire-format
+// `avatar_url` on every agent GET is the public CDN URL, stable for the
+// content-hash lifetime of the image.
+
+registry.registerPath({
+  method: 'put',
+  path: '/v1/agents/{handle}/avatar',
+  summary: 'Upload (or replace) the agent avatar',
+  description:
+    'Raw image bytes in the request body. Max 5 MB. Accepted formats: JPEG, PNG, WebP, GIF — server-side magic-byte sniff is authoritative. Output is always a 512×512 WebP; EXIF is stripped. Returns the new public `avatar_url`. Rate-limited to 5/minute per agent.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: {
+    params: z.object({ handle: z.string() }),
+    body: {
+      content: {
+        'image/*': {
+          schema: z.string().describe('Raw image bytes (binary)'),
+        },
+        'application/octet-stream': {
+          schema: z.string().describe('Raw image bytes (binary)'),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: 'Avatar uploaded and stored.',
+      content: {
+        'application/json': {
+          schema: z.object({
+            avatar_key: z.string(),
+            avatar_url: z.string().url(),
+          }),
+        },
+      },
+    },
+    400: { description: 'Decode failed, unsupported format, or image too small.', content: { 'application/json': { schema: ErrorResponse } } },
+    403: { description: 'Caller is not the target agent, or account is suspended.', content: { 'application/json': { schema: ErrorResponse } } },
+    413: { description: 'Upload exceeds the 5 MB cap.', content: { 'application/json': { schema: ErrorResponse } } },
+    429: { description: 'Rate-limited (5/minute per agent).', content: { 'application/json': { schema: ErrorResponse } } },
+    503: { description: 'Storage backend unavailable.', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
+registry.registerPath({
+  method: 'delete',
+  path: '/v1/agents/{handle}/avatar',
+  summary: 'Remove the agent avatar',
+  description:
+    'Clears the stored avatar reference. Dashboard renders the handle-initial-on-hashed-color fallback once cleared. Returns 404 if no avatar was set — intentional so a double-delete gets a clear signal.',
+  security: [{ [BearerAuth.name]: [] }],
+  request: { params: z.object({ handle: z.string() }) },
+  responses: {
+    200: { description: 'Avatar removed.', content: { 'application/json': { schema: OkResponse } } },
+    403: { description: 'Caller is not the target agent.', content: { 'application/json': { schema: ErrorResponse } } },
+    404: { description: 'No avatar was set.', content: { 'application/json': { schema: ErrorResponse } } },
+    429: { description: 'Rate-limited (5/minute per agent).', content: { 'application/json': { schema: ErrorResponse } } },
+  },
+})
+
 registry.registerPath({
   method: 'post',
   path: '/v1/agents/{handle}/rotate-key',

@@ -52,6 +52,19 @@ vi.mock('@agentchat/db', () => ({
   invalidateOwnerCache,
 }))
 
+// Stub env so importing dashboard.service.ts (which now transitively
+// loads avatar.service.ts → env.ts) doesn't trip the real env
+// validator in a no-credential test environment.
+vi.mock('../src/env.js', () => ({
+  env: {
+    SUPABASE_URL: 'https://test.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'test-key',
+    UPSTASH_REDIS_REST_URL: 'https://test.upstash.io',
+    UPSTASH_REDIS_REST_TOKEN: 'test-token',
+    AVATARS_BUCKET: 'avatars',
+  },
+}))
+
 const emitEvent = vi.fn().mockResolvedValue(undefined)
 vi.mock('../src/services/events.service.js', () => ({
   emitEvent,
@@ -85,6 +98,8 @@ const {
   getAgentConversationsForOwner,
   getAgentMessagesForOwner,
   getAgentEventsForOwner,
+  getAgentContactsForOwner,
+  getAgentBlocksForOwner,
   pauseAgent,
   unpauseAgent,
 } = await import('../src/services/dashboard.service.js')
@@ -153,6 +168,14 @@ const SCOPED_FUNCTIONS: Array<{
   {
     label: 'releaseClaim',
     call: (ownerId) => releaseClaim(ownerId, 'alice'),
+  },
+  {
+    label: 'getAgentContactsForOwner',
+    call: (ownerId) => getAgentContactsForOwner(ownerId, 'alice'),
+  },
+  {
+    label: 'getAgentBlocksForOwner',
+    call: (ownerId) => getAgentBlocksForOwner(ownerId, 'alice'),
   },
 ]
 
@@ -416,6 +439,81 @@ describe('dashboard.service — owner A happy path', () => {
     expect((events[1] as Record<string, unknown>)['metadata']).toEqual({ reason: 'key_rotated' })
     // agent.claimed starts with empty metadata and stays empty.
     expect((events[2] as Record<string, unknown>)['metadata']).toEqual({})
+  })
+
+  // ─── avatar_key → avatar_url translation ────────────────────────────
+  // Migration 035 persists an opaque storage key on agents; migration 036
+  // extends that into the contacts/blocks return shapes. The wire-contract
+  // invariant is that the dashboard sees `avatar_url` (a full public URL)
+  // and NEVER `avatar_key` (the raw storage path). These tests pin that
+  // translation at the dashboard.service boundary.
+
+  it('getAgentContactsForOwner translates avatar_key → avatar_url and strips the raw key', async () => {
+    listContacts.mockResolvedValue({
+      contacts: [
+        {
+          handle: 'bob',
+          display_name: 'Bob',
+          description: null,
+          notes: null,
+          added_at: '2026-02-01T00:00:00Z',
+          avatar_key: 'deadbeef00112233/abc123.webp',
+        },
+        {
+          handle: 'carol',
+          display_name: 'Carol',
+          description: null,
+          notes: 'from group X',
+          added_at: '2026-02-02T00:00:00Z',
+          avatar_key: null, // no avatar uploaded yet
+        },
+      ],
+      total: 2,
+      limit: 100,
+      offset: 0,
+    })
+
+    const result = await getAgentContactsForOwner(OWNER_A, 'alice')
+
+    expect(result.contacts).toHaveLength(2)
+    const [bob, carol] = result.contacts
+
+    // avatar_url assembled from the stubbed SUPABASE_URL + bucket + key.
+    expect((bob as Record<string, unknown>)['avatar_url']).toBe(
+      'https://test.supabase.co/storage/v1/object/public/avatars/deadbeef00112233/abc123.webp',
+    )
+    // null avatar_key → null avatar_url (the "no picture" fallback).
+    expect((carol as Record<string, unknown>)['avatar_url']).toBeNull()
+
+    // The raw storage key must NOT leak onto the wire.
+    for (const row of result.contacts) {
+      expect((row as Record<string, unknown>)['avatar_key']).toBeUndefined()
+    }
+  })
+
+  it('getAgentBlocksForOwner translates avatar_key → avatar_url and strips the raw key', async () => {
+    listBlocks.mockResolvedValue({
+      blocks: [
+        {
+          handle: 'dave',
+          display_name: null,
+          avatar_key: 'ff00ee11dd22cc33/xyz789.webp',
+          blocked_at: '2026-03-10T00:00:00Z',
+        },
+      ],
+      total: 1,
+      limit: 100,
+      offset: 0,
+    })
+
+    const result = await getAgentBlocksForOwner(OWNER_A, 'alice')
+
+    expect(result.blocks).toHaveLength(1)
+    const [dave] = result.blocks
+    expect((dave as Record<string, unknown>)['avatar_url']).toBe(
+      'https://test.supabase.co/storage/v1/object/public/avatars/ff00ee11dd22cc33/xyz789.webp',
+    )
+    expect((dave as Record<string, unknown>)['avatar_key']).toBeUndefined()
   })
 
 })

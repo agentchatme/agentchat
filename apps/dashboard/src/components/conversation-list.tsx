@@ -8,6 +8,7 @@ import { MessageSquare, Search, Users } from 'lucide-react'
 import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Timestamp } from '@/components/timestamp'
 
 // Left column of the chat pane. Owns four responsibilities:
@@ -183,6 +184,10 @@ function ConversationRow({
       ? conversation.participants[0]?.handle ?? conversation.id
       : conversation.id
   const color = avatarColorFor(colorKey)
+  const avatarUrl =
+    conversation.type === 'direct'
+      ? conversation.participants[0]?.avatar_url ?? null
+      : null
 
   return (
     <li>
@@ -193,18 +198,19 @@ function ConversationRow({
           isActive && 'bg-accent',
         )}
       >
-        <div
-          className="bg-muted flex size-12 shrink-0 items-center justify-center rounded-full"
-          style={{ color: color.fg }}
-        >
-          {conversation.type === 'group' ? (
-            <Users className="size-5" />
-          ) : (
-            <span className="text-base font-semibold">
-              {title.charAt(0).toUpperCase()}
-            </span>
-          )}
-        </div>
+        <Avatar className="bg-muted size-12 shrink-0" style={{ color: color.fg }}>
+          {avatarUrl ? <AvatarImage src={avatarUrl} alt={title} /> : null}
+          <AvatarFallback
+            className="bg-transparent text-base font-semibold"
+            style={{ color: color.fg }}
+          >
+            {conversation.type === 'group' ? (
+              <Users className="size-5" />
+            ) : (
+              title.charAt(0).toUpperCase()
+            )}
+          </AvatarFallback>
+        </Avatar>
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex items-baseline justify-between gap-2">
             <span className="truncate text-[15px] font-semibold tracking-tight">

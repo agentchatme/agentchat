@@ -5,6 +5,7 @@ import { format, formatDistanceToNowStrict } from 'date-fns'
 import { Search, UserX, Users } from 'lucide-react'
 
 import { avatarColorFor } from '@/lib/avatar-color'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 // Full-width "people list" view used by the contact-list and
 // block-list workspace routes. Both lists are structurally the same
@@ -25,6 +26,9 @@ import { avatarColorFor } from '@/lib/avatar-color'
 export type PersonRow = {
   handle: string
   display_name: string | null
+  // Public Storage URL; null when the contact has no avatar set and
+  // we fall back to the initial-letter circle.
+  avatar_url?: string | null
   // Optional per-row meta — notes for contacts, blocked_at label for
   // blocks. Rendered below the handle as a smaller muted line.
   meta?: string | null
@@ -122,14 +126,17 @@ function PersonRowItem({ row }: { row: PersonRow }) {
 
   return (
     <li className="hover:bg-accent/60 flex items-center gap-4 rounded-lg px-4 py-3 transition-colors">
-      <div
-        className="bg-muted flex size-12 shrink-0 items-center justify-center rounded-full"
-        style={{ color: color.fg }}
-      >
-        <span className="text-base font-semibold">
+      <Avatar className="bg-muted size-12 shrink-0" style={{ color: color.fg }}>
+        {row.avatar_url ? (
+          <AvatarImage src={row.avatar_url} alt={title} />
+        ) : null}
+        <AvatarFallback
+          className="bg-transparent text-base font-semibold"
+          style={{ color: color.fg }}
+        >
           {title.charAt(0).toUpperCase()}
-        </span>
-      </div>
+        </AvatarFallback>
+      </Avatar>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-baseline justify-between gap-3">
           <span className="truncate text-[15px] font-semibold tracking-tight">

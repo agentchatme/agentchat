@@ -22,6 +22,7 @@ export interface ClaimedAgent {
   handle: string
   display_name: string | null
   description: string | null
+  avatar_url: string | null
   status: AgentStatus
   paused_by_owner: PauseMode
   claimed_at: string
@@ -32,6 +33,7 @@ export interface AgentProfile {
   handle: string
   display_name: string | null
   description: string | null
+  avatar_url: string | null
   status: AgentStatus
   paused_by_owner: PauseMode
   email_masked: string
@@ -41,7 +43,11 @@ export interface AgentProfile {
 export interface ConversationSummary {
   id: string
   type: 'direct' | 'group'
-  participants: Array<{ handle: string; display_name: string | null }>
+  participants: Array<{
+    handle: string
+    display_name: string | null
+    avatar_url: string | null
+  }>
   group_name: string | null
   group_avatar_url: string | null
   group_member_count: number | null
@@ -80,6 +86,7 @@ export interface AgentContactRow {
   display_name: string | null
   description: string | null
   notes: string | null
+  avatar_url: string | null
   added_at: string
 }
 
@@ -89,6 +96,7 @@ export interface AgentContactRow {
 export interface AgentBlockRow {
   handle: string
   display_name: string | null
+  avatar_url: string | null
   blocked_at: string
 }
 

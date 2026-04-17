@@ -239,6 +239,27 @@ export const mutesWritten = counter(
   'Mute write outcomes (created|removed|rejected|rate_limited).',
 )
 
+// Avatar writes (PUT /v1/agents/:handle/avatar, DELETE same). Labeled by
+// outcome so dashboards can split organic uploads from validation failures
+// and rate-limit trips in a single counter:
+//
+//   outcome="uploaded"       — PUT processed, stored, row updated
+//   outcome="removed"        — DELETE cleared the row and deleted storage bytes
+//   outcome="rejected"       — AvatarError before storage write
+//                              (bad magic, wrong content type, too large,
+//                              image too small, decompression bomb)
+//   outcome="rate_limited"   — guardAvatarWriteRate tripped; handler never ran
+//   outcome="storage_error"  — upload to Supabase Storage failed after the
+//                              processing pipeline already succeeded (503)
+//
+// Sustained rejected is the signal that clients are sending bad data and
+// likely need an SDK fix; sustained storage_error means the bucket is
+// unhealthy; rate_limited dominating means a broken client loop.
+export const avatarsWritten = counter(
+  'agentchat_avatars_written_total',
+  'Avatar write outcomes (uploaded|removed|rejected|rate_limited|storage_error).',
+)
+
 export const wsConnectionsCurrent = gauge(
   'agentchat_ws_connections',
   'Current number of authenticated WebSocket connections.',

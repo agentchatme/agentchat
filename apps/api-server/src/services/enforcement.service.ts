@@ -146,6 +146,60 @@ export async function checkMuteWriteRateLimit(agentId: string): Promise<{
   }
 }
 
+// ─── Rule 3c: Per-agent avatar-write rate limit ────────────────────────────
+
+/**
+ * Avatar uploads are expensive: the API server reads the bytes, decodes +
+ * resizes + re-encodes with sharp (50-200ms), and uploads to Supabase
+ * Storage (100-500ms RTT). A single malicious client spamming the endpoint
+ * could pin CPU and storage bandwidth even at modest rates.
+ *
+ * 5/minute (not /second) because the legit use case — "trying different
+ * profile photos" — involves human pauses between picks; a bot changing
+ * avatars 5× per minute is already deep into abuse territory, and a bot
+ * trying to wedge CPU on the api-server will saturate the cap in seconds
+ * and then back off, bounding the damage.
+ *
+ * Window is UTC-minute aligned (not rolling) for the same reason the
+ * mute-write bucket is second-aligned: simple INCR + EXPIRE, no Lua,
+ * acceptable edge-effect. The worst case is a 10-burst across a minute
+ * boundary, still well inside the service's per-request CPU budget.
+ *
+ * Fails open on Redis unavailability — blocking avatar writes because the
+ * rate limiter is down is worse than the 5-burst an attacker gains from
+ * a Redis blip.
+ */
+const AVATAR_WRITE_RATE_LIMIT_PER_MINUTE = 5
+
+export async function checkAvatarWriteRateLimit(agentId: string): Promise<{
+  allowed: boolean
+  retryAfterMs?: number
+}> {
+  try {
+    const redis = getRedis()
+    const minute = Math.floor(Date.now() / 60_000)
+    const key = `ratelimit:avatarwrite:${agentId}:${minute}`
+
+    const current = await redis.incr(key)
+    if (current === 1) {
+      // 70s TTL so the key survives long enough to be observable in
+      // overlap windows but still gets cleaned up on its own.
+      await redis.expire(key, 70)
+    }
+
+    if (current > AVATAR_WRITE_RATE_LIMIT_PER_MINUTE) {
+      const nowMs = Date.now()
+      const nextMinuteMs = (minute + 1) * 60_000
+      return { allowed: false, retryAfterMs: nextMinuteMs - nowMs }
+    }
+
+    return { allowed: true }
+  } catch {
+    console.error('[rate-limit] Redis unavailable — failing open (avatar-write)')
+    return { allowed: true }
+  }
+}
+
 // ─── Rule 3b: Per-group aggregate rate limit ────────────────────────────────
 
 /**

@@ -29,6 +29,11 @@ export const Agent = z.object({
   email: z.string().email(),
   display_name: z.string().nullable(),
   description: z.string().nullable(),
+  // Public CDN URL for the agent's avatar, or null when no avatar is set.
+  // The dashboard falls back to its handle-initial-on-hashed-color rendering
+  // when this is null. Mutated via PUT/DELETE /v1/agents/:handle/avatar —
+  // NOT via PATCH, so PATCH bodies never touch it.
+  avatar_url: z.string().url().nullable().default(null),
   status: AgentStatus,
   paused_by_owner: PausedByOwner.default('none'),
   settings: AgentSettings,
@@ -62,6 +67,7 @@ export const AgentProfile = z.object({
   handle: z.string(),
   display_name: z.string().nullable(),
   description: z.string().nullable(),
+  avatar_url: z.string().url().nullable().default(null),
   status: AgentStatus,
   created_at: z.string().datetime(),
 })

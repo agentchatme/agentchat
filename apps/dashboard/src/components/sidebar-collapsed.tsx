@@ -9,7 +9,7 @@ import { Loader2, Moon, Plus, Sun } from 'lucide-react'
 
 import type { ClaimedAgent } from '@/lib/types'
 import { cn } from '@/lib/utils'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
   Tooltip,
   TooltipContent,
@@ -64,6 +64,9 @@ export function CollapsedAgentIcon({ agent }: { agent: ClaimedAgent }) {
           )}
         >
           <Avatar className="size-9">
+            {agent.avatar_url ? (
+              <AvatarImage src={agent.avatar_url} alt={label} />
+            ) : null}
             <AvatarFallback className="text-[13px]">{initial}</AvatarFallback>
           </Avatar>
           <StatusDot

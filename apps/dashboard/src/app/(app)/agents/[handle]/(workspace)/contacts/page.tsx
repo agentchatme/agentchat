@@ -22,6 +22,7 @@ export default async function AgentContactsPage({
   const rows: PersonRow[] = contacts.map((c) => ({
     handle: c.handle,
     display_name: c.display_name,
+    avatar_url: c.avatar_url,
     meta: c.notes ?? c.description ?? null,
     timestamp: c.added_at,
   }))

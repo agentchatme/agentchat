@@ -24,6 +24,12 @@ const envSchema = z.object({
   // The bucket itself must be created out-of-band (Supabase Storage does not
   // expose DDL-via-SQL for buckets). See the operator checklist in the plan.
   ATTACHMENTS_BUCKET: z.string().default('attachments'),
+  // Supabase Storage bucket name for agent avatars. Default "avatars".
+  // MUST be a PUBLIC bucket (readable by anon role) — the wire-format
+  // avatar_url is a stable CDN URL, not a signed URL. Content-hash
+  // suffixes in the key (`avatars/{agent_id}/{hash}.webp`) give cache-
+  // busting on change. Writes are restricted to the service role.
+  AVATARS_BUCKET: z.string().default('avatars'),
   // Bearer token required to scrape GET /internal/metrics. Optional — when
   // unset, the endpoint is public, which is fine if the server sits behind
   // a private network or the operator wants Grafana Cloud to scrape it

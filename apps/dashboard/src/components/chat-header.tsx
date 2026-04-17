@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { Settings2 } from 'lucide-react'
 
 import type { AgentProfile } from '@/lib/types'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import { StatusDot } from '@/components/status-dot'
 import { ChatHeaderMenu } from '@/components/chat-header-menu'
@@ -28,6 +28,12 @@ export function ChatHeader({ profile }: { profile: AgentProfile }) {
   return (
     <header className="bg-background flex h-[65px] shrink-0 items-center gap-3.5 border-b px-6">
       <Avatar className="size-10">
+        {profile.avatar_url ? (
+          <AvatarImage
+            src={profile.avatar_url}
+            alt={profile.display_name ?? profile.handle}
+          />
+        ) : null}
         <AvatarFallback>{initial}</AvatarFallback>
       </Avatar>
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">

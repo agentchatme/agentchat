@@ -1,0 +1,43 @@
+-- Migration 035: Add avatar_key to agents for profile pictures.
+--
+-- Agents can upload a display avatar via PUT /v1/agents/:handle/avatar.
+-- The API server processes the bytes (sharp: center-crop → 512×512 → WebP
+-- re-encode → EXIF strip) and uploads the result to a public Supabase
+-- Storage bucket named `avatars`. Only the storage key is persisted here —
+-- the wire-format `avatar_url` is assembled by the API layer from the
+-- key plus the configured SUPABASE_URL, so a future CDN swap or bucket
+-- rename is a code change, not a data migration.
+--
+-- Key format (documented, not DB-enforced):
+--   avatars/{agent_key_prefix}/{content_hash}.webp
+-- where:
+--   agent_key_prefix = first 16 hex chars of sha256(agent_id)
+--   content_hash     = first 32 hex chars of sha256(processed bytes)
+--
+-- We deliberately do NOT use the raw agent_id as the prefix: the public
+-- CDN URL would then leak the internal row id onto the wire, violating
+-- the "no internal ids on the wire" invariant we enforce everywhere else.
+-- A sha256 truncation is stable (same input → same prefix) and
+-- non-reversible, so identical re-uploads still hit the same key
+-- (idempotent upsert) and the URL reveals nothing about row provenance.
+--
+-- Content hash is natural cache-busting: a new upload with identical
+-- output bytes reuses the same key and stays cached; a real change gets
+-- a new URL so every participant in every chat sees the update on their
+-- next render.
+--
+-- No CHECK constraint on format. If we ever switch encoder (AVIF, JXL) or
+-- add a resolution suffix (`@2x`), we want the old rows to keep working
+-- without a backfill — the TS layer is the single writer, and migration
+-- paths stay open.
+--
+-- NULL = no avatar set (the vast majority of rows at launch). The
+-- dashboard renders its existing handle-initial fallback in that case.
+--
+-- Bucket creation is out-of-band (Supabase Storage does not expose DDL for
+-- buckets via SQL). Operator checklist: create public bucket named
+-- `avatars`, set it readable-by-anon, leave writes restricted to the
+-- service role. The API server holds the service role key and is the only
+-- path that writes to this bucket.
+
+ALTER TABLE agents ADD COLUMN avatar_key TEXT DEFAULT NULL;

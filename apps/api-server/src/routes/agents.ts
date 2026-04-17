@@ -1,7 +1,17 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { AgentSettings, UpdateAgentRequest, VerifyRequest } from '@agentchat/shared'
 import { authMiddleware, authAnyStatusMiddleware } from '../middleware/auth.js'
 import { getAgent, updateAgent, deleteAgent, rotateApiKey, AgentError } from '../services/agent.service.js'
+import {
+  setAgentAvatar,
+  removeAgentAvatar,
+  buildAvatarUrl,
+  AvatarError,
+  MAX_AVATAR_INPUT_BYTES,
+} from '../services/avatar.service.js'
+import { checkAvatarWriteRateLimit } from '../services/enforcement.service.js'
+import { avatarsWritten, rateLimitHits } from '../lib/metrics.js'
 import { getSupabaseClient, findAgentById, findActiveAgentByEmail } from '@agentchat/db'
 import {
   claimOtpSendSlot,
@@ -168,6 +178,7 @@ agents.get('/me', authAnyStatusMiddleware, async (c) => {
     handle: agent.handle,
     display_name: agent.display_name,
     description: agent.description,
+    avatar_url: buildAvatarUrl(agent.avatar_key as string | null | undefined),
     status: agent.status,
     // paused_by_owner is surfaced here so the agent's own tooling can
     // detect the state and stop retrying sends. Pre-migration rows
@@ -245,6 +256,130 @@ agents.delete('/:handle', authMiddleware, async (c) => {
     if (e instanceof AgentError) {
       return c.json({ code: e.code, message: e.message }, e.status as 403 | 404)
     }
+    throw e
+  }
+})
+
+// ─── Avatar upload / remove ────────────────────────────────────────────────
+//
+// PUT  /v1/agents/:handle/avatar — upload a new avatar (raw image bytes in
+//                                   the request body, any Content-Type that
+//                                   starts with image/* or application/octet-
+//                                   stream is accepted; format is authoritatively
+//                                   determined by magic-byte sniff server-side).
+// DELETE /v1/agents/:handle/avatar — clear the avatar; dashboard falls back
+//                                   to the handle-initial-on-hashed-color default.
+//
+// Why raw bytes rather than multipart/form-data: the body IS the avatar, no
+// other fields are relevant. Multipart adds boundary parsing overhead on the
+// server and FormData construction cost in the SDK for no value. A raw-body
+// endpoint is what the WhatsApp and Telegram media upload paths do for the
+// same reason.
+//
+// Authorization is the same pattern as PATCH /:handle — authMiddleware puts
+// the caller's agent id on ctx, we resolve the handle to its row, and 403
+// if they don't match. Rate-limit is a separate per-minute bucket from
+// mute/message writes so a burst of avatar changes can't eat a user's
+// send budget.
+
+type AvatarErrorStatus = 400 | 403 | 404 | 413 | 500 | 503
+
+function respondAvatarError(c: Context, e: AvatarError) {
+  return c.json({ code: e.code, message: e.message }, e.status as AvatarErrorStatus)
+}
+
+async function guardAvatarWriteRate(c: Context, agentId: string) {
+  const check = await checkAvatarWriteRateLimit(agentId)
+  if (check.allowed) return null
+  rateLimitHits.inc({ rule: 'avatar_write' })
+  avatarsWritten.inc({ outcome: 'rate_limited' })
+  if (check.retryAfterMs != null) {
+    c.header('Retry-After', String(Math.ceil(check.retryAfterMs / 1000)))
+  }
+  return c.json(
+    {
+      code: 'RATE_LIMITED',
+      message: 'Too many avatar writes per minute',
+      retry_after_ms: check.retryAfterMs,
+    },
+    429,
+  )
+}
+
+// The bodyLimit middleware rejects with 413 before the handler ever runs
+// so a malicious client flooding with huge payloads can't wedge the event
+// loop buffering gigabytes. The limit is identical to the one enforced
+// in processAvatarImage — belt-and-suspenders because bodyLimit is the
+// cheap early gate and the service-layer check is the authoritative one
+// for direct service callers (tests, future RPC).
+const avatarBodyLimit = bodyLimit({
+  maxSize: MAX_AVATAR_INPUT_BYTES,
+  onError: (c) =>
+    c.json(
+      {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: `Avatar exceeds the ${Math.floor(MAX_AVATAR_INPUT_BYTES / 1024 / 1024)} MB cap`,
+      },
+      413,
+    ),
+})
+
+agents.put('/:handle/avatar', authMiddleware, avatarBodyLimit, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  const agentId = c.get('agentId')
+
+  const authedAgent = await findAgentById(agentId)
+  if (!authedAgent || authedAgent.handle !== handle) {
+    return c.json({ code: 'FORBIDDEN', message: 'You can only update your own avatar' }, 403)
+  }
+
+  const rateLimited = await guardAvatarWriteRate(c, agentId)
+  if (rateLimited) return rateLimited
+
+  // Read the full body as a Buffer. bodyLimit already capped the size so
+  // this cannot OOM. arrayBuffer() is the web-standard way to get raw bytes
+  // in Hono; the Node adapter streams into a single allocation under the
+  // hood.
+  let bytes: Buffer
+  try {
+    const ab = await c.req.arrayBuffer()
+    bytes = Buffer.from(ab)
+  } catch (e) {
+    return c.json(
+      { code: 'VALIDATION_ERROR', message: `Could not read request body: ${(e as Error).message}` },
+      400,
+    )
+  }
+
+  try {
+    const result = await setAgentAvatar(agentId, bytes)
+    return c.json(result)
+  } catch (e) {
+    if (e instanceof AvatarError) return respondAvatarError(c, e)
+    throw e
+  }
+})
+
+agents.delete('/:handle/avatar', authMiddleware, async (c) => {
+  const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+  const agentId = c.get('agentId')
+
+  const authedAgent = await findAgentById(agentId)
+  if (!authedAgent || authedAgent.handle !== handle) {
+    return c.json({ code: 'FORBIDDEN', message: 'You can only update your own avatar' }, 403)
+  }
+
+  const rateLimited = await guardAvatarWriteRate(c, agentId)
+  if (rateLimited) return rateLimited
+
+  try {
+    const { existed } = await removeAgentAvatar(agentId)
+    if (!existed) {
+      return c.json({ code: 'NOT_FOUND', message: 'No avatar set' }, 404)
+    }
+    return c.json({ ok: true })
+  } catch (e) {
+    if (e instanceof AvatarError) return respondAvatarError(c, e)
     throw e
   }
 })
