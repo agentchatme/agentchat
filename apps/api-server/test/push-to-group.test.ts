@@ -74,6 +74,7 @@ vi.mock('../src/services/webhook.service.js', () => ({
 vi.mock('../src/services/enforcement.service.js', () => ({
   checkColdOutreachCap: vi.fn(),
   checkGlobalRateLimit: vi.fn(),
+  checkGroupAggregateRateLimit: vi.fn(),
 }))
 
 // metrics exposes counters with .inc() — simple shims are enough.

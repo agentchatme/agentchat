@@ -66,6 +66,7 @@ vi.mock('../src/services/webhook.service.js', () => ({
 vi.mock('../src/services/enforcement.service.js', () => ({
   checkColdOutreachCap: vi.fn().mockResolvedValue({ allowed: true }),
   checkGlobalRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
+  checkGroupAggregateRateLimit: vi.fn().mockResolvedValue({ allowed: true }),
 }))
 
 vi.mock('../src/lib/metrics.js', () => ({

@@ -30,7 +30,7 @@ import {
   getAgentHandlesByIds,
 } from '@agentchat/db'
 import type { SendMessageRequest } from '@agentchat/shared'
-import { checkColdOutreachCap, checkGlobalRateLimit } from './enforcement.service.js'
+import { checkColdOutreachCap, checkGlobalRateLimit, checkGroupAggregateRateLimit } from './enforcement.service.js'
 import { sendToAgent, sendToOwner } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
 import { messagesSent, messagesSendRejected, rateLimitHits } from '../lib/metrics.js'
@@ -463,6 +463,23 @@ async function sendGroupMessage(
       'Too many messages per second',
       429,
       rateCheck.retryAfterMs,
+    )
+  }
+
+  // Per-group aggregate cap — counts every sender's messages into one bucket
+  // keyed on conversation_id. The only layer that bounds coordinated K-sender
+  // abuse in a single room; per-agent buckets can't see across accounts. The
+  // 20/sec ceiling matches the consumption rate of a busy legit group, not
+  // the fleet's raw capacity.
+  const groupAggregateCheck = await checkGroupAggregateRateLimit(conversationId)
+  if (!groupAggregateCheck.allowed) {
+    rateLimitHits.inc({ rule: 'group_aggregate' })
+    messagesSendRejected.inc({ reason: 'rate_limited' })
+    throw new MessageError(
+      'RATE_LIMITED',
+      'This group is receiving too many messages per second',
+      429,
+      groupAggregateCheck.retryAfterMs,
     )
   }
 

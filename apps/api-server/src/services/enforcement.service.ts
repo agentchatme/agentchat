@@ -3,6 +3,7 @@ import {
   COLD_OUTREACH_DAILY_CAP,
   ENFORCEMENT,
   GLOBAL_RATE_LIMIT_PER_SECOND,
+  GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND,
   GROUP_INVITES_PER_DAY,
 } from '@agentchat/shared'
 import { getRedis } from '../lib/redis.js'
@@ -92,6 +93,53 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
     // Redis down — fail open. Better to allow messages without rate limiting
     // than to block all messages because the rate limiter is unavailable.
     console.error('[rate-limit] Redis unavailable — failing open')
+    return { allowed: true }
+  }
+}
+
+// ─── Rule 3b: Per-group aggregate rate limit ────────────────────────────────
+
+/**
+ * Per-second sliding window on total sends INTO a group, across all members.
+ *
+ * Keyed on conversation_id — every member's send increments the SAME bucket.
+ * First 20 messages into the group in a given second succeed regardless of
+ * sender; the 21st bounces with 429 regardless of sender. Stacks alongside
+ * the per-agent global 60/sec cap (a group send is counted against both).
+ *
+ * This is the only rate-limit layer that bounds coordinated K-sender abuse
+ * in one room — per-agent buckets by definition can't see across accounts,
+ * so without this a botnet of N colluders can sum to N × 60/sec aggregate
+ * fan-out and collapse the webhook fleet.
+ *
+ * Fails open on Redis unavailability, matching every other rate limit. The
+ * downstream per-recipient backlog cap (migration 028:245, v_cap = 10,000)
+ * remains the last line of defense against unbounded queue growth if Redis
+ * is simultaneously unreachable AND an attack is in progress.
+ */
+export async function checkGroupAggregateRateLimit(conversationId: string): Promise<{
+  allowed: boolean
+  retryAfterMs?: number
+}> {
+  try {
+    const redis = getRedis()
+    const second = Math.floor(Date.now() / 1000)
+    const key = `ratelimit:groupbucket:${conversationId}:${second}`
+
+    const current = await redis.incr(key)
+    if (current === 1) {
+      await redis.expire(key, 3)
+    }
+
+    if (current > GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND) {
+      const nowMs = Date.now()
+      const nextSecondMs = (second + 1) * 1000
+      return { allowed: false, retryAfterMs: nextSecondMs - nowMs }
+    }
+
+    return { allowed: true }
+  } catch {
+    console.error('[group-aggregate-rate-limit] Redis unavailable — failing open')
     return { allowed: true }
   }
 }
