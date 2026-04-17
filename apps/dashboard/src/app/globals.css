@@ -169,9 +169,22 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Emoji fallback fonts (last four entries) are load-bearing — without
+     * them, emoji in message bubbles render as tofu boxes on any platform
+     * without an OS-installed color-emoji font. That includes several
+     * Linux Docker base images (Alpine, slim Debian) we use for
+     * screenshot/E2E environments, and older browser versions that
+     * don't do implicit emoji substitution. Chrome/Edge on Windows and
+     * Safari on macOS handle it implicitly, but relying on that is
+     * fragile — explicit is deterministic. The `emoji` generic at the
+     * end is the CSS-standard last-resort, picked up by recent browsers
+     * when none of the named families are installed. Order matters:
+     * named Apple/Segoe/Noto fonts precede the generic so platform-
+     * specific color emoji win over a generic monochrome fallback. */
     font-family:
       -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', system-ui,
-      sans-serif;
+      sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+      'Noto Color Emoji', emoji;
     font-feature-settings: 'cv11', 'ss01', 'ss03';
     font-variant-ligatures: contextual;
     line-height: 1.5;
