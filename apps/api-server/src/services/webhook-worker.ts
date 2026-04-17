@@ -3,7 +3,7 @@ import {
   claimWebhookDeliveries,
   markWebhookDelivered,
   scheduleWebhookRetry,
-  markWebhookDead,
+  moveWebhookToDlq,
   updateDeliveryStatus,
   type WebhookDeliveryRow,
 } from '@agentchat/db'
@@ -186,8 +186,26 @@ async function scheduleNextAttempt(row: WebhookDeliveryRow, errText: string) {
   // the attempt that just failed.
   if (row.attempts >= MAX_ATTEMPTS) {
     webhookDeliveries.inc({ outcome: 'dead' })
-    await markWebhookDead(row.id, errText).catch((err) => {
-      logger.error({ err, delivery_id: row.id }, 'webhook_mark_dead_failed')
+    // Transition into the dedicated DLQ table (migration 032). Previously
+    // this was markWebhookDead() which just set status='dead' on the row
+    // in place, polluting the primary queue heap. The DLQ is a separate
+    // table with its own time-ordered index and a replay_webhook_dlq
+    // function for operator intervention. The dlq-probe already alerts on
+    // sustained growth in countDeadWebhookDeliveries (now pointing at the
+    // DLQ table), so per-move Sentry is unnecessary — the rolling-window
+    // alert is the on-call signal.
+    logger.warn(
+      {
+        delivery_id: row.id,
+        webhook_id: row.webhook_id,
+        agent_id: row.agent_id,
+        attempts: row.attempts,
+        last_error: errText.slice(0, 256),
+      },
+      'webhook_delivery_moved_to_dlq',
+    )
+    await moveWebhookToDlq(row.id, errText).catch((err) => {
+      logger.error({ err, delivery_id: row.id }, 'webhook_move_to_dlq_failed')
     })
     return
   }
@@ -210,3 +228,10 @@ async function markEnvelopeDelivered(row: WebhookDeliveryRow) {
     // handles races with WS/pub-sub marking it first.
   })
 }
+
+// Test-only hooks. scheduleNextAttempt encapsulates the terminal-state
+// decision (retry vs DLQ) and is the one branch worth asserting at the
+// TypeScript layer — the actual HTTP and SQL sides are mocked in the test.
+// Underscore prefix mirrors the convention used elsewhere in this codebase.
+export { scheduleNextAttempt as _scheduleNextAttemptForTests }
+export const _MAX_ATTEMPTS_FOR_TESTS = MAX_ATTEMPTS

@@ -152,37 +152,112 @@ export async function scheduleWebhookRetry(
   if (error) throw error
 }
 
+/**
+ * @deprecated Kept for backward compat with any call site that hasn't moved
+ * to moveWebhookToDlq yet. New code should call moveWebhookToDlq which
+ * atomically transitions the row into `webhook_deliveries_dlq`.
+ *
+ * This shim now routes through the DLQ function so the behavior is
+ * identical to moveWebhookToDlq — the row leaves webhook_deliveries for
+ * the DLQ table. The name is misleading (nothing gets a 'dead' status
+ * anymore) but removing it would be a churn-for-churn rename.
+ */
 export async function markWebhookDead(id: string, lastError: string): Promise<void> {
-  const { error } = await getSupabaseClient()
-    .from('webhook_deliveries')
-    .update({
-      status: 'dead',
-      last_error: lastError.slice(0, 1024),
-    })
-    .eq('id', id)
+  await moveWebhookToDlq(id, lastError)
+}
+
+/**
+ * Transition an exhausted delivery into the dedicated DLQ table (migration
+ * 032). Called by webhook-worker.ts:scheduleNextAttempt once a row's
+ * attempts counter hits MAX_ATTEMPTS. Atomic INSERT DLQ + DELETE
+ * webhook_deliveries inside the SQL function, so a crash mid-call leaves
+ * the row in a consistent state.
+ */
+export async function moveWebhookToDlq(id: string, lastError: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('move_to_dlq', {
+    p_delivery_id: id,
+    p_last_error: lastError.slice(0, 1024),
+  })
   if (error) throw error
 }
 
 /**
- * Count webhook_deliveries in the dead-letter queue (status='dead') that
- * landed there within the last `windowMs` milliseconds. Used by the worker's
- * DLQ-health probe — fed into the `agentchat_webhook_deliveries_dead` gauge
- * for scrapers, and compared against a threshold to fire a Sentry alert when
- * dead-letter growth points at a systemic delivery problem rather than a
- * single bad receiver.
+ * Operator-facing replay. Re-enqueues a DLQ row as a fresh
+ * webhook_deliveries row (attempts=0, next_attempt_at=NOW, status=pending)
+ * and stamps `replayed_at` + `replayed_as_id` on the original DLQ row.
+ * Returns the new delivery id.
+ */
+export async function replayWebhookDlq(dlqId: string): Promise<string> {
+  const newId = `whd_replay_${Math.random().toString(36).slice(2, 14)}`
+  const { data, error } = await getSupabaseClient().rpc('replay_webhook_dlq', {
+    p_dlq_id: dlqId,
+    p_new_id: newId,
+  })
+  if (error) throw error
+  return (data as string | null) ?? newId
+}
+
+/**
+ * Count DLQ rows that landed within the last `windowMs` milliseconds and
+ * haven't been replayed yet. Used by the worker's DLQ-health probe — fed
+ * into the `agentchat_webhook_deliveries_dead` gauge and compared against
+ * a threshold to fire a Sentry alert when DLQ growth points at a systemic
+ * delivery problem rather than a single bad receiver.
  *
- * Uses head:true + count:'exact' so PostgREST returns only the count without
- * streaming row bodies — cheap enough to run on a 5-minute interval.
+ * Source switched from `webhook_deliveries WHERE status='dead'` to
+ * `webhook_deliveries_dlq WHERE replayed_at IS NULL` by migration 032. The
+ * function name is unchanged to keep the dlq-probe call-site stable.
  */
 export async function countDeadWebhookDeliveries(windowMs: number): Promise<number> {
   const since = new Date(Date.now() - windowMs).toISOString()
   const { count, error } = await getSupabaseClient()
-    .from('webhook_deliveries')
+    .from('webhook_deliveries_dlq')
     .select('id', { count: 'exact', head: true })
-    .eq('status', 'dead')
-    .gte('created_at', since)
+    .is('replayed_at', null)
+    .gte('dead_at', since)
   if (error) throw error
   return count ?? 0
+}
+
+/**
+ * Row shape returned by listWebhookDlq for dashboards / CLI tools. Omits
+ * the secret — operators shouldn't need the shared signing secret to
+ * decide whether to replay, and leaking it wider than necessary is a
+ * bad default.
+ */
+export interface WebhookDlqRow {
+  id: string
+  webhook_id: string | null
+  agent_id: string
+  url: string
+  event: string
+  payload: Record<string, unknown>
+  attempts: number
+  last_error: string | null
+  first_attempted_at: string | null
+  last_attempted_at: string
+  dead_at: string
+  replayed_at: string | null
+  replayed_as_id: string | null
+}
+
+/**
+ * Paginated list of DLQ rows for an agent. Ordered by dead_at DESC so the
+ * most recent failures surface first — consistent with how the dashboard
+ * webhook-delivery list orders in-flight rows.
+ */
+export async function listWebhookDlq(
+  agentId: string,
+  limit = 50,
+): Promise<WebhookDlqRow[]> {
+  const { data, error } = await getSupabaseClient()
+    .from('webhook_deliveries_dlq')
+    .select('id, webhook_id, agent_id, url, event, payload, attempts, last_error, first_attempted_at, last_attempted_at, dead_at, replayed_at, replayed_as_id')
+    .eq('agent_id', agentId)
+    .order('dead_at', { ascending: false })
+    .limit(limit)
+  if (error) throw error
+  return (data ?? []) as WebhookDlqRow[]
 }
 
 /**
