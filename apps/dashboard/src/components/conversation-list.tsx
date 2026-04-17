@@ -3,17 +3,12 @@
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import { useMemo, useState } from 'react'
-import {
-  format,
-  isToday,
-  isYesterday,
-  differenceInCalendarDays,
-} from 'date-fns'
 import { MessageSquare, Search, Users } from 'lucide-react'
 
 import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
+import { Timestamp } from '@/components/timestamp'
 
 // Left column of the chat pane. Owns four responsibilities:
 //
@@ -217,7 +212,7 @@ function ConversationRow({
             </span>
             {stamp && (
               <span className="text-muted-foreground shrink-0 text-[11px] font-medium tabular-nums">
-                {formatListTimestamp(stamp)}
+                <Timestamp iso={stamp} variant="list" />
               </span>
             )}
           </div>
@@ -265,14 +260,3 @@ function subtitleFor(c: ConversationSummary): string {
   return other ? `@${other.handle}` : ''
 }
 
-// Messenger-style timestamp formatter. Today shows clock time, the
-// last week shows the day name, older shows the numeric date. Matches
-// WhatsApp / Telegram / iMessage desktop list behavior.
-function formatListTimestamp(iso: string): string {
-  const d = new Date(iso)
-  if (isToday(d)) return format(d, 'h:mm a')
-  if (isYesterday(d)) return 'Yesterday'
-  const daysAgo = differenceInCalendarDays(new Date(), d)
-  if (daysAgo < 7) return format(d, 'EEEE')
-  return format(d, 'MMM d, yyyy')
-}

@@ -140,23 +140,37 @@ export async function middleware(req: NextRequest) {
     return redirectToLogin(req)
   }
 
-  const refreshRes = await fetch(`${API_BASE}/dashboard/auth/refresh`, {
-    method: 'POST',
-    headers: {
-      cookie: `${REFRESH_COOKIE}=${refresh}`,
-      'Content-Type': 'application/json',
-    },
-    cache: 'no-store',
-  })
+  // Only a real 401/403 from the api-server counts as auth death. Any
+  // other failure (network error, 5xx, refresh coordinator timeout) means
+  // we don't know — fall through with the existing cookies and let the
+  // RSC's apiFetch see the real state. Kicking the user out on a transient
+  // blip is worse than one failed request.
+  let refreshRes: Response
+  try {
+    refreshRes = await fetch(`${API_BASE}/dashboard/auth/refresh`, {
+      method: 'POST',
+      headers: {
+        cookie: `${REFRESH_COOKIE}=${refresh}`,
+        'Content-Type': 'application/json',
+      },
+      cache: 'no-store',
+    })
+  } catch {
+    return NextResponse.next()
+  }
+
+  if (refreshRes.status === 401 || refreshRes.status === 403) {
+    return redirectToLogin(req)
+  }
 
   if (!refreshRes.ok) {
-    return redirectToLogin(req)
+    return NextResponse.next()
   }
 
   const newAccess = extractCookieFromHeaders(refreshRes.headers, ACCESS_COOKIE)
   const newRefresh = extractCookieFromHeaders(refreshRes.headers, REFRESH_COOKIE)
   if (!newAccess || !newRefresh) {
-    return redirectToLogin(req)
+    return NextResponse.next()
   }
 
   // Rewrite the forwarded Cookie header so downstream RSCs reading

@@ -357,11 +357,91 @@ dashboard.post('/auth/otp/verify', ipRateLimit(10, 600), async (c) => {
   })
 })
 
+// ─── Single-flight refresh coordination ──────────────────────────────────
+// A naive rotate-on-use refresh endpoint races itself whenever siblings
+// fire concurrently with the same cookie — common in real use from Next's
+// RSC prefetches, WS-driven router.refresh() bursts, the 40-min keepalive,
+// or multiple tabs. The loser of the DB UPDATE race would surface 401,
+// the dashboard middleware would see it as auth death and kick to /login.
+//
+// Strategy:
+//   1. Check Redis for `refresh:result:<oldHash>` — if a sibling already
+//      rotated in the last ~30s, reuse its tokens.
+//   2. Otherwise SETNX `refresh:lock:<oldHash>` (10s TTL) to win the right
+//      to do the rotation. Losers poll the result key briefly.
+//   3. Winner does the full Supabase + DB rotation, caches the plaintext
+//      new tokens under the OLD hash for 30s, releases the lock.
+//
+// The plaintext tokens live in Redis for at most ~30s. The refresh token
+// already exists in plaintext in the browser cookie, so a short Redis
+// cache is not a meaningful widening of the attack surface.
+
+const REFRESH_LOCK_TTL_MS = 10_000
+const REFRESH_RESULT_TTL_S = 30
+const REFRESH_POLL_INTERVAL_MS = 75
+const REFRESH_POLL_ATTEMPTS = 30
+
+interface CachedRotation {
+  access: string
+  refresh: string
+}
+
+function refreshResultKey(oldHash: string): string {
+  return `refresh:result:${oldHash}`
+}
+
+function refreshLockKey(oldHash: string): string {
+  return `refresh:lock:${oldHash}`
+}
+
+async function getCachedRotation(oldHash: string): Promise<CachedRotation | null> {
+  try {
+    const v = await getRedis().get<CachedRotation>(refreshResultKey(oldHash))
+    return v ?? null
+  } catch {
+    return null
+  }
+}
+
+async function cacheRotation(oldHash: string, tokens: CachedRotation): Promise<void> {
+  try {
+    await getRedis().set(refreshResultKey(oldHash), tokens, {
+      ex: REFRESH_RESULT_TTL_S,
+    })
+  } catch {
+    // best-effort — a miss just degrades to the same race we had before
+  }
+}
+
+async function acquireRefreshLock(oldHash: string): Promise<boolean> {
+  try {
+    const ok = await getRedis().set(refreshLockKey(oldHash), '1', {
+      nx: true,
+      px: REFRESH_LOCK_TTL_MS,
+    })
+    return ok === 'OK'
+  } catch {
+    return false
+  }
+}
+
+async function releaseRefreshLock(oldHash: string): Promise<void> {
+  try {
+    await getRedis().del(refreshLockKey(oldHash))
+  } catch {
+    // lock TTL is the safety net
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 // POST /dashboard/auth/refresh — Rotate session using the refresh cookie
 // Called by the dashboard's Next.js middleware when the access token is
-// close to expiry (or already expired). Returns 204 on success with new
-// cookies set via Set-Cookie, 401 on any failure so the middleware knows
-// to redirect to /login.
+// close to expiry (or already expired). Returns 200 on success with new
+// cookies set via Set-Cookie, 401 only on real auth death so the
+// middleware knows to redirect to /login.
 //
 // Rate limit: 30/min per IP. A single tab rotates at most once per ~1h of
 // active use, so 30/min is a hard ceiling against an attacker replaying
@@ -373,42 +453,83 @@ dashboard.post('/auth/refresh', ipRateLimit(30, 60), async (c) => {
   }
 
   const oldHash = hashRefreshToken(refreshToken)
-  const session = await findDashboardSessionByHash(oldHash)
-  if (!session) {
-    // Unknown hash: either a stolen cookie, a revoked session, or the
-    // loser of a rotation race from another tab. Clear the cookies so
-    // the middleware bounces cleanly to /login.
-    clearSessionCookies(c)
-    return c.json({ code: 'UNAUTHORIZED', message: 'Session not found' }, 401)
+
+  // Fast path: a concurrent sibling already rotated this token. Reuse
+  // its result so every caller with the same old cookie ends up with
+  // the same new cookies — no DB UPDATE contention, no false 401.
+  const cached = await getCachedRotation(oldHash)
+  if (cached) {
+    setSessionCookies(c, cached.access, cached.refresh)
+    return c.json({ message: 'Refreshed' })
   }
 
-  const tokens = await callSupabaseRefresh(refreshToken)
-  if (!tokens) {
-    // Supabase rejected the refresh token — expired (30d idle), revoked,
-    // or malformed. Drop the row so a later replay attempt can't brute
-    // the same hash, and clear cookies.
-    await deleteDashboardSessionByHash(oldHash).catch(() => {})
-    clearSessionCookies(c)
-    return c.json({ code: 'UNAUTHORIZED', message: 'Session expired' }, 401)
+  // Single-flight: only one request at a time performs the Supabase +
+  // DB rotation for a given refresh cookie. Losers wait briefly for
+  // the winner's cached result.
+  const gotLock = await acquireRefreshLock(oldHash)
+  if (!gotLock) {
+    for (let i = 0; i < REFRESH_POLL_ATTEMPTS; i++) {
+      await sleep(REFRESH_POLL_INTERVAL_MS)
+      const result = await getCachedRotation(oldHash)
+      if (result) {
+        setSessionCookies(c, result.access, result.refresh)
+        return c.json({ message: 'Refreshed' })
+      }
+    }
+    // Winner never cached — likely crashed mid-rotation or Redis is
+    // down. Surface 503 so the middleware retries instead of kicking.
+    return c.json({ code: 'REFRESH_UNAVAILABLE', message: 'Refresh coordinator timeout' }, 503)
   }
 
-  // Rotate on the same row. If two tabs hit this endpoint concurrently
-  // with the same old hash, both callSupabaseRefresh() calls succeed
-  // against Supabase (Supabase allows a short rotation grace window),
-  // but only ONE rotateDashboardSession() finds the row — the loser's
-  // UPDATE affects zero rows and we surface 401 so that tab re-OTPs.
-  // Low probability; accepted tradeoff over adding a distributed lock.
-  const rotated = await rotateDashboardSession({
-    old_hash: oldHash,
-    new_hash: hashRefreshToken(tokens.refresh_token),
-  })
-  if (!rotated) {
-    clearSessionCookies(c)
-    return c.json({ code: 'UNAUTHORIZED', message: 'Rotation conflict' }, 401)
-  }
+  try {
+    // Re-check the cache — the lock winner could have finished between
+    // our first cache check and our SETNX. Cheap insurance against
+    // doing the rotation twice in that narrow window.
+    const postLock = await getCachedRotation(oldHash)
+    if (postLock) {
+      setSessionCookies(c, postLock.access, postLock.refresh)
+      return c.json({ message: 'Refreshed' })
+    }
 
-  setSessionCookies(c, tokens.access_token, tokens.refresh_token)
-  return c.json({ message: 'Refreshed' })
+    const session = await findDashboardSessionByHash(oldHash)
+    if (!session) {
+      clearSessionCookies(c)
+      return c.json({ code: 'UNAUTHORIZED', message: 'Session not found' }, 401)
+    }
+
+    const tokens = await callSupabaseRefresh(refreshToken)
+    if (!tokens) {
+      // Supabase rejected the refresh token — expired (30d idle), revoked,
+      // or malformed. Drop the row so a later replay attempt can't brute
+      // the same hash, and clear cookies.
+      await deleteDashboardSessionByHash(oldHash).catch(() => {})
+      clearSessionCookies(c)
+      return c.json({ code: 'UNAUTHORIZED', message: 'Session expired' }, 401)
+    }
+
+    const rotated = await rotateDashboardSession({
+      old_hash: oldHash,
+      new_hash: hashRefreshToken(tokens.refresh_token),
+    })
+    if (!rotated) {
+      // We hold the lock yet the UPDATE found no row. Either the session
+      // was just deleted (sign-out-everywhere, logout) or the lock TTL
+      // expired and a sibling rotated out from under us. Treat as auth
+      // death rather than masquerade with stale tokens.
+      clearSessionCookies(c)
+      return c.json({ code: 'UNAUTHORIZED', message: 'Rotation conflict' }, 401)
+    }
+
+    await cacheRotation(oldHash, {
+      access: tokens.access_token,
+      refresh: tokens.refresh_token,
+    })
+
+    setSessionCookies(c, tokens.access_token, tokens.refresh_token)
+    return c.json({ message: 'Refreshed' })
+  } finally {
+    await releaseRefreshLock(oldHash)
+  }
 })
 
 // POST /dashboard/auth/logout — Sign out the current browser only

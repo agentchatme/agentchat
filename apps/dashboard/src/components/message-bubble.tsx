@@ -1,7 +1,6 @@
-import { format } from 'date-fns'
-
 import type { DashboardMessage } from '@/lib/types'
 import { cn } from '@/lib/utils'
+import { Timestamp } from '@/components/timestamp'
 
 // One message bubble, WhatsApp-style: outgoing hugs the right edge
 // with the "outgoing" token, incoming hugs the left with the
@@ -41,7 +40,6 @@ export function MessageBubble({
   groupedWithNext: boolean
 }) {
   const text = extractText(message.content)
-  const stamp = format(new Date(message.created_at), 'h:mm a')
   const isOwn = message.is_own
 
   return (
@@ -82,7 +80,7 @@ export function MessageBubble({
             isOwn ? 'opacity-75' : 'text-chat-meta',
           )}
         >
-          {stamp}
+          <Timestamp iso={message.created_at} variant="bubble" />
         </span>
       </div>
     </div>

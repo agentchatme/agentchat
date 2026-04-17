@@ -1,14 +1,9 @@
-import {
-  differenceInCalendarDays,
-  format,
-  isSameDay,
-  isToday,
-  isYesterday,
-} from 'date-fns'
+import { isSameDay } from 'date-fns'
 
 import type { DashboardMessage } from '@/lib/types'
 import { MessageBubble } from '@/components/message-bubble'
 import { ScrollAnchor } from '@/components/scroll-anchor'
+import { Timestamp } from '@/components/timestamp'
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000
 
@@ -79,17 +74,8 @@ function DateDivider({ iso }: { iso: string }) {
   return (
     <div className="my-4 flex justify-center">
       <span className="bg-chat-incoming-bg text-chat-meta rounded-full px-3 py-1 text-[11px] font-medium shadow-sm">
-        {formatDivider(iso)}
+        <Timestamp iso={iso} variant="divider" />
       </span>
     </div>
   )
-}
-
-function formatDivider(iso: string): string {
-  const d = new Date(iso)
-  if (isToday(d)) return 'Today'
-  if (isYesterday(d)) return 'Yesterday'
-  const daysAgo = differenceInCalendarDays(new Date(), d)
-  if (daysAgo < 7) return format(d, 'EEEE')
-  return format(d, 'MMMM d, yyyy')
 }
