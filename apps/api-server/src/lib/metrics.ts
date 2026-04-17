@@ -290,6 +290,29 @@ export const groupDeletionFanoutTickSeconds = histogram(
   [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30],
 )
 
+// ─── Message outbox worker (migration 031) ────────────────────────────────
+//
+// The outbox worker drains message_outbox into webhook_deliveries in the
+// transaction-committed follow-up to send_message_atomic. Its health is
+// "does the queue stay at steady-state near zero?" — this pair of metrics
+// surfaces both throughput (counter) and slow ticks (histogram). A steady
+// non-zero orphaned/failed rate is a real signal; delivered dominates in
+// healthy operation.
+
+export const outboxProcessed = counter(
+  'agentchat_outbox_processed_total',
+  'Message outbox rows processed, labeled by outcome (delivered|no_webhooks|orphaned|failed).',
+)
+
+// Same bucket scheme as the group-deletion fan-out worker — comparable
+// workloads (DB-only tick, no external calls), so the healthy band is
+// low-tens of ms and the alarm band is seconds.
+export const outboxTickSeconds = histogram(
+  'agentchat_outbox_tick_seconds',
+  'Wall-clock duration of one outbox-worker tick (claim + batch-resolve + process).',
+  [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30],
+)
+
 // ─── Redis pub/sub (cross-machine WebSocket fan-out) ──────────────────────
 //
 // Pub/sub is the bridge that lets a message arriving on api machine #1

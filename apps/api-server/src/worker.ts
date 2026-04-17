@@ -7,6 +7,7 @@ import {
   startGroupDeletionFanoutWorker,
   stopGroupDeletionFanoutWorker,
 } from './services/group-deletion-fanout-worker.js'
+import { startOutboxWorker, stopOutboxWorker } from './services/outbox-worker.js'
 import { startDlqProbe, stopDlqProbe } from './services/dlq-probe.js'
 import { initPubSub, shutdownPubSub, getPubSubHealth } from './ws/pubsub.js'
 import { logger } from './lib/logger.js'
@@ -93,6 +94,7 @@ const server = serve({ fetch: app.fetch, port: PORT }, (info) => {
 initPubSub(process.env['REDIS_URL'])
 startWebhookWorker()
 startGroupDeletionFanoutWorker()
+startOutboxWorker()
 startDlqProbe()
 logger.info({ pid: process.pid }, 'worker_started')
 
@@ -110,7 +112,11 @@ async function shutdown(signal: string) {
   // closes and the process exits, otherwise rows sit in 'delivering' for
   // the 60s stale-row reclaim window and re-fire on a different worker.
   // Awaited in parallel because they're independent queues.
-  await Promise.all([stopWebhookWorker(), stopGroupDeletionFanoutWorker()])
+  await Promise.all([
+    stopWebhookWorker(),
+    stopGroupDeletionFanoutWorker(),
+    stopOutboxWorker(),
+  ])
   stopDlqProbe()
 
   await new Promise<void>((resolve) => server.close(() => resolve()))

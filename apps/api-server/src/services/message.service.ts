@@ -800,7 +800,12 @@ export async function pushToGroup(
       type: 'message.new',
       payload: message,
     })
-    fireWebhooks(agentId, 'message.new', message)
+    // Webhook fan-out for message.new no longer happens here. Moved to the
+    // message_outbox table (migration 031): send_message_atomic writes an
+    // outbox row per recipient inside the same transaction as the message,
+    // and outbox-worker.ts drains those rows into webhook_deliveries. This
+    // closed the old gap where a crash between RPC commit and fireWebhooks
+    // dropped the event silently (durable message, lost webhook).
   }
 }
 
@@ -829,19 +834,18 @@ async function mapSenderHandles(messages: Array<Record<string, unknown>>) {
 }
 
 async function pushToRecipient(recipientId: string, message: Record<string, unknown>) {
-  // Both paths fire in parallel — no gating on local connection state.
-  // Pub/sub fans out to all servers; the server holding the WebSocket delivers + marks "delivered".
-  // Webhooks fire independently as a parallel path (agents deduplicate by message ID).
-  // Sync on reconnect is the final safety net for anything both paths miss.
-
-  // Path 1: Real-time via pub/sub → WebSocket (all servers check local connections)
+  // WS is the only real-time path fired here. Webhook fan-out moved to the
+  // durable message_outbox table (migration 031) — send_message_atomic
+  // writes an outbox row inside the same transaction as the message and
+  // the outbox worker drains it into webhook_deliveries. Benefit: no more
+  // post-commit gap where a crash loses webhook events the message survived.
+  // Pub/sub fans this WS event out to all servers; the server holding the
+  // WebSocket delivers + marks "delivered". /sync is the final safety net
+  // for anything the WS push misses.
   sendToAgent(recipientId, {
     type: 'message.new',
     payload: message,
   })
-
-  // Path 2: Webhook delivery (parallel, best-effort with retries)
-  fireWebhooks(recipientId, 'message.new', message)
 }
 
 export async function getMessages(

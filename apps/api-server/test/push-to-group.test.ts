@@ -107,26 +107,20 @@ describe('pushToGroup', () => {
       type: 'message.new',
       payload: { id: 'msg_1', seq: 42 },
     })
-    expect(fireWebhooksMock).toHaveBeenCalledTimes(2)
-    expect(fireWebhooksMock).toHaveBeenNthCalledWith(
-      1,
-      'agt_alice',
-      'message.new',
-      { id: 'msg_1', seq: 42 },
-    )
-    expect(fireWebhooksMock).toHaveBeenNthCalledWith(
-      2,
-      'agt_bob',
-      'message.new',
-      { id: 'msg_1', seq: 42 },
-    )
+    // Webhook fan-out for message.new now runs via the message_outbox
+    // worker (migration 031) — pushToGroup is ephemeral (WS) only. Asserting
+    // that fireWebhooks is NOT called here pins the boundary: if someone
+    // accidentally reintroduces a post-commit webhook call, the durability
+    // guarantee regresses and this test catches it.
+    expect(fireWebhooksMock).not.toHaveBeenCalled()
   })
 
   it('does NOT push to late joiners (simulated by DB filter returning empty)', async () => {
     // Real scenario: message_seq=10, late joiner's joined_seq=11. The DB
     // query returns no one because joined_seq > maxSeq. This test pins
-    // the behavior: if the DB says "no eligible recipients", no WS/webhook
-    // event fires.
+    // the behavior: if the DB says "no eligible recipients", no WS event
+    // fires. Webhook fan-out is the outbox worker's job — pushToGroup
+    // neither owns nor should it fire one either way.
     getGroupPushRecipientsMock.mockResolvedValue([])
     await pushToGroup('conv_xyz', 'agt_sender', 10, { id: 'msg_1', seq: 10 })
 
@@ -146,7 +140,11 @@ describe('pushToGroup', () => {
 
   // §3.4.2: backlogged members have no envelope in message_deliveries, so
   // the ephemeral push must also skip them or they would receive a
-  // message.new with no durable row backing it on the next sync.
+  // message.new with no durable row backing it on the next sync. The
+  // outbox writes also skip backlogged recipients inside
+  // send_message_atomic (they're in the same v_skipped array), so the
+  // webhook side of delivery is already correct independently of this
+  // test.
   it('excludes skippedRecipientIds from the push fan-out', async () => {
     getGroupPushRecipientsMock.mockResolvedValue(['agt_alice', 'agt_bob', 'agt_carol'])
     await pushToGroup(
@@ -166,15 +164,13 @@ describe('pushToGroup', () => {
       type: 'message.new',
       payload: { id: 'msg_1', seq: 42 },
     })
-    expect(fireWebhooksMock).toHaveBeenCalledTimes(2)
-    // agt_bob (the skipped one) never sees a push, matching its missing
-    // envelope on the DB side.
+    // agt_bob (the skipped one) never sees a WS push, matching its
+    // missing envelope on the DB side. Webhook fan-out is owned by the
+    // outbox worker and not asserted here.
     expect(
       sendToAgentMock.mock.calls.every(([id]) => id !== 'agt_bob'),
     ).toBe(true)
-    expect(
-      fireWebhooksMock.mock.calls.every(([id]) => id !== 'agt_bob'),
-    ).toBe(true)
+    expect(fireWebhooksMock).not.toHaveBeenCalled()
   })
 
   it('delivers to everyone when the skipped list is empty or omitted', async () => {
