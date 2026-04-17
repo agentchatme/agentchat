@@ -1,36 +1,44 @@
 'use client'
 
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
-import { LogOut, Moon, Sun } from 'lucide-react'
+import { ChevronsUpDown, LogOut, Moon, Settings, Sun } from 'lucide-react'
 
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-
-// The sidebar bottom is one flat list — Account settings,
-// Documentation, Theme toggle, Sign out — rendered as a single <nav>
-// with consistent gap/padding. OwnerMenuActions is the client-side
-// piece (theme + logout) that gets slotted into that same nav, so the
-// whole group reads as one section instead of splitting across
-// wrapper containers. The signed-in identity card is rendered
-// separately by the sidebar as a footer pill below the nav.
-//
-// Theme toggle flips between light and dark based on the current
-// resolved theme — no "system" option. Label advertises the action,
-// not the current state. Using resolvedTheme (not theme) so we dodge
-// any stale 'system' value that an older session may still carry in
-// localStorage.
-//
-// Sign-out calls the api-server's /dashboard/auth/logout, clears the
-// cookie, and bounces to /login with router.refresh() so the RSC tree
-// drops every owner-scoped surface.
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const navItemClass =
   'text-muted-foreground hover:bg-accent hover:text-foreground flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors'
 
-export function OwnerMenuActions() {
-  const router = useRouter()
+export function ThemeToggleItem() {
   const { resolvedTheme, setTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
+  const label = isDark ? 'Light mode' : 'Dark mode'
+  const Icon = isDark ? Sun : Moon
+  return (
+    <button
+      type="button"
+      onClick={() => setTheme(isDark ? 'light' : 'dark')}
+      className={navItemClass}
+    >
+      <Icon className="size-[18px]" />
+      {label}
+    </button>
+  )
+}
+
+// Account settings + Sign out — shared between the expanded
+// OwnerIdentityMenu and the collapsed rail's identity dropdown so the
+// logout flow stays in one place.
+export function OwnerMenuItems() {
+  const router = useRouter()
 
   async function logout() {
     try {
@@ -42,43 +50,57 @@ export function OwnerMenuActions() {
     router.refresh()
   }
 
-  function toggleTheme() {
-    setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')
-  }
-
-  const isDark = resolvedTheme === 'dark'
-  const themeLabel = isDark ? 'Light mode' : 'Dark mode'
-  const ThemeIcon = isDark ? Sun : Moon
-
   return (
     <>
-      <button type="button" onClick={toggleTheme} className={navItemClass}>
-        <ThemeIcon className="size-[18px]" />
-        {themeLabel}
-      </button>
-      <button type="button" onClick={logout} className={navItemClass}>
-        <LogOut className="size-[18px]" />
+      <DropdownMenuItem asChild>
+        <Link href="/account" className="cursor-pointer">
+          <Settings className="size-4" />
+          Account settings
+        </Link>
+      </DropdownMenuItem>
+      <DropdownMenuItem onSelect={logout} variant="destructive">
+        <LogOut className="size-4" />
         Sign out
-      </button>
+      </DropdownMenuItem>
     </>
   )
 }
 
-export function OwnerIdentityCard({ email }: { email: string }) {
+// Signed-in pill at the foot of the expanded sidebar. Clicking it
+// opens a dropdown anchored to the top edge so the menu expands
+// upward — the pill already sits at the bottom of the sidebar and a
+// bottom-anchored menu would clip against the viewport.
+export function OwnerIdentityMenu({ email }: { email: string }) {
   const initial = email.charAt(0).toUpperCase()
   return (
-    <div className="flex items-center gap-3 rounded-md border bg-background/40 px-3 py-2.5">
-      <Avatar className="size-9">
-        <AvatarFallback>{initial}</AvatarFallback>
-      </Avatar>
-      <div className="flex min-w-0 flex-col gap-0.5">
-        <span className="text-muted-foreground text-[10px] font-semibold uppercase tracking-wider">
-          Signed in
-        </span>
-        <span className="max-w-full truncate text-sm font-medium">
-          {email}
-        </span>
-      </div>
-    </div>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label="Account menu"
+          className="hover:bg-accent focus-visible:ring-ring bg-background/40 flex w-full items-center gap-3 rounded-md border px-3 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none"
+        >
+          <Avatar className="size-9">
+            <AvatarFallback>{initial}</AvatarFallback>
+          </Avatar>
+          <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-muted-foreground text-[10px] font-semibold tracking-wider uppercase">
+              Signed in
+            </span>
+            <span className="max-w-full truncate text-sm font-medium">
+              {email}
+            </span>
+          </div>
+          <ChevronsUpDown className="text-muted-foreground size-4 shrink-0" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        side="top"
+        align="start"
+        className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
+      >
+        <OwnerMenuItems />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

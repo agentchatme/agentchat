@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useTheme } from 'next-themes'
 import { toast } from 'sonner'
-import { Loader2, LogOut, Moon, Plus, Sun } from 'lucide-react'
+import { Loader2, Moon, Plus, Sun } from 'lucide-react'
 
 import type { ClaimedAgent } from '@/lib/types'
 import { cn } from '@/lib/utils'
@@ -24,25 +24,27 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { StatusDot } from '@/components/status-dot'
+import { OwnerMenuItems } from '@/components/owner-menu'
 
-// Icon-only variants for the collapsed sidebar rail. Each one mirrors
-// the expanded counterpart — same navigation target, same pathname
-// active-state logic — but renders as a 40px square with a hover
-// tooltip labelling the action. Keeping these in a dedicated file
-// (instead of threading a `collapsed` prop through every expanded
-// component) means the expanded components stay dumb and untouched,
-// and the rail can evolve its own density and spacing rules without
-// cluttering the default path.
+// Icon-only variants for the collapsed sidebar rail. Each mirrors the
+// expanded counterpart — same navigation target, same active-state
+// logic — but renders as a 40px square with a hover tooltip. Keeping
+// these in a dedicated file means the expanded components stay dumb
+// and the rail can evolve its own density rules.
 
 const TILE =
   'flex size-10 items-center justify-center rounded-md transition-colors'
 const TILE_INACTIVE =
   'text-muted-foreground hover:bg-accent hover:text-foreground'
-const TILE_ACTIVE = 'bg-accent text-foreground'
 
 export function CollapsedAgentIcon({ agent }: { agent: ClaimedAgent }) {
   const pathname = usePathname()
@@ -179,33 +181,6 @@ export function CollapsedAgentClaim() {
   )
 }
 
-export function CollapsedNavLink({
-  href,
-  icon,
-  label,
-}: {
-  href: string
-  icon: React.ReactNode
-  label: string
-}) {
-  const pathname = usePathname()
-  const active = pathname === href || pathname.startsWith(`${href}/`)
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Link
-          href={href}
-          aria-label={label}
-          className={cn(TILE, active ? TILE_ACTIVE : TILE_INACTIVE)}
-        >
-          {icon}
-        </Link>
-      </TooltipTrigger>
-      <TooltipContent side="right">{label}</TooltipContent>
-    </Tooltip>
-  )
-}
-
 export function CollapsedNavButton({
   href,
   icon,
@@ -257,54 +232,28 @@ export function CollapsedThemeToggle() {
   )
 }
 
-export function CollapsedSignOut() {
-  const router = useRouter()
-  async function logout() {
-    try {
-      await fetch('/dashboard/auth/logout', { method: 'POST' })
-    } catch {
-      toast.error('Network error — signing out locally anyway')
-    }
-    router.push('/login')
-    router.refresh()
-  }
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={logout}
-          aria-label="Sign out"
-          className={cn(TILE, TILE_INACTIVE)}
-        >
-          <LogOut className="size-[18px]" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="right">Sign out</TooltipContent>
-    </Tooltip>
-  )
-}
-
-export function CollapsedIdentityDot({ email }: { email: string }) {
+// Identity avatar at the foot of the collapsed rail. Click opens the
+// same Account settings + Sign out menu the expanded OwnerIdentityMenu
+// uses; anchored side=right so it opens into the main pane instead of
+// off-screen to the left.
+export function CollapsedOwnerMenu({ email }: { email: string }) {
   const initial = email.charAt(0).toUpperCase()
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className="flex size-10 cursor-default items-center justify-center rounded-md"
-          aria-label={`Signed in as ${email}`}
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Account menu — signed in as ${email}`}
+          className={cn(TILE, TILE_INACTIVE)}
         >
           <Avatar className="size-9">
             <AvatarFallback className="text-[13px]">{initial}</AvatarFallback>
           </Avatar>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="right">
-        <span className="block text-[10px] font-semibold uppercase tracking-wider opacity-70">
-          Signed in
-        </span>
-        <span>{email}</span>
-      </TooltipContent>
-    </Tooltip>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent side="right" align="end" className="min-w-56">
+        <OwnerMenuItems />
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }
