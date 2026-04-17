@@ -35,6 +35,7 @@ const getAgentMessagesForOwnerRPC = vi.fn()
 const listEventsForTarget = vi.fn()
 const listContacts = vi.fn()
 const listBlocks = vi.fn()
+const invalidateOwnerCache = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@agentchat/db', () => ({
   findOwnedAgentByHandle,
@@ -48,6 +49,7 @@ vi.mock('@agentchat/db', () => ({
   listEventsForTarget,
   listContacts,
   listBlocks,
+  invalidateOwnerCache,
 }))
 
 const emitEvent = vi.fn().mockResolvedValue(undefined)
