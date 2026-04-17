@@ -21,7 +21,7 @@ import { dashboardRoutes } from './routes/dashboard.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
-import { initPubSub, shutdownPubSub } from './ws/pubsub.js'
+import { initPubSub, shutdownPubSub, getPubSubHealth } from './ws/pubsub.js'
 import { closeAllConnections, getAllConnectedAgentIds } from './ws/registry.js'
 import {
   addOwnerConnection,
@@ -109,8 +109,44 @@ app.get('/', (c) => {
   return c.json({ name: 'AgentChat API', version: '0.2.0', status: 'alive' })
 })
 
+// Health check — also drives Fly's [checks.health] block (fly.toml line 71).
+//
+// When REDIS_URL is set, pub/sub is the load-bearing component for cross-
+// machine WebSocket fan-out. A machine whose subscriber is down silently
+// stops receiving any messages from other machines — recipients on this
+// host miss every live push originating elsewhere until reconnect. We'd
+// rather Fly's load balancer pull a sick machine out of rotation than
+// keep routing live WS users into it. So: 503 if Redis is expected but
+// neither client is ready; 200 otherwise.
+//
+// Why "neither" instead of "either" — the publisher being down only
+// breaks outbound fan-out from this host (ugly but bounded; messages
+// still hit Postgres and recipients drain on /sync). The subscriber
+// being down breaks INBOUND fan-out to this host (every other machine's
+// publishes are invisible). We require BOTH down before we ask Fly to
+// quarantine us, because a half-degraded machine can still serve some
+// traffic correctly while it self-heals; a fully-degraded one cannot.
+//
+// Single-server mode (REDIS_URL unset) always returns 200 — there's no
+// Redis to be connected to, and local-only delivery is the intended
+// behavior.
 app.get('/v1/health', (c) => {
-  return c.json({ status: 'ok' })
+  const ps = getPubSubHealth()
+  if (ps.expected && !ps.publisherReady && !ps.subscriberReady) {
+    return c.json(
+      {
+        status: 'degraded',
+        pubsub: { publisher: false, subscriber: false },
+      },
+      503,
+    )
+  }
+  return c.json({
+    status: 'ok',
+    ...(ps.expected && {
+      pubsub: { publisher: ps.publisherReady, subscriber: ps.subscriberReady },
+    }),
+  })
 })
 
 // WebSocket endpoint

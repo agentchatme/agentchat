@@ -8,7 +8,7 @@ import {
   stopGroupDeletionFanoutWorker,
 } from './services/group-deletion-fanout-worker.js'
 import { startDlqProbe, stopDlqProbe } from './services/dlq-probe.js'
-import { initPubSub, shutdownPubSub } from './ws/pubsub.js'
+import { initPubSub, shutdownPubSub, getPubSubHealth } from './ws/pubsub.js'
 import { logger } from './lib/logger.js'
 import { serialize } from './lib/metrics.js'
 import { Sentry } from './instrument.js'
@@ -46,7 +46,33 @@ const PORT = Number(process.env['WORKER_PORT'] ?? 9091)
 
 const app = new Hono()
 
-app.get('/health', (c) => c.json({ status: 'ok' }))
+// Health check — drives Fly's [[services.tcp_checks]] block (fly.toml line 58).
+// Same pub/sub-aware logic as the api process: when REDIS_URL is set, we
+// need at least one of publisher/subscriber ready for this worker to do
+// useful cross-machine work. Group-deletion fan-out specifically PUBLISHES
+// from the worker to api-server processes — a publisher-down worker can
+// still drain its DB queue but recipients on other machines stop getting
+// the live push (they'll catch up on /sync, but the real-time guarantee
+// is broken). Treating it the same as the api process keeps the
+// quarantine semantics consistent across the whole pool.
+app.get('/health', (c) => {
+  const ps = getPubSubHealth()
+  if (ps.expected && !ps.publisherReady && !ps.subscriberReady) {
+    return c.json(
+      {
+        status: 'degraded',
+        pubsub: { publisher: false, subscriber: false },
+      },
+      503,
+    )
+  }
+  return c.json({
+    status: 'ok',
+    ...(ps.expected && {
+      pubsub: { publisher: ps.publisherReady, subscriber: ps.subscriberReady },
+    }),
+  })
+})
 
 app.get('/internal/metrics', (c) => {
   const expected = process.env['METRICS_TOKEN']

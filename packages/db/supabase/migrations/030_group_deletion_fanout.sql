@@ -46,7 +46,17 @@ CREATE TABLE group_deletion_fanout (
   -- (this row + group + actor) at drain time rather than denormalizing
   -- a snapshot here, so a renamed actor or updated group avatar doesn't
   -- ship a stale snapshot and the queue row stays small.
-  system_msg_id     TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  --
+  -- No FK to messages(id) on purpose: `messages` is range-partitioned by
+  -- created_at (mig 028), so its PK is the composite (id, created_at) and
+  -- a single-column FK fails with 42830 ("no unique constraint matching
+  -- given keys"). Same reason message_deliveries(message_id) carries no FK
+  -- in mig 028 — application-level integrity is the established pattern.
+  -- Practical safety: the row is inserted in the same transaction as the
+  -- system message itself, so referential drift is impossible at write
+  -- time, and the worker's "if (!systemMsg) mark dead" guard handles the
+  -- case where the message row is later purged out from under the queue.
+  system_msg_id     TEXT NOT NULL,
 
   status            TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'delivering', 'completed', 'dead')),

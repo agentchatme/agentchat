@@ -289,3 +289,88 @@ export const groupDeletionFanoutTickSeconds = histogram(
   'Wall-clock duration of one fan-out worker tick (claim + process + finalize).',
   [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30],
 )
+
+// ─── Redis pub/sub (cross-machine WebSocket fan-out) ──────────────────────
+//
+// Pub/sub is the bridge that lets a message arriving on api machine #1
+// reach a WebSocket connected to api machine #3. If pub/sub silently
+// degrades — publisher disconnect, subscriber disconnect, network blip —
+// fan-out goes local-only on the affected machine and ~5/6 of recipients
+// stop receiving live pushes. The blast radius is invisible without
+// metrics: messages still hit Postgres, recipients still drain on next
+// /sync, but real-time delivery breaks for everyone not lucky enough to
+// be on the same machine as the sender.
+//
+// These metrics are the canary. Publishes_total + the connected gauges
+// drive the dashboard ("are we reaching every machine right now?"); the
+// fallbacks counter is the leading indicator of degradation; the latency
+// histogram catches "Redis is reachable but slow"; the reconnects counter
+// surfaces flap behavior that the connected gauges can miss between
+// scrape intervals.
+
+export const pubsubPublishes = counter(
+  'agentchat_pubsub_publishes_total',
+  'Pub/sub publish attempts, labeled by channel + outcome (success|failure).',
+)
+
+export const pubsubMessagesReceived = counter(
+  'agentchat_pubsub_messages_received_total',
+  'Pub/sub messages received by the subscriber, labeled by channel.',
+)
+
+// Incremented when the publish path threw (Redis unreachable, slow, or
+// otherwise) and the code fell back to local-only delivery via
+// deliverLocally* helpers. A non-zero rate here means cross-machine
+// fan-out is degraded right now — recipients on other machines are not
+// receiving the live push for the messages counted here. They'll still
+// catch up on /sync after reconnect, but the real-time guarantee is broken.
+export const pubsubLocalFallbacks = counter(
+  'agentchat_pubsub_local_fallbacks_total',
+  'Times a publish failed and the code fell back to local-only delivery.',
+)
+
+// Increments on every ioredis 'reconnecting' event. Healthy steady state
+// is zero growth. Any non-zero rate is worth investigating — a flapping
+// Redis connection causes the subscriber to miss messages published
+// during the reconnect gap (ioredis does NOT replay missed pub/sub frames
+// on reconnect — that's a Redis protocol limitation, not an ioredis
+// choice). Sustained reconnects = sustained fan-out gaps.
+export const pubsubReconnects = counter(
+  'agentchat_pubsub_reconnects_total',
+  'ioredis reconnect events, labeled by role (publisher|subscriber).',
+)
+
+// 1 when the publisher's TCP connection to Redis is up and AUTH'd; 0
+// otherwise. Single-process gauge — when scraping a 6-machine cluster,
+// you sum or average across instances depending on what you're asking
+// ("are ALL machines connected?" vs "what fraction is connected?").
+export const pubsubPublisherConnected = gauge(
+  'agentchat_pubsub_publisher_connected',
+  'Publisher Redis connection state on this process (1=ready, 0=down).',
+  () => 0, // pubsub.ts overrides via .set on init
+)
+
+// Same shape as the publisher gauge but for the subscriber client. The
+// SUBSCRIBER going down is the more catastrophic of the two — this
+// process stops receiving any cross-machine fan-out at all, silently.
+// Pair this gauge with the sustained-disconnect Sentry alert in pubsub.ts
+// for the full coverage: the gauge tells you the current state, the alert
+// tells you when current state has been "down" long enough to matter.
+export const pubsubSubscriberConnected = gauge(
+  'agentchat_pubsub_subscriber_connected',
+  'Subscriber Redis connection state on this process (1=ready, 0=down).',
+  () => 0, // pubsub.ts overrides via .set on init
+)
+
+// Redis publish round-trip. Healthy is sub-millisecond on Upstash from
+// the same region; anything past 100ms means the link is degraded
+// (cross-region routing, Upstash throttling, or our own connection
+// pool exhaustion). Buckets cover the full realistic range — the 5s
+// bucket exists so a hung publish that eventually times out lands in
+// a real bucket instead of +Inf, which makes the histogram unhelpfully
+// flat for outage post-mortems.
+export const pubsubPublishSeconds = histogram(
+  'agentchat_pubsub_publish_seconds',
+  'Wall-clock duration of one Redis PUBLISH, labeled by channel.',
+  [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
+)
