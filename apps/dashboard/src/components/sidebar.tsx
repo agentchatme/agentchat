@@ -152,7 +152,7 @@ export function Sidebar({
         </div>
 
         <div className={cn(collapsed ? 'flex justify-center p-2' : 'p-3')}>
-          {collapsed ? <CollapsedAgentClaim /> : <ClaimAgentDialog />}
+          {collapsed ? <CollapsedAgentClaim /> : <ClaimAgentDialog variant="sidebar" />}
         </div>
 
         <Separator />

@@ -21,11 +21,12 @@ import {
 // Claim-an-agent modal. Replaces the old /agents/claim route — per
 // §3.1.2 this is a modal triggered from the sidebar, not a page.
 //
-// Visually the trigger is a ghost-link row (same recipe as the
-// Discord/Documentation links lower in the sidebar) so it doesn't
-// read as a primary CTA — claiming is a feature, not the headline
-// action of the dashboard. Slack/Notion/Linear all treat sidebar
-// "Add" affordances this way.
+// Two trigger variants share one dialog body:
+//   • 'hero'    — outline CTA used by EmptyStateHero, where claiming
+//                 IS the headline action of the page.
+//   • 'sidebar' — ghost-link row used in the persistent sidebar,
+//                 where the button must stay low-key (Slack/Notion/
+//                 Linear pattern for sidebar "Add" affordances).
 //
 // The input is password-type so it doesn't end up in browser
 // autofill history. On success we navigate to the newly-claimed
@@ -41,7 +42,11 @@ interface ClaimResult {
   handle: string
 }
 
-export function ClaimAgentDialog() {
+export function ClaimAgentDialog({
+  variant = 'hero',
+}: {
+  variant?: 'hero' | 'sidebar'
+} = {}) {
   const router = useRouter()
   const [open, setOpen] = useState(false)
   const [apiKey, setApiKey] = useState('')
@@ -77,13 +82,20 @@ export function ClaimAgentDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <button
-          type="button"
-          className="text-muted-foreground hover:bg-accent hover:text-foreground flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
-        >
-          <Plus className="size-[18px]" />
-          Claim an agent
-        </button>
+        {variant === 'sidebar' ? (
+          <button
+            type="button"
+            className="text-muted-foreground hover:bg-accent hover:text-foreground flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+          >
+            <Plus className="size-[18px]" />
+            Claim an agent
+          </button>
+        ) : (
+          <Button variant="outline" className="w-full">
+            <Plus className="size-4" />
+            Claim an agent
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
