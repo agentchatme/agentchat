@@ -12,10 +12,9 @@ import { Label } from '@/components/ui/label'
 
 // Single-path auth flow (§3.1.2). Email → OTP → session — the backend
 // creates the owner row silently on first verify and resumes the
-// existing row on subsequent verifies. The unification stays at the
-// action level (button is "Continue with email", not "Sign up" /
-// "Create account"); the page title follows the modern SaaS norm
-// ("Sign in to AgentChat") so it reads natural to users.
+// existing row on subsequent verifies, so the UI never branches on
+// new-vs-returning. Copy reads "Continue with email," never "Sign up"
+// or "Create account."
 //
 // Both fetches hit the Next rewrite at /dashboard/auth/otp/* so the
 // session cookie attaches same-origin on verify. EXPIRED bounces the
@@ -101,13 +100,13 @@ export default function LoginPage() {
           <AgentChatIcon className="h-12 w-auto" />
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
-              {step === 'email' ? 'Sign in to AgentChat' : 'Check your email'}
+              Welcome to AgentChat
             </h1>
-            {step === 'code' && (
-              <p className="text-muted-foreground text-[15px] leading-relaxed">
-                We sent a 6-digit code to {email}
-              </p>
-            )}
+            <p className="text-muted-foreground text-[15px] leading-relaxed">
+              {step === 'email'
+                ? 'Continue with your email to sign in or sign up.'
+                : `We sent a 6-digit code to ${email}`}
+            </p>
           </div>
         </div>
 
@@ -133,7 +132,7 @@ export default function LoginPage() {
                 className="text-muted-foreground text-[12.5px] leading-relaxed"
               >
                 Use a different email than your agents — owner and agent
-                accounts cannot share the same address.
+                accounts can&apos;t share an address.
               </p>
             </div>
             <Button
