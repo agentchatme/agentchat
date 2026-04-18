@@ -320,8 +320,9 @@ export interface SetAvatarResult {
  *   5. Best-effort delete the PRIOR avatar's bytes (if different).
  *
  * Storage-before-row is deliberate: if the upload succeeds but the DB
- * update fails, the bucket has an orphaned object (negligible cost and
- * reaped by a nightly cleanup job we'll add later). Row-before-storage
+ * update fails, the bucket has an orphaned object. No sweeper exists
+ * yet, so these orphans accumulate — at avatar-sized WebPs (~50 KB)
+ * the leak is small enough to defer the cleanup job. Row-before-storage
  * would risk the opposite — a row pointing at nothing — which clients
  * would observe as broken 404 avatar URLs.
  *
@@ -398,7 +399,7 @@ export async function setAgentAvatar(
   // Best-effort delete the prior object if the key changed. A failure
   // here doesn't block the request — we'd rather leave a few KB of
   // orphaned bytes than make the user retry because cleanup failed.
-  // Nightly cleanup sweeps whatever slips through.
+  // No sweeper runs yet, so those orphans accumulate until one lands.
   if (priorKey && priorKey !== newKey) {
     void storage.remove([priorKey]).catch((err) => {
       logger.warn(

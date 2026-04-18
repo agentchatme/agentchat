@@ -1,4 +1,5 @@
-import { Hono } from 'hono'
+import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import {
   CreateGroupRequest,
   UpdateGroupRequest,
@@ -19,8 +20,13 @@ import {
   rejectInvite,
   listInvites,
   deleteGroup,
+  setGroupAvatar,
+  removeGroupAvatar,
   GroupError,
 } from '../services/group.service.js'
+import { AvatarError, MAX_AVATAR_INPUT_BYTES } from '../services/avatar.service.js'
+import { checkAvatarWriteRateLimit } from '../services/enforcement.service.js'
+import { avatarsWritten, rateLimitHits } from '../lib/metrics.js'
 
 const groups = new Hono()
 
@@ -253,6 +259,108 @@ groups.delete('/:id', authMiddleware, idempotencyMiddleware, async (c) => {
   } catch (e) {
     const mapped = handleError(e)
     if (mapped) return c.json(mapped.body, mapped.status)
+    throw e
+  }
+})
+
+// ─── Group avatar upload / remove ─────────────────────────────────────────
+//
+// PUT  /v1/groups/:id/avatar — admin uploads a new group avatar as raw
+//                              image bytes (any image/* or application/
+//                              octet-stream Content-Type accepted; format
+//                              authoritatively determined by magic-byte
+//                              sniff server-side).
+// DELETE /v1/groups/:id/avatar — admin clears the group avatar.
+//
+// Mirrors PUT /v1/agents/:handle/avatar in body shape and rate-limit. The
+// authorization difference is enforced inside group.service.setGroupAvatar
+// via requireAdmin — non-admin members hit 403 there. Same per-agent rate
+// bucket as the agent-avatar route so a flooded agent can't burn its
+// budget across both surfaces.
+
+type GroupAvatarErrorStatus = 400 | 403 | 404 | 410 | 413 | 429 | 500 | 503
+
+function respondGroupAvatarError(c: Context, e: AvatarError | GroupError) {
+  return c.json({ code: e.code, message: e.message }, e.status as GroupAvatarErrorStatus)
+}
+
+async function guardGroupAvatarWriteRate(c: Context, agentId: string) {
+  const check = await checkAvatarWriteRateLimit(agentId)
+  if (check.allowed) return null
+  rateLimitHits.inc({ rule: 'avatar_write' })
+  avatarsWritten.inc({ outcome: 'rate_limited' })
+  if (check.retryAfterMs != null) {
+    c.header('Retry-After', String(Math.ceil(check.retryAfterMs / 1000)))
+  }
+  return c.json(
+    {
+      code: 'RATE_LIMITED',
+      message: 'Too many avatar writes per minute',
+      retry_after_ms: check.retryAfterMs,
+    },
+    429,
+  )
+}
+
+const groupAvatarBodyLimit = bodyLimit({
+  maxSize: MAX_AVATAR_INPUT_BYTES,
+  onError: (c) =>
+    c.json(
+      {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: `Avatar exceeds the ${Math.floor(MAX_AVATAR_INPUT_BYTES / 1024 / 1024)} MB cap`,
+      },
+      413,
+    ),
+})
+
+groups.put('/:id/avatar', authMiddleware, groupAvatarBodyLimit, async (c) => {
+  const groupId = c.req.param('id')
+  const agentId = c.get('agentId')
+
+  const rateLimited = await guardGroupAvatarWriteRate(c, agentId)
+  if (rateLimited) return rateLimited
+
+  let bytes: Buffer
+  try {
+    const ab = await c.req.arrayBuffer()
+    bytes = Buffer.from(ab)
+  } catch (e) {
+    return c.json(
+      {
+        code: 'VALIDATION_ERROR',
+        message: `Could not read request body: ${(e as Error).message}`,
+      },
+      400,
+    )
+  }
+
+  try {
+    const result = await setGroupAvatar(agentId, groupId, bytes)
+    return c.json(result)
+  } catch (e) {
+    if (e instanceof GroupError) return respondGroupAvatarError(c, e)
+    if (e instanceof AvatarError) return respondGroupAvatarError(c, e)
+    throw e
+  }
+})
+
+groups.delete('/:id/avatar', authMiddleware, async (c) => {
+  const groupId = c.req.param('id')
+  const agentId = c.get('agentId')
+
+  const rateLimited = await guardGroupAvatarWriteRate(c, agentId)
+  if (rateLimited) return rateLimited
+
+  try {
+    const { existed } = await removeGroupAvatar(agentId, groupId)
+    if (!existed) {
+      return c.json({ code: 'NOT_FOUND', message: 'No avatar set' }, 404)
+    }
+    return c.json({ ok: true })
+  } catch (e) {
+    if (e instanceof GroupError) return respondGroupAvatarError(c, e)
+    if (e instanceof AvatarError) return respondGroupAvatarError(c, e)
     throw e
   }
 })

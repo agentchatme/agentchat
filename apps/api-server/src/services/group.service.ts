@@ -1095,8 +1095,9 @@ export async function setGroupAvatar(
     )
   }
 
-  // Best-effort prior-bytes cleanup. Failure here just leaves orphaned
-  // bytes for the nightly sweeper — never block the user on cleanup.
+  // Best-effort prior-bytes cleanup. Failure here leaves orphaned bytes
+  // behind — there's no sweeper yet, so they accumulate until one lands.
+  // Never block the user on cleanup.
   if (priorKey && priorKey !== newKey) {
     void storage.remove([priorKey]).catch((err) => {
       logger.warn(
@@ -1142,8 +1143,9 @@ export async function removeGroupAvatar(
 
   // Clear both columns so neither fallback path can resurrect the avatar
   // after the user has explicitly removed it. Row-before-bytes order: a
-  // failed storage delete leaves orphaned bytes (nightly sweep), but the
-  // group already presents as avatarless from the next read.
+  // failed storage delete leaves orphaned bytes behind (no sweeper yet —
+  // they accumulate), but the group already presents as avatarless from
+  // the next read.
   try {
     await updateGroupMetadata(groupId, {
       avatar_key: null,
