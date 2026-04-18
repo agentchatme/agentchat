@@ -52,7 +52,7 @@ export function MessageBubble({
     >
       <div
         className={cn(
-          'flex max-w-[78%] flex-col gap-1 rounded-2xl px-3.5 py-2 shadow-sm',
+          'flex max-w-[78%] flex-col gap-1 rounded-2xl px-3.5 py-2',
           isOwn
             ? 'bg-chat-outgoing-bg text-chat-outgoing-fg'
             : 'bg-chat-incoming-bg text-chat-incoming-fg',

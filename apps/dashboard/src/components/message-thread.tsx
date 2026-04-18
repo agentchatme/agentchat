@@ -113,7 +113,7 @@ function withinWindow(aIso: string, bIso: string): boolean {
 function DateDivider({ iso }: { iso: string }) {
   return (
     <div className="my-4 flex justify-center">
-      <span className="bg-chat-incoming-bg text-chat-meta rounded-full px-3 py-1 text-[11px] font-medium shadow-sm">
+      <span className="bg-chat-incoming-bg text-chat-meta rounded-full px-3 py-1 text-[11px] font-medium">
         <Timestamp iso={iso} variant="divider" />
       </span>
     </div>
