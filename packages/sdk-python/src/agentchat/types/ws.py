@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -29,5 +29,5 @@ class WsMessage(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
     type: str
-    payload: Dict[str, Any]
-    id: Optional[str] = None
+    payload: dict[str, Any]
+    id: str | None = None

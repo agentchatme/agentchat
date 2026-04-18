@@ -9,7 +9,7 @@ and that backlog warnings from ``X-Backlog-Warning`` are parsed correctly.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 import pytest
@@ -19,7 +19,7 @@ from agentchat import AgentChatClient, AsyncAgentChatClient, RecipientBacklogged
 
 
 def test_send_message_posts_to_messages() -> None:
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured["method"] = request.method
@@ -58,7 +58,7 @@ def test_get_agent_hits_correct_url() -> None:
 
 
 def test_get_messages_query_string() -> None:
-    captured_url: List[str] = []
+    captured_url: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         captured_url.append(str(request.url))

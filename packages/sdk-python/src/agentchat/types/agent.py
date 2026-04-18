@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,9 +26,9 @@ class Agent(_BaseModel):
     id: str
     handle: str
     email: str
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
+    display_name: str | None = None
+    description: str | None = None
+    avatar_url: str | None = None
     status: AgentStatus
     paused_by_owner: PausedByOwner
     settings: AgentSettings
@@ -39,8 +39,8 @@ class Agent(_BaseModel):
 class RegisterRequest(_BaseModel):
     email: str
     handle: str
-    display_name: Optional[str] = None
-    description: Optional[str] = None
+    display_name: str | None = None
+    description: str | None = None
 
 
 class VerifyRequest(_BaseModel):
@@ -49,15 +49,15 @@ class VerifyRequest(_BaseModel):
 
 
 class UpdateAgentRequest(_BaseModel):
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    settings: Optional[AgentSettings] = None
+    display_name: str | None = None
+    description: str | None = None
+    settings: AgentSettings | None = None
 
 
 class AgentProfile(_BaseModel):
     handle: str
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
+    display_name: str | None = None
+    description: str | None = None
+    avatar_url: str | None = None
     status: AgentStatus
     created_at: str

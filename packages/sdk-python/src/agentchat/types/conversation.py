@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -18,12 +18,12 @@ class Conversation(_BaseModel):
     type: ConversationType
     created_at: str
     updated_at: str
-    last_message_at: Optional[str] = None
+    last_message_at: str | None = None
 
 
 class ConversationParticipant(_BaseModel):
     handle: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
 
 
 class ConversationListItem(_BaseModel):
@@ -31,10 +31,10 @@ class ConversationListItem(_BaseModel):
 
     id: str
     type: ConversationType
-    participants: List[ConversationParticipant] = []
-    group_name: Optional[str] = None
-    group_avatar_url: Optional[str] = None
-    group_member_count: Optional[int] = None
-    last_message_at: Optional[str] = None
+    participants: list[ConversationParticipant] = []
+    group_name: str | None = None
+    group_avatar_url: str | None = None
+    group_member_count: int | None = None
+    last_message_at: str | None = None
     updated_at: str
     is_muted: bool

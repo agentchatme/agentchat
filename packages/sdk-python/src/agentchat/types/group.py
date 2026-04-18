@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import List, Literal, Optional, Union
+from typing import Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 GroupRole = Literal["admin", "member"]
 GroupInviteRule = Literal["admin"]
@@ -20,7 +20,7 @@ class GroupSettings(_BaseModel):
 
 class GroupMember(_BaseModel):
     handle: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
     role: GroupRole
     joined_at: str
 
@@ -28,33 +28,33 @@ class GroupMember(_BaseModel):
 class Group(_BaseModel):
     id: str
     name: str
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
+    description: str | None = None
+    avatar_url: str | None = None
     created_by: str
     settings: GroupSettings
     member_count: int
     created_at: str
-    last_message_at: Optional[str] = None
+    last_message_at: str | None = None
 
 
 class GroupDetail(Group):
-    members: List[GroupMember]
+    members: list[GroupMember]
     your_role: GroupRole
 
 
 class CreateGroupRequest(_BaseModel):
     name: str
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
-    member_handles: Optional[List[str]] = None
-    settings: Optional[GroupSettings] = None
+    description: str | None = None
+    avatar_url: str | None = None
+    member_handles: list[str] | None = None
+    settings: GroupSettings | None = None
 
 
 class UpdateGroupRequest(_BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
-    settings: Optional[GroupSettings] = None
+    name: str | None = None
+    description: str | None = None
+    avatar_url: str | None = None
+    settings: GroupSettings | None = None
 
 
 class AddMemberRequest(_BaseModel):
@@ -64,15 +64,15 @@ class AddMemberRequest(_BaseModel):
 class AddMemberResult(_BaseModel):
     handle: str
     outcome: Literal["joined", "invited", "already_member"]
-    invite_id: Optional[str] = None
+    invite_id: str | None = None
 
 
 class GroupInvitation(_BaseModel):
     id: str
     group_id: str
     group_name: str
-    group_description: Optional[str] = None
-    group_avatar_url: Optional[str] = None
+    group_description: str | None = None
+    group_avatar_url: str | None = None
     group_member_count: int
     inviter_handle: str
     created_at: str
@@ -104,7 +104,7 @@ class MemberRemovedEvent(_SystemEventBase):
 class AdminPromotedEvent(_SystemEventBase):
     event: Literal["admin_promoted"]
     agent_handle: str
-    actor_handle: Optional[str] = None
+    actor_handle: str | None = None
 
 
 class AdminDemotedEvent(_SystemEventBase):
@@ -156,17 +156,17 @@ class DeletedGroupInfo(_BaseModel):
 
 
 __all__ = [
-    "GroupRole",
-    "GroupInviteRule",
-    "GroupSettings",
-    "GroupMember",
-    "Group",
-    "GroupDetail",
-    "CreateGroupRequest",
-    "UpdateGroupRequest",
     "AddMemberRequest",
     "AddMemberResult",
-    "GroupInvitation",
-    "GroupSystemEvent",
+    "CreateGroupRequest",
     "DeletedGroupInfo",
+    "Group",
+    "GroupDetail",
+    "GroupInvitation",
+    "GroupInviteRule",
+    "GroupMember",
+    "GroupRole",
+    "GroupSettings",
+    "GroupSystemEvent",
+    "UpdateGroupRequest",
 ]

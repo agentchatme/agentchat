@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -57,8 +57,8 @@ class CreateUploadRequest(_BaseModel):
     content_type: AttachmentMime
     size: int
     sha256: str
-    to: Optional[str] = None
-    conversation_id: Optional[str] = None
+    to: str | None = None
+    conversation_id: str | None = None
 
 
 class CreateUploadResponse(_BaseModel):

@@ -15,21 +15,19 @@ auto-drain on reconnect.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
+import logging
 import random
 import time
+from collections.abc import Awaitable, Coroutine
 from dataclasses import dataclass, field
 from typing import (
     TYPE_CHECKING,
     Any,
-    Awaitable,
     Callable,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Set,
     Union,
 )
 
@@ -41,7 +39,7 @@ if TYPE_CHECKING:
 
 # ───────────────────────── Public type aliases ─────────────────────────
 
-MessageHandler = Callable[[Dict[str, Any]], Union[None, Awaitable[None]]]
+MessageHandler = Callable[[dict[str, Any]], Union[None, Awaitable[None]]]
 """Handler signature for WS frames. Receives the decoded JSON dict."""
 
 ErrorHandler = Callable[[BaseException], Union[None, Awaitable[None]]]
@@ -50,7 +48,7 @@ ErrorHandler = Callable[[BaseException], Union[None, Awaitable[None]]]
 ConnectHandler = Callable[[], Union[None, Awaitable[None]]]
 """Handler fired once per successful ``hello.ok`` (initial + every reconnect)."""
 
-DisconnectHandler = Callable[[Dict[str, Any]], Union[None, Awaitable[None]]]
+DisconnectHandler = Callable[[dict[str, Any]], Union[None, Awaitable[None]]]
 """Handler fired on every close. Receives ``{code, reason, was_clean}``."""
 
 GapReason = Literal[
@@ -67,7 +65,7 @@ class SequenceGapInfo:
 
     conversation_id: str
     expected_seq: int
-    buffered_seq: Optional[int]
+    buffered_seq: int | None
     gap_ms: int
     recovered: bool
     reason: GapReason
@@ -85,10 +83,10 @@ class RealtimeOptions:
     reconnect: bool = True
     reconnect_interval_ms: int = 500
     max_reconnect_interval_ms: int = 30_000
-    max_reconnect_attempts: Optional[int] = None  # None → no limit
-    client: Optional["AsyncAgentChatClient"] = None
-    on_sequence_gap: Optional[SequenceGapHandler] = None
-    auto_drain_on_connect: Optional[bool] = None  # None → True iff client set
+    max_reconnect_attempts: int | None = None  # None → no limit
+    client: AsyncAgentChatClient | None = None
+    on_sequence_gap: SequenceGapHandler | None = None
+    auto_drain_on_connect: bool | None = None  # None → True iff client set
 
 
 # ───────────────────────── Internal constants ─────────────────────────
@@ -115,11 +113,11 @@ _SYNC_PAGE_SIZE = 100
 
 @dataclass
 class _OrderState:
-    next_expected_seq: Optional[int] = None
-    buffer: Dict[int, Dict[str, Any]] = field(default_factory=dict)
-    gap_task: Optional[asyncio.Task[None]] = None
-    gap_started_at: Optional[float] = None
-    gap_started_expected_seq: Optional[int] = None
+    next_expected_seq: int | None = None
+    buffer: dict[int, dict[str, Any]] = field(default_factory=dict)
+    gap_task: asyncio.Task[None] | None = None
+    gap_started_at: float | None = None
+    gap_started_expected_seq: int | None = None
     gap_fill_in_flight: bool = False
 
 
@@ -146,18 +144,18 @@ class RealtimeClient:
 
     def __init__(
         self,
-        options: Optional[RealtimeOptions] = None,
+        options: RealtimeOptions | None = None,
         *,
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
-        reconnect: Optional[bool] = None,
-        reconnect_interval_ms: Optional[int] = None,
-        max_reconnect_interval_ms: Optional[int] = None,
-        max_reconnect_attempts: Optional[int] = None,
-        client: Optional["AsyncAgentChatClient"] = None,
-        on_sequence_gap: Optional[SequenceGapHandler] = None,
-        auto_drain_on_connect: Optional[bool] = None,
-        websocket_connect: Optional[Callable[..., Awaitable[Any]]] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        reconnect: bool | None = None,
+        reconnect_interval_ms: int | None = None,
+        max_reconnect_interval_ms: int | None = None,
+        max_reconnect_attempts: int | None = None,
+        client: AsyncAgentChatClient | None = None,
+        on_sequence_gap: SequenceGapHandler | None = None,
+        auto_drain_on_connect: bool | None = None,
+        websocket_connect: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         if options is None:
             if api_key is None:
@@ -187,23 +185,23 @@ class RealtimeClient:
         self._websocket_connect = websocket_connect
 
         self._ws: Any = None
-        self._recv_task: Optional[asyncio.Task[None]] = None
-        self._reconnect_task: Optional[asyncio.Task[None]] = None
-        self._hello_ack_task: Optional[asyncio.Task[None]] = None
-        self._bg_tasks: Set[asyncio.Task[Any]] = set()
+        self._recv_task: asyncio.Task[None] | None = None
+        self._reconnect_task: asyncio.Task[None] | None = None
+        self._hello_ack_task: asyncio.Task[None] | None = None
+        self._bg_tasks: set[asyncio.Task[Any]] = set()
         self._reconnect_attempts = 0
         self._authenticated = False
         self._disposed = False
-        self._order_states: Dict[str, _OrderState] = {}
+        self._order_states: dict[str, _OrderState] = {}
 
-        self._handlers: Dict[str, Set[MessageHandler]] = {}
-        self._error_handlers: Set[ErrorHandler] = set()
-        self._connect_handlers: Set[ConnectHandler] = set()
-        self._disconnect_handlers: Set[DisconnectHandler] = set()
+        self._handlers: dict[str, set[MessageHandler]] = {}
+        self._error_handlers: set[ErrorHandler] = set()
+        self._connect_handlers: set[ConnectHandler] = set()
+        self._disconnect_handlers: set[DisconnectHandler] = set()
 
     # ─── Context manager ─────────────────────────────────────────────
 
-    async def __aenter__(self) -> "RealtimeClient":
+    async def __aenter__(self) -> RealtimeClient:
         await self.connect()
         return self
 
@@ -230,7 +228,7 @@ class RealtimeClient:
         url = f"{self._opts.base_url}/v1/ws"
         try:
             self._ws = await connect_fn(url)
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             error = _RealtimeConnectionError(f"WebSocket connection failed: {err}")
             await self._emit_error(error)
             self._schedule_reconnect()
@@ -242,7 +240,7 @@ class RealtimeClient:
             await self._ws.send(
                 json.dumps({"type": "hello", "api_key": self._opts.api_key})
             )
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             await self._emit_error(
                 _RealtimeConnectionError(f"HELLO send failed: {err}")
             )
@@ -261,7 +259,7 @@ class RealtimeClient:
         except ImportError:
             pass
         try:
-            from websockets import connect as _ws_connect_legacy  # type: ignore[attr-defined]
+            from websockets import connect as _ws_connect_legacy
 
             return _ws_connect_legacy
         except ImportError as err:
@@ -280,10 +278,8 @@ class RealtimeClient:
         await self._emit_error(_RealtimeConnectionError("HELLO ack timeout"))
         ws = self._ws
         if ws is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await ws.close(code=1008, reason="HELLO ack timeout")
-            except Exception:
-                pass
 
     async def _recv_loop(self) -> None:
         ws = self._ws
@@ -320,7 +316,7 @@ class RealtimeClient:
                 await self._dispatch(message)
         except asyncio.CancelledError:
             raise
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             await self._emit_error(
                 _RealtimeConnectionError(f"WebSocket error: {err}")
             )
@@ -369,7 +365,7 @@ class RealtimeClient:
         while True:
             try:
                 batch = await client.sync()
-            except Exception as err:  # noqa: BLE001
+            except Exception as err:
                 await self._emit_error(
                     _RealtimeConnectionError(f"sync drain failed: {err}")
                 )
@@ -386,9 +382,12 @@ class RealtimeClient:
                 if not isinstance(env, dict):
                     continue
                 did = env.get("delivery_id")
-                if isinstance(did, int) and not isinstance(did, bool):
-                    if did > highest_delivery_id:
-                        highest_delivery_id = did
+                if (
+                    isinstance(did, int)
+                    and not isinstance(did, bool)
+                    and did > highest_delivery_id
+                ):
+                    highest_delivery_id = did
                 msg = env.get("message")
                 if not isinstance(msg, dict):
                     continue
@@ -399,7 +398,7 @@ class RealtimeClient:
             if highest_delivery_id >= 0:
                 try:
                     await client.sync_ack(highest_delivery_id)
-                except Exception as err:  # noqa: BLE001
+                except Exception as err:
                     await self._emit_error(
                         _RealtimeConnectionError(f"sync ack failed: {err}")
                     )
@@ -433,7 +432,7 @@ class RealtimeClient:
             return
         try:
             await self.connect()
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             await self._emit_error(
                 err
                 if isinstance(err, _RealtimeConnectionError)
@@ -478,7 +477,7 @@ class RealtimeClient:
         self._disconnect_handlers.add(handler)
         return lambda: self._disconnect_handlers.discard(handler)
 
-    async def send(self, message: Dict[str, Any]) -> None:
+    async def send(self, message: dict[str, Any]) -> None:
         """Send a client-initiated frame (e.g. ``typing.start``)."""
         if self._ws is None or not self._authenticated:
             raise _RealtimeConnectionError("WebSocket is not connected")
@@ -512,16 +511,12 @@ class RealtimeClient:
         ws = self._ws
         self._ws = None
         if ws is not None:
-            try:
+            with contextlib.suppress(Exception):
                 await ws.close()
-            except Exception:
-                pass
 
         if self._recv_task is not None:
-            try:
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError, Exception):
                 await asyncio.wait_for(self._recv_task, timeout=1.0)
-            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
-                pass
             self._recv_task = None
 
         for task in list(self._bg_tasks):
@@ -544,11 +539,11 @@ class RealtimeClient:
         for h in list(self._connect_handlers):
             await _invoke0(h)
 
-    async def _emit_disconnect(self, info: Dict[str, Any]) -> None:
+    async def _emit_disconnect(self, info: dict[str, Any]) -> None:
         for h in list(self._disconnect_handlers):
             await _invoke(h, info)
 
-    async def _dispatch(self, message: Dict[str, Any]) -> None:
+    async def _dispatch(self, message: dict[str, Any]) -> None:
         event = message.get("type")
         if not isinstance(event, str):
             return
@@ -558,8 +553,8 @@ class RealtimeClient:
         for h in list(handlers):
             await _invoke(h, message)
 
-    def _spawn(self, coro: Awaitable[Any]) -> None:
-        task = asyncio.create_task(coro)  # type: ignore[arg-type]
+    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
+        task: asyncio.Task[Any] = asyncio.create_task(coro)
         self._bg_tasks.add(task)
         task.add_done_callback(self._bg_tasks.discard)
 
@@ -570,7 +565,7 @@ class RealtimeClient:
     # gap-fill-failed path, where we surface ``recovered=False`` and
     # advance the cursor past the hole).
 
-    async def _process_ordered_message(self, message: Dict[str, Any]) -> None:
+    async def _process_ordered_message(self, message: dict[str, Any]) -> None:
         payload = message.get("payload")
         if not isinstance(payload, dict):
             await self._dispatch(message)
@@ -661,7 +656,7 @@ class RealtimeClient:
             return
         state.gap_fill_in_flight = True
 
-        fetched: List[Dict[str, Any]] = []
+        fetched: list[dict[str, Any]] = []
         fill_error = False
         try:
             # ``after_seq`` is exclusive, so subtract 1 to include ``expected_seq``.
@@ -742,7 +737,7 @@ class RealtimeClient:
         *,
         recovered: bool,
         reason: GapReason,
-        buffered_seq: Optional[int],
+        buffered_seq: int | None,
     ) -> None:
         if state.gap_started_expected_seq is not None:
             expected_seq = state.gap_started_expected_seq
@@ -846,14 +841,19 @@ class RealtimeClient:
 # ───────────────────────── Module helpers ─────────────────────────
 
 
+_log = logging.getLogger("agentchat.realtime")
+
+
 async def _invoke(handler: Any, arg: Any) -> None:
     try:
         result = handler(arg)
         if inspect.isawaitable(result):
             await result
-    except BaseException:  # noqa: BLE001
-        # user hook must not break flow
-        pass
+    except Exception:
+        # User-hook exceptions must not break the recv/reconnect loop, but
+        # they shouldn't vanish silently either — surface via logger so apps
+        # can route them through their normal observability stack.
+        _log.warning("realtime handler raised", exc_info=True)
 
 
 async def _invoke0(handler: Any) -> None:
@@ -861,11 +861,11 @@ async def _invoke0(handler: Any) -> None:
         result = handler()
         if inspect.isawaitable(result):
             await result
-    except BaseException:  # noqa: BLE001
-        pass
+    except Exception:
+        _log.warning("realtime handler raised", exc_info=True)
 
 
-def _extract_seq(message: Dict[str, Any]) -> Optional[int]:
+def _extract_seq(message: dict[str, Any]) -> int | None:
     payload = message.get("payload")
     if not isinstance(payload, dict):
         return None
@@ -875,19 +875,19 @@ def _extract_seq(message: Dict[str, Any]) -> Optional[int]:
     return None
 
 
-def _min_buffered_seq(state: _OrderState) -> Optional[int]:
+def _min_buffered_seq(state: _OrderState) -> int | None:
     if not state.buffer:
         return None
     return min(state.buffer.keys())
 
 
 __all__ = [
-    "RealtimeClient",
-    "RealtimeOptions",
-    "SequenceGapInfo",
-    "MessageHandler",
-    "ErrorHandler",
     "ConnectHandler",
     "DisconnectHandler",
+    "ErrorHandler",
+    "MessageHandler",
+    "RealtimeClient",
+    "RealtimeOptions",
     "SequenceGapHandler",
+    "SequenceGapInfo",
 ]

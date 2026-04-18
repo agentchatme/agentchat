@@ -13,15 +13,14 @@ both need this helper but must not import each other.
 from __future__ import annotations
 
 import re
-from email.utils import parsedate_to_datetime
 from datetime import datetime, timezone
-from typing import Optional
+from email.utils import parsedate_to_datetime
 
 _INTEGER_SECONDS = re.compile(r"^\d+$")
 _HAS_ALPHA = re.compile(r"[A-Za-z]")
 
 
-def parse_retry_after(raw: Optional[str]) -> Optional[int]:
+def parse_retry_after(raw: str | None) -> int | None:
     """Parse a ``Retry-After`` header value into milliseconds.
 
     Returns ``None`` for ``None``, empty, or unparseable input — the caller

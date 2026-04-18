@@ -13,7 +13,8 @@ outermost layer.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from ._http_retry_after import parse_retry_after
 
@@ -65,7 +66,7 @@ class AgentChatErrorResponse(dict):  # type: ignore[type-arg]
 
     code: str
     message: str
-    details: Optional[Mapping[str, Any]]
+    details: Mapping[str, Any] | None
 
 
 class AgentChatError(Exception):
@@ -90,17 +91,17 @@ class AgentChatError(Exception):
         self,
         response: Mapping[str, Any],
         status: int,
-        request_id: Optional[str] = None,
+        request_id: str | None = None,
     ) -> None:
         message = str(response.get("message", "Request failed"))
         super().__init__(message)
         self.code: str = str(response.get("code", "INTERNAL_ERROR"))
         self.status: int = status
         details = response.get("details")
-        self.details: Optional[Mapping[str, Any]] = (
+        self.details: Mapping[str, Any] | None = (
             details if isinstance(details, Mapping) else None
         )
-        self.request_id: Optional[str] = request_id
+        self.request_id: str | None = request_id
 
 
 class RateLimitedError(AgentChatError):
@@ -114,11 +115,11 @@ class RateLimitedError(AgentChatError):
         self,
         response: Mapping[str, Any],
         status: int,
-        retry_after_ms: Optional[int] = None,
-        request_id: Optional[str] = None,
+        retry_after_ms: int | None = None,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(response, status, request_id)
-        self.retry_after_ms: Optional[int] = retry_after_ms
+        self.retry_after_ms: int | None = retry_after_ms
 
 
 class SuspendedError(AgentChatError):
@@ -136,16 +137,16 @@ class RecipientBackloggedError(AgentChatError):
         self,
         response: Mapping[str, Any],
         status: int,
-        request_id: Optional[str] = None,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(response, status, request_id)
         d = self.details or {}
         recipient_handle = d.get("recipient_handle")
         undelivered_count = d.get("undelivered_count")
-        self.recipient_handle: Optional[str] = (
+        self.recipient_handle: str | None = (
             recipient_handle if isinstance(recipient_handle, str) else None
         )
-        self.undelivered_count: Optional[int] = (
+        self.undelivered_count: int | None = (
             undelivered_count if isinstance(undelivered_count, int) else None
         )
 
@@ -177,25 +178,25 @@ class GroupDeletedError(AgentChatError):
         self,
         response: Mapping[str, Any],
         status: int,
-        request_id: Optional[str] = None,
+        request_id: str | None = None,
     ) -> None:
         super().__init__(response, status, request_id)
         d = self.details or {}
         group_id = d.get("group_id")
         deleted_by_handle = d.get("deleted_by_handle")
         deleted_at = d.get("deleted_at")
-        self.group_id: Optional[str] = group_id if isinstance(group_id, str) else None
-        self.deleted_by_handle: Optional[str] = (
+        self.group_id: str | None = group_id if isinstance(group_id, str) else None
+        self.deleted_by_handle: str | None = (
             deleted_by_handle if isinstance(deleted_by_handle, str) else None
         )
-        self.deleted_at: Optional[str] = deleted_at if isinstance(deleted_at, str) else None
+        self.deleted_at: str | None = deleted_at if isinstance(deleted_at, str) else None
 
 
 class ServerError(AgentChatError):
     """Raised on HTTP 5xx after retries exhaust."""
 
 
-class ConnectionError(Exception):  # noqa: A001 — intentional alias of builtin
+class ConnectionError(Exception):
     """Transport-level failure: no HTTP response was received.
 
     Distinct from :class:`AgentChatError` — there is no body or status to
@@ -208,7 +209,7 @@ class ConnectionError(Exception):  # noqa: A001 — intentional alias of builtin
 def create_agentchat_error(
     body: Mapping[str, Any],
     status: int,
-    headers: Optional[Mapping[str, str]] = None,
+    headers: Mapping[str, str] | None = None,
 ) -> AgentChatError:
     """Pick the most specific ``AgentChatError`` subclass for a given response.
 
@@ -220,8 +221,8 @@ def create_agentchat_error(
     qualifies). When not supplied, ``Retry-After`` and ``x-request-id`` are
     taken from the body alone.
     """
-    request_id: Optional[str] = None
-    retry_after_header: Optional[int] = None
+    request_id: str | None = None
+    retry_after_header: int | None = None
     if headers is not None:
         # httpx Headers are case-insensitive dict-like; fall back to raw
         # mapping lookup for plain dicts passed by callers.

@@ -11,14 +11,10 @@ returned. Safe to ``break`` early.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator, Awaitable, Generator
 from typing import (
-    AsyncGenerator,
-    Awaitable,
     Callable,
-    Generator,
     Generic,
-    List,
-    Optional,
     Protocol,
     TypeVar,
 )
@@ -27,7 +23,7 @@ T = TypeVar("T")
 
 
 class _Page(Protocol, Generic[T]):
-    items: List[T]
+    items: list[T]
     total: int
     limit: int
     offset: int
@@ -38,7 +34,7 @@ def paginate(
     *,
     page_size: int = 100,
     start: int = 0,
-    max: Optional[int] = None,  # noqa: A002 — mirrors TS API
+    max: int | None = None,
 ) -> Generator[T, None, None]:
     """Sync generator that walks every item across a limit/offset endpoint.
 
@@ -70,7 +66,7 @@ async def apaginate(
     *,
     page_size: int = 100,
     start: int = 0,
-    max: Optional[int] = None,  # noqa: A002 — mirrors TS API
+    max: int | None = None,
 ) -> AsyncGenerator[T, None]:
     """Async generator counterpart to :func:`paginate`.
 

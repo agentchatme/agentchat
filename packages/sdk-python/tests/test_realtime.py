@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pytest
 
-from agentchat import RealtimeClient, RealtimeOptions, SequenceGapInfo
-
+from agentchat import ConnectionError as AgentChatConnectionError
+from agentchat import RealtimeClient, SequenceGapInfo
 
 # ─────────────── Mock infrastructure ───────────────
 
@@ -29,9 +29,9 @@ class MockWebSocket:
     """
 
     def __init__(self) -> None:
-        self._inbox: asyncio.Queue[Optional[str]] = asyncio.Queue()
-        self.sent: List[str] = []
-        self.close_code: Optional[int] = None
+        self._inbox: asyncio.Queue[str | None] = asyncio.Queue()
+        self.sent: list[str] = []
+        self.close_code: int | None = None
         self.close_reason: str = ""
         self.closed = False
 
@@ -46,7 +46,7 @@ class MockWebSocket:
         self.close_reason = reason
         await self._inbox.put(None)
 
-    def __aiter__(self) -> "MockWebSocket":
+    def __aiter__(self) -> MockWebSocket:
         return self
 
     async def __anext__(self) -> str:
@@ -67,46 +67,46 @@ class MockAsyncClient:
     def __init__(
         self,
         *,
-        get_messages_result: Optional[List[Dict[str, Any]]] = None,
+        get_messages_result: list[dict[str, Any]] | None = None,
         get_messages_raises: bool = False,
-        sync_batches: Optional[List[Dict[str, Any]]] = None,
+        sync_batches: list[dict[str, Any]] | None = None,
     ) -> None:
         self._get_messages_result = get_messages_result or []
         self._get_messages_raises = get_messages_raises
         self._sync_batches = list(sync_batches or [])
-        self.get_messages_calls: List[Tuple[str, Dict[str, Any]]] = []
+        self.get_messages_calls: list[tuple[str, dict[str, Any]]] = []
         self.sync_calls = 0
-        self.sync_ack_calls: List[int] = []
+        self.sync_ack_calls: list[int] = []
 
     async def get_messages(
         self, conversation_id: str, **kwargs: Any
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         self.get_messages_calls.append((conversation_id, kwargs))
         if self._get_messages_raises:
             raise RuntimeError("boom")
         return self._get_messages_result
 
-    async def sync(self, **_kwargs: Any) -> Dict[str, Any]:
+    async def sync(self, **_kwargs: Any) -> dict[str, Any]:
         self.sync_calls += 1
         if not self._sync_batches:
             return {"envelopes": []}
         return self._sync_batches.pop(0)
 
-    async def sync_ack(self, last_delivery_id: int, **_kwargs: Any) -> Dict[str, Any]:
+    async def sync_ack(self, last_delivery_id: int, **_kwargs: Any) -> dict[str, Any]:
         self.sync_ack_calls.append(last_delivery_id)
         return {}
 
 
 def _make_client(
     *,
-    ws: Optional[MockWebSocket] = None,
-    client: Optional[MockAsyncClient] = None,
+    ws: MockWebSocket | None = None,
+    client: MockAsyncClient | None = None,
     reconnect: bool = False,
     reconnect_interval_ms: int = 10,
     max_reconnect_interval_ms: int = 20,
-    auto_drain_on_connect: Optional[bool] = None,
+    auto_drain_on_connect: bool | None = None,
     **opts: Any,
-) -> Tuple[RealtimeClient, MockWebSocket]:
+) -> tuple[RealtimeClient, MockWebSocket]:
     sock = ws if ws is not None else MockWebSocket()
 
     async def fake_connect(_url: str, **_kw: Any) -> MockWebSocket:
@@ -169,7 +169,7 @@ async def test_hello_ok_fires_on_connect_and_is_not_dispatched() -> None:
 @pytest.mark.asyncio
 async def test_pre_ack_frames_are_dropped() -> None:
     rt, ws = _make_client()
-    msgs: List[Dict[str, Any]] = []
+    msgs: list[dict[str, Any]] = []
     rt.on("message.new", lambda m: msgs.append(m))
     try:
         await rt.connect()
@@ -187,7 +187,7 @@ async def test_pre_ack_frames_are_dropped() -> None:
 @pytest.mark.asyncio
 async def test_non_message_event_dispatches() -> None:
     rt, ws = _make_client()
-    events: List[Dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
     rt.on("presence.update", lambda m: events.append(m))
     try:
         await rt.connect()
@@ -209,7 +209,7 @@ async def test_non_message_event_dispatches() -> None:
 @pytest.mark.asyncio
 async def test_message_new_dispatches_in_order() -> None:
     rt, ws = _make_client()
-    seqs: List[int] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -234,7 +234,7 @@ async def test_duplicate_seq_is_dropped_while_state_active() -> None:
     # arrival on a fresh anchor (and is rare in practice because the
     # server de-dups upstream).
     rt, ws = _make_client()
-    seqs: List[int] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -258,7 +258,7 @@ async def test_duplicate_seq_is_dropped_while_state_active() -> None:
 @pytest.mark.asyncio
 async def test_out_of_order_drains_when_missing_arrives() -> None:
     rt, ws = _make_client()
-    seqs: List[int] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -283,7 +283,7 @@ async def test_out_of_order_drains_when_missing_arrives() -> None:
 @pytest.mark.asyncio
 async def test_independent_ordering_per_conversation() -> None:
     rt, ws = _make_client()
-    dispatched: List[Dict[str, Any]] = []
+    dispatched: list[dict[str, Any]] = []
     rt.on("message.new", lambda m: dispatched.append(m["payload"]))
     try:
         await rt.connect()
@@ -304,7 +304,7 @@ async def test_independent_ordering_per_conversation() -> None:
 @pytest.mark.asyncio
 async def test_message_without_seq_passes_through() -> None:
     rt, ws = _make_client()
-    dispatched: List[Dict[str, Any]] = []
+    dispatched: list[dict[str, Any]] = []
     rt.on("message.new", lambda m: dispatched.append(m))
     try:
         await rt.connect()
@@ -329,8 +329,8 @@ async def test_gap_fill_unavailable_without_client(monkeypatch: pytest.MonkeyPat
     # Shrink the gap timer so the test finishes quickly.
     monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 0.05)
     rt, ws = _make_client(on_sequence_gap=lambda info: gaps.append(info))
-    gaps: List[SequenceGapInfo] = []
-    seqs: List[int] = []
+    gaps: list[SequenceGapInfo] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -360,8 +360,8 @@ async def test_gap_fill_success_via_get_messages(monkeypatch: pytest.MonkeyPatch
     recovered_row = {"conversation_id": "c1", "seq": 2, "body": "filled"}
     mock_api = MockAsyncClient(get_messages_result=[recovered_row])
     rt, ws = _make_client(client=mock_api, on_sequence_gap=lambda info: gaps.append(info))
-    gaps: List[SequenceGapInfo] = []
-    seqs: List[int] = []
+    gaps: list[SequenceGapInfo] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -391,7 +391,7 @@ async def test_gap_fill_failure_surfaces_recovered_false(
 ) -> None:
     monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 0.05)
     mock_api = MockAsyncClient(get_messages_raises=True)
-    gaps: List[SequenceGapInfo] = []
+    gaps: list[SequenceGapInfo] = []
     rt, ws = _make_client(client=mock_api, on_sequence_gap=lambda info: gaps.append(info))
     try:
         await rt.connect()
@@ -414,7 +414,7 @@ async def test_buffer_overflow_triggers_force_drain(monkeypatch: pytest.MonkeyPa
     # Shrink the overflow cap so the test can trip it without thousands of pushes.
     monkeypatch.setattr("agentchat._realtime._MAX_BUFFERED_PER_CONVERSATION", 4)
     monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 30.0)  # timer won't fire
-    gaps: List[SequenceGapInfo] = []
+    gaps: list[SequenceGapInfo] = []
     rt, ws = _make_client(on_sequence_gap=lambda info: gaps.append(info))
     try:
         await rt.connect()
@@ -444,14 +444,14 @@ async def test_disconnect_sets_disposed_and_blocks_reconnect() -> None:
     await _settle()
     await rt.disconnect()
     # connect() now raises because the client is disposed.
-    with pytest.raises(Exception):
+    with pytest.raises(AgentChatConnectionError):
         await rt.connect()
 
 
 @pytest.mark.asyncio
 async def test_on_disconnect_fires_on_close() -> None:
     rt, ws = _make_client()
-    seen: List[Dict[str, Any]] = []
+    seen: list[dict[str, Any]] = []
     rt.on_disconnect(lambda info: seen.append(info))
     await rt.connect()
     await _settle()
@@ -474,7 +474,7 @@ async def test_offline_drain_after_hello_ok() -> None:
     env = {"delivery_id": 42, "message": {"conversation_id": "c1", "seq": 99, "body": "hi"}}
     mock_api = MockAsyncClient(sync_batches=[{"envelopes": [env]}, {"envelopes": []}])
     rt, ws = _make_client(client=mock_api, auto_drain_on_connect=True)
-    seqs: List[int] = []
+    seqs: list[int] = []
     rt.on("message.new", lambda m: seqs.append(m["payload"]["seq"]))
     try:
         await rt.connect()
@@ -514,7 +514,7 @@ async def test_send_raises_before_authentication() -> None:
     rt, _ws = _make_client()
     await rt.connect()
     await _settle()
-    with pytest.raises(Exception):
+    with pytest.raises(AgentChatConnectionError):
         await rt.send({"type": "typing.start", "payload": {"to": "@alice"}})
     await rt.disconnect()
 
@@ -552,3 +552,36 @@ async def test_on_unsubscribe_removes_handler() -> None:
         assert count[0] == 1
     finally:
         await rt.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_user_handler_exception_is_logged_not_swallowed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A raising handler must not kill the recv loop, but also must not vanish."""
+    import logging
+
+    rt, ws = _make_client()
+    other_saw: list[int] = []
+
+    def boom(_msg: dict[str, Any]) -> None:
+        raise RuntimeError("handler blew up")
+
+    rt.on("message.new", boom)
+    rt.on("message.new", lambda m: other_saw.append(m["payload"]["seq"]))
+
+    with caplog.at_level(logging.WARNING, logger="agentchat.realtime"):
+        await rt.connect()
+        await _settle()
+        await ws.push({"type": "hello.ok"})
+        await _settle()
+        await ws.push({"type": "message.new", "payload": {"conversation_id": "c1", "seq": 1}})
+        await _settle()
+        # Second handler still fires — raise didn't break dispatch.
+        assert other_saw == [1]
+        # And the exception was logged, not swallowed.
+        assert any(
+            "handler raised" in rec.message and rec.levelno == logging.WARNING
+            for rec in caplog.records
+        )
+    await rt.disconnect()

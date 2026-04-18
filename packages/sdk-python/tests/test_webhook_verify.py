@@ -11,7 +11,6 @@ import pytest
 
 from agentchat import VerifyWebhookOptions, WebhookVerificationError, verify_webhook
 
-
 _SECRET = "whsec_test_1234"
 
 

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -17,9 +17,9 @@ class _BaseModel(BaseModel):
 class MessageContent(_BaseModel):
     """Payload body. At least one of ``text``, ``data``, or ``attachment_id`` must be set."""
 
-    text: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-    attachment_id: Optional[str] = None
+    text: str | None = None
+    data: dict[str, Any] | None = None
+    attachment_id: str | None = None
 
 
 class Message(_BaseModel):
@@ -30,11 +30,11 @@ class Message(_BaseModel):
     seq: int
     type: MessageType
     content: MessageContent
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
     status: MessageStatus
     created_at: str
-    delivered_at: Optional[str] = None
-    read_at: Optional[str] = None
+    delivered_at: str | None = None
+    read_at: str | None = None
 
 
 class SendMessageRequest(_BaseModel):
@@ -48,7 +48,7 @@ class SendMessageRequest(_BaseModel):
 
     client_msg_id: str
     content: MessageContent
-    to: Optional[str] = None
-    conversation_id: Optional[str] = None
-    type: Optional[MessageType] = None
-    metadata: Optional[Dict[str, Any]] = None
+    to: str | None = None
+    conversation_id: str | None = None
+    type: MessageType | None = None
+    metadata: dict[str, Any] | None = None

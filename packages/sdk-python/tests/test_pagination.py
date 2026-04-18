@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, List
+from typing import Any, Callable
 
 import pytest
 
@@ -12,14 +12,14 @@ from agentchat import apaginate, paginate
 
 @dataclass
 class _Page:
-    items: List[Any]
+    items: list[Any]
     total: int
     limit: int
     offset: int
 
 
 def _make_sync_fetcher(
-    all_items: List[Any], counter: List[int]
+    all_items: list[Any], counter: list[int]
 ) -> Callable[[int, int], _Page]:
     def fetch(offset: int, limit: int) -> _Page:
         counter[0] += 1
@@ -87,7 +87,7 @@ def test_paginate_supports_early_break() -> None:
             offset=offset,
         )
 
-    out: List[int] = []
+    out: list[int] = []
     for item in paginate(fetch, page_size=10):
         if item["id"] >= 3:
             break

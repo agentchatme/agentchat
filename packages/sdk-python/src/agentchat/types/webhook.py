@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,17 +23,17 @@ class _BaseModel(BaseModel):
 class WebhookConfig(_BaseModel):
     id: str
     url: str
-    events: List[WebhookEvent]
+    events: list[WebhookEvent]
     active: bool
     created_at: str
 
 
 class CreateWebhookRequest(_BaseModel):
     url: str
-    events: List[WebhookEvent]
+    events: list[WebhookEvent]
 
 
 class WebhookPayload(_BaseModel):
     event: WebhookEvent
     timestamp: str
-    data: Dict[str, Any]
+    data: dict[str, Any]

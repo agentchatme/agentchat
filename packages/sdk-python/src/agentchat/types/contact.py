@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -18,24 +18,24 @@ class AddContactRequest(_BaseModel):
 
 
 class UpdateContactRequest(_BaseModel):
-    notes: Optional[str]
+    notes: str | None
 
 
 class ReportRequest(_BaseModel):
-    reason: Optional[str] = None
+    reason: str | None = None
 
 
 class Contact(_BaseModel):
     handle: str
-    display_name: Optional[str] = None
-    description: Optional[str] = None
-    avatar_url: Optional[str] = None
+    display_name: str | None = None
+    description: str | None = None
+    avatar_url: str | None = None
     status: _ContactStatus
-    notes: Optional[str] = None
+    notes: str | None = None
     added_at: str
 
 
 class BlockedAgent(_BaseModel):
     handle: str
-    display_name: Optional[str] = None
+    display_name: str | None = None
     blocked_at: str

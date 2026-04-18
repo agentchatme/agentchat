@@ -14,15 +14,12 @@ import inspect
 import json
 import random
 import time
+from collections.abc import Awaitable, Mapping
 from dataclasses import dataclass, field, replace
 from typing import (
     Any,
-    Awaitable,
     Callable,
-    Dict,
     Literal,
-    Mapping,
-    Optional,
     TypeVar,
     Union,
 )
@@ -75,7 +72,7 @@ class RequestInfo:
     method: HttpMethod
     url: str
     attempt: int
-    headers: Dict[str, str]
+    headers: dict[str, str]
     """The request headers. ``Authorization`` is always redacted to ``Bearer ***`` — hooks must never see the raw key."""
 
 
@@ -88,16 +85,16 @@ class ResponseInfo(RequestInfo):
 @dataclass
 class ErrorInfo(RequestInfo):
     duration_ms: float = 0.0
-    error: Optional[BaseException] = None
-    status: Optional[int] = None
+    error: BaseException | None = None
+    status: int | None = None
 
 
 @dataclass
 class RetryInfo(RequestInfo):
     delay_ms: int = 0
     next_attempt: int = 0
-    status: Optional[int] = None
-    error: Optional[BaseException] = None
+    status: int | None = None
+    error: BaseException | None = None
 
 
 @dataclass
@@ -109,10 +106,10 @@ class RequestHooks:
     swallowed: the transport never lets observability break a request.
     """
 
-    on_request: Optional[Callable[[RequestInfo], Union[None, Awaitable[None]]]] = None
-    on_response: Optional[Callable[[ResponseInfo], Union[None, Awaitable[None]]]] = None
-    on_error: Optional[Callable[[ErrorInfo], Union[None, Awaitable[None]]]] = None
-    on_retry: Optional[Callable[[RetryInfo], Union[None, Awaitable[None]]]] = None
+    on_request: Callable[[RequestInfo], None | Awaitable[None]] | None = None
+    on_response: Callable[[ResponseInfo], None | Awaitable[None]] | None = None
+    on_error: Callable[[ErrorInfo], None | Awaitable[None]] | None = None
+    on_retry: Callable[[RetryInfo], None | Awaitable[None]] | None = None
 
 
 @dataclass
@@ -127,7 +124,7 @@ class HttpResponse:
     data: Any
     headers: httpx.Headers
     status: int
-    request_id: Optional[str]
+    request_id: str | None
 
 
 # Sentinel for an omitted user_agent argument — lets callers distinguish
@@ -144,24 +141,28 @@ class HttpTransportOptions:
     """Construction options shared by sync and async transports."""
 
     base_url: str
-    api_key: Optional[str] = None
+    api_key: str | None = None
     timeout_ms: int = 30_000
     retry: RetryPolicy = field(default_factory=lambda: DEFAULT_RETRY_POLICY)
     hooks: RequestHooks = field(default_factory=RequestHooks)
-    default_headers: Dict[str, str] = field(default_factory=dict)
+    default_headers: dict[str, str] = field(default_factory=dict)
     user_agent: Any = _UNSET
     """Override the default ``User-Agent``. Pass ``None`` to omit entirely.
     Leave at default to use ``agentchat-py/<version> <runtime>/<version>``."""
 
 
-def _normalize_user_agent(opt: Any) -> Optional[str]:
+def _normalize_user_agent(opt: Any) -> str | None:
     if isinstance(opt, _Unset):
         return default_user_agent()
-    return opt  # str or None
+    if opt is None:
+        return None
+    if isinstance(opt, str):
+        return opt
+    raise TypeError(f"user_agent must be str, None, or omitted; got {type(opt).__name__}")
 
 
 def _resolve_retry_policy(
-    opt: Union[RetryOption, None], fallback: RetryPolicy
+    opt: RetryOption | None, fallback: RetryPolicy
 ) -> RetryPolicy:
     if isinstance(opt, RetryPolicy):
         return opt
@@ -170,8 +171,8 @@ def _resolve_retry_policy(
 
 def _is_retry_eligible(
     method: HttpMethod,
-    idempotency_key: Optional[str],
-    retry: Union[RetryOption, None],
+    idempotency_key: str | None,
+    retry: RetryOption | None,
 ) -> bool:
     if retry == "never":
         return False
@@ -183,7 +184,7 @@ def _is_retry_eligible(
 
 
 def _compute_delay_ms(
-    policy: RetryPolicy, attempt: int, retry_after_ms: Optional[int]
+    policy: RetryPolicy, attempt: int, retry_after_ms: int | None
 ) -> int:
     if retry_after_ms is not None:
         return min(retry_after_ms, policy.max_delay_ms)
@@ -196,14 +197,14 @@ def _compute_delay_ms(
 def _build_headers_and_body(
     *,
     default_headers: Mapping[str, str],
-    user_agent: Optional[str],
-    api_key: Optional[str],
-    per_request_headers: Optional[Mapping[str, str]],
-    idempotency_key: Optional[str],
+    user_agent: str | None,
+    api_key: str | None,
+    per_request_headers: Mapping[str, str] | None,
+    idempotency_key: str | None,
     body: Any,
     raw_body: bool,
-) -> tuple[Dict[str, str], Dict[str, str], Any]:
-    headers: Dict[str, str] = {**default_headers}
+) -> tuple[dict[str, str], dict[str, str], Any]:
+    headers: dict[str, str] = {**default_headers}
     if per_request_headers:
         headers.update(per_request_headers)
 
@@ -236,7 +237,7 @@ def _has_header(headers: Mapping[str, str], name: str) -> bool:
     return any(k.lower() == lower for k in headers)
 
 
-def _parse_error_body(response: httpx.Response) -> Dict[str, Any]:
+def _parse_error_body(response: httpx.Response) -> dict[str, Any]:
     """Produce the ``AgentChatErrorResponse``-shaped dict for a failing response."""
     try:
         text = response.text
@@ -297,7 +298,7 @@ def _parse_success_body(response: httpx.Response) -> Any:
         return None
     try:
         return json.loads(text)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise ConnectionError(
             f"AgentChat SDK: expected JSON response but got: {text[:200]}"
         ) from exc
@@ -313,14 +314,14 @@ def _to_connection_error(err: BaseException) -> BaseException:
     return ConnectionError(str(err))
 
 
-def _httpx_timeout(timeout_ms: int) -> Optional[httpx.Timeout]:
+def _httpx_timeout(timeout_ms: int) -> httpx.Timeout | None:
     if timeout_ms <= 0:
         return None
     seconds = timeout_ms / 1000.0
     return httpx.Timeout(seconds)
 
 
-def _safe_invoke_sync(hook: Optional[Callable[[Any], Any]], info: Any) -> None:
+def _safe_invoke_sync(hook: Callable[[Any], Any] | None, info: Any) -> None:
     if hook is None:
         return
     try:
@@ -329,19 +330,19 @@ def _safe_invoke_sync(hook: Optional[Callable[[Any], Any]], info: Any) -> None:
         # wiring async hooks into the sync transport deserve the loud hint.
         if inspect.iscoroutine(result):
             result.close()
-    except Exception:  # noqa: BLE001
+    except Exception:
         # Hooks must never break requests.
         pass
 
 
-async def _safe_invoke_async(hook: Optional[Callable[[Any], Any]], info: Any) -> None:
+async def _safe_invoke_async(hook: Callable[[Any], Any] | None, info: Any) -> None:
     if hook is None:
         return
     try:
         result = hook(info)
         if inspect.iscoroutine(result):
             await result
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
 
 
@@ -351,7 +352,7 @@ async def _safe_invoke_async(hook: Optional[Callable[[Any], Any]], info: Any) ->
 class HttpTransport:
     """Sync HTTP transport. Uses :class:`httpx.Client` under the hood."""
 
-    def __init__(self, options: HttpTransportOptions, *, client: Optional[httpx.Client] = None) -> None:
+    def __init__(self, options: HttpTransportOptions, *, client: httpx.Client | None = None) -> None:
         self._options = options
         self._base_url = options.base_url.rstrip("/")
         self._user_agent = _normalize_user_agent(options.user_agent)
@@ -362,7 +363,7 @@ class HttpTransport:
         if self._owned:
             self._client.close()
 
-    def __enter__(self) -> "HttpTransport":
+    def __enter__(self) -> HttpTransport:
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -374,10 +375,10 @@ class HttpTransport:
         path: str,
         *,
         body: Any = None,
-        headers: Optional[Mapping[str, str]] = None,
-        retry: Union[RetryOption, None] = None,
-        idempotency_key: Optional[str] = None,
-        timeout_ms: Optional[int] = None,
+        headers: Mapping[str, str] | None = None,
+        retry: RetryOption | None = None,
+        idempotency_key: str | None = None,
+        timeout_ms: int | None = None,
         raw_body: bool = False,
     ) -> HttpResponse:
         url = f"{self._base_url}{path}"
@@ -387,7 +388,7 @@ class HttpTransport:
         max_attempts = policy.max_retries + 1 if can_retry else 1
         timeout = _httpx_timeout(timeout_ms if timeout_ms is not None else opts.timeout_ms)
 
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
         for attempt in range(1, max_attempts + 1):
             started = time.perf_counter()
             built_headers, redacted, wire_body = _build_headers_and_body(
@@ -410,7 +411,7 @@ class HttpTransport:
                     content=wire_body,
                     timeout=timeout,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error = _to_connection_error(exc)
                 duration_ms = (time.perf_counter() - started) * 1000
                 _safe_invoke_sync(
@@ -521,7 +522,7 @@ class AsyncHttpTransport:
         self,
         options: HttpTransportOptions,
         *,
-        client: Optional[httpx.AsyncClient] = None,
+        client: httpx.AsyncClient | None = None,
     ) -> None:
         self._options = options
         self._base_url = options.base_url.rstrip("/")
@@ -535,7 +536,7 @@ class AsyncHttpTransport:
         if self._owned:
             await self._client.aclose()
 
-    async def __aenter__(self) -> "AsyncHttpTransport":
+    async def __aenter__(self) -> AsyncHttpTransport:
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
@@ -547,10 +548,10 @@ class AsyncHttpTransport:
         path: str,
         *,
         body: Any = None,
-        headers: Optional[Mapping[str, str]] = None,
-        retry: Union[RetryOption, None] = None,
-        idempotency_key: Optional[str] = None,
-        timeout_ms: Optional[int] = None,
+        headers: Mapping[str, str] | None = None,
+        retry: RetryOption | None = None,
+        idempotency_key: str | None = None,
+        timeout_ms: int | None = None,
         raw_body: bool = False,
     ) -> HttpResponse:
         url = f"{self._base_url}{path}"
@@ -560,7 +561,7 @@ class AsyncHttpTransport:
         max_attempts = policy.max_retries + 1 if can_retry else 1
         timeout = _httpx_timeout(timeout_ms if timeout_ms is not None else opts.timeout_ms)
 
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
         for attempt in range(1, max_attempts + 1):
             started = time.perf_counter()
             built_headers, redacted, wire_body = _build_headers_and_body(
@@ -583,7 +584,7 @@ class AsyncHttpTransport:
                     content=wire_body,
                     timeout=timeout,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 error = _to_connection_error(exc)
                 duration_ms = (time.perf_counter() - started) * 1000
                 await _safe_invoke_async(

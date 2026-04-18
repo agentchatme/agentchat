@@ -17,7 +17,7 @@ import hmac
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Literal, Optional, Union
+from typing import Any, Callable, Literal
 
 _VerifyReason = Literal[
     "missing_signature",
@@ -35,7 +35,7 @@ class WebhookVerificationError(Exception):
     raw body/signature/header (the header may leak the digest to attackers).
     """
 
-    def __init__(self, reason: _VerifyReason, message: Optional[str] = None) -> None:
+    def __init__(self, reason: _VerifyReason, message: str | None = None) -> None:
         super().__init__(message or reason)
         self.reason: _VerifyReason = reason
 
@@ -58,14 +58,14 @@ class VerifyWebhookOptions:
         Optional time source override for deterministic tests.
     """
 
-    payload: Union[str, bytes]
-    signature: Optional[str]
+    payload: str | bytes
+    signature: str | None
     secret: str
     tolerance_seconds: int = 300
-    now: Optional[Callable[[], float]] = None
+    now: Callable[[], float] | None = None
 
 
-def verify_webhook(options: VerifyWebhookOptions) -> Dict[str, Any]:
+def verify_webhook(options: VerifyWebhookOptions) -> dict[str, Any]:
     """Verify the signature and return the parsed JSON payload.
 
     Security-critical — read carefully before modifying:
@@ -97,7 +97,7 @@ def verify_webhook(options: VerifyWebhookOptions) -> Dict[str, Any]:
             age_seconds = abs(now_fn() - parsed.timestamp)
             if age_seconds > options.tolerance_seconds:
                 raise WebhookVerificationError("timestamp_skew")
-        signed_message = f"{parsed.timestamp}.{body_str}".encode("utf-8")
+        signed_message = f"{parsed.timestamp}.{body_str}".encode()
     else:
         signed_message = body_bytes
 
@@ -112,7 +112,7 @@ def verify_webhook(options: VerifyWebhookOptions) -> Dict[str, Any]:
 
     try:
         payload = json.loads(body_str)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise WebhookVerificationError("malformed_payload") from exc
 
     if not isinstance(payload, dict):
@@ -122,7 +122,7 @@ def verify_webhook(options: VerifyWebhookOptions) -> Dict[str, Any]:
 
 @dataclass
 class _ParsedSignature:
-    timestamp: Optional[int]
+    timestamp: int | None
     digest: str
 
 
@@ -132,8 +132,8 @@ def _parse_signature_header(header: str) -> _ParsedSignature:
     # Shape 1: key=value pairs, comma-separated. Order-insensitive; ignore unknowns.
     if "=" in trimmed:
         parts = trimmed.split(",")
-        timestamp: Optional[int] = None
-        digest: Optional[str] = None
+        timestamp: int | None = None
+        digest: str | None = None
         for part in parts:
             idx = part.find("=")
             if idx <= 0:

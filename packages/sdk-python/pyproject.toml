@@ -48,6 +48,7 @@ dev = [
     "pytest-cov>=5.0",
     "respx>=0.21",
     "ruff>=0.6",
+    "mypy>=1.11",
     "pyright>=1.1",
 ]
 
@@ -84,3 +85,15 @@ include = ["src", "tests"]
 pythonVersion = "3.9"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
+
+[tool.mypy]
+python_version = "3.9"
+strict = true
+files = ["src/agentchat"]
+
+# _client.py is a thin wrapper over httpx.Response.json(), which returns
+# Any. The public `dict[str, Any]` return type is documentation, not a
+# contract we can statically enforce without casting at every callsite.
+[[tool.mypy.overrides]]
+module = "agentchat._client"
+warn_return_any = false

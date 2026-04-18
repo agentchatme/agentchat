@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 import httpx
 import pytest
@@ -17,7 +17,6 @@ import respx
 
 from agentchat import (
     AgentChatError,
-    ConnectionError as AgentChatConnectionError,
     HttpTransport,
     HttpTransportOptions,
     NotFoundError,
@@ -27,6 +26,9 @@ from agentchat import (
     SuspendedError,
     UnauthorizedError,
     ValidationError,
+)
+from agentchat import (
+    ConnectionError as AgentChatConnectionError,
 )
 from agentchat._http import RequestHooks
 
@@ -131,7 +133,7 @@ def test_retries_post_when_retry_auto() -> None:
 
 
 def test_retries_post_when_idempotency_key_supplied() -> None:
-    seen: Dict[str, str] = {}
+    seen: dict[str, str] = {}
 
     def first(request: httpx.Request) -> httpx.Response:
         seen["key"] = request.headers.get("idempotency-key", "")
@@ -207,7 +209,7 @@ def test_falls_back_to_base_agentchat_error_for_unknown_codes() -> None:
 
 
 def test_redacts_authorization_from_hook_info() -> None:
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     def on_request(info: Any) -> None:
         captured["headers"] = info.headers
@@ -223,7 +225,7 @@ def test_redacts_authorization_from_hook_info() -> None:
 
 
 def test_invokes_on_retry_between_attempts() -> None:
-    retries: List[Any] = []
+    retries: list[Any] = []
 
     with respx.mock(base_url="https://api.test") as mock:
         mock.get("/ping").mock(
@@ -277,7 +279,7 @@ def test_parses_204_no_content_as_none() -> None:
 
 
 def test_sends_json_body_with_content_type() -> None:
-    seen: Dict[str, Any] = {}
+    seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["content_type"] = request.headers.get("content-type")
@@ -294,7 +296,7 @@ def test_sends_json_body_with_content_type() -> None:
 
 
 def test_attaches_default_user_agent() -> None:
-    seen: Dict[str, Any] = {}
+    seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["ua"] = request.headers.get("user-agent", "")
@@ -309,7 +311,7 @@ def test_attaches_default_user_agent() -> None:
 
 
 def test_honors_custom_user_agent_override() -> None:
-    seen: Dict[str, Any] = {}
+    seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["ua"] = request.headers.get("user-agent", "")
@@ -328,7 +330,7 @@ def test_omits_user_agent_when_set_to_none() -> None:
     # SDK's contract is: user_agent=None → do not add the SDK-specific UA.
     # In practice httpx's own UA still appears, so we verify by absence of
     # the ``agentchat-py`` prefix rather than absence of a UA entirely.
-    seen: Dict[str, Any] = {}
+    seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["ua"] = request.headers.get("user-agent", "")
