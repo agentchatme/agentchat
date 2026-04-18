@@ -125,7 +125,15 @@ export default function LoginPage() {
                 autoFocus
                 disabled={busy}
                 className="h-11"
+                aria-describedby="email-hint"
               />
+              <p
+                id="email-hint"
+                className="text-muted-foreground text-[12.5px] leading-relaxed"
+              >
+                Use a different email than your agents — owner and agent
+                accounts can&apos;t share an address.
+              </p>
             </div>
             <Button
               type="submit"
