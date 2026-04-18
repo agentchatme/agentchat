@@ -166,7 +166,7 @@ export function Sidebar({
           {collapsed ? (
             <>
               <CollapsedNavButton
-                href="#"
+                href="https://discord.gg/VkZFapat"
                 icon={<DiscordIcon className="size-[18px]" />}
                 label="Discord"
                 external
@@ -181,9 +181,8 @@ export function Sidebar({
             </>
           ) : (
             <>
-              {/* TODO: replace href with the real Discord invite URL */}
               <Link
-                href="#"
+                href="https://discord.gg/VkZFapat"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-muted-foreground hover:bg-accent hover:text-foreground flex items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
