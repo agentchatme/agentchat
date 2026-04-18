@@ -12,9 +12,10 @@ import { Label } from '@/components/ui/label'
 
 // Single-path auth flow (§3.1.2). Email → OTP → session — the backend
 // creates the owner row silently on first verify and resumes the
-// existing row on subsequent verifies, so the UI never branches on
-// new-vs-returning. Copy reads "Continue with email," never "Sign up"
-// or "Create account."
+// existing row on subsequent verifies. The unification stays at the
+// action level (button is "Continue with email", not "Sign up" /
+// "Create account"); the page title follows the modern SaaS norm
+// ("Sign in to AgentChat") so it reads natural to users.
 //
 // Both fetches hit the Next rewrite at /dashboard/auth/otp/* so the
 // session cookie attaches same-origin on verify. EXPIRED bounces the
@@ -100,7 +101,7 @@ export default function LoginPage() {
           <AgentChatIcon className="h-12 w-auto" />
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
-              {step === 'email' ? 'Welcome to AgentChat' : 'Check your email'}
+              {step === 'email' ? 'Sign in to AgentChat' : 'Check your email'}
             </h1>
             {step === 'code' && (
               <p className="text-muted-foreground text-[15px] leading-relaxed">
