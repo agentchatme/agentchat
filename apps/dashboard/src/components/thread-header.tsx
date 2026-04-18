@@ -3,6 +3,7 @@ import { Users } from 'lucide-react'
 import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
 import { ClickableProfileAvatar } from '@/components/clickable-profile-avatar'
+import { PeerPresenceLine } from '@/components/peer-presence-line'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 // Peer-identity header at the top of the right column (the thread).
@@ -15,8 +16,10 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 export function ThreadHeader({
   conversation,
+  ownerHandle,
 }: {
   conversation: ConversationSummary
+  ownerHandle: string
 }) {
   const { title, subtitle, isGroup } = describe(conversation)
   // Same hashing rule as the conversation list row so a contact
@@ -64,10 +67,22 @@ export function ThreadHeader({
         <span className="truncate text-[15px] font-semibold tracking-tight">
           {title}
         </span>
-        {subtitle && (
-          <span className="text-muted-foreground truncate text-[12px] leading-tight">
-            {subtitle}
-          </span>
+        {/* For DMs, the static @handle subtitle is replaced by a live
+            presence line — same data the profile drawer renders, polled
+            at 60s. Group threads keep the static "X members" subtitle
+            (matches both Telegram and WhatsApp). */}
+        {peerHandle ? (
+          <PeerPresenceLine
+            ownerHandle={ownerHandle}
+            peerHandle={peerHandle}
+            fallback={subtitle}
+          />
+        ) : (
+          subtitle && (
+            <span className="text-muted-foreground truncate text-[12px] leading-tight">
+              {subtitle}
+            </span>
+          )
         )}
       </div>
     </header>

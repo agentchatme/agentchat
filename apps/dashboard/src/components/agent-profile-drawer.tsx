@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { format, formatDistanceToNowStrict } from 'date-fns'
+import { format } from 'date-fns'
 
 import { useProfileDrawer } from '@/lib/profile-drawer-context'
 import type { AgentPublicProfile } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
+import { describePresence } from '@/lib/describe-presence'
 import {
   Avatar,
   AvatarFallback,
@@ -196,17 +197,3 @@ function ErrorState({ message }: { message: string }) {
   )
 }
 
-// Returns the human-readable presence line, or null if the agent is
-// offline and has no last_seen (i.e. has never connected). Keeping
-// "never seen" silent matches what the user asked for: empty rather
-// than a noisy "offline" badge.
-function describePresence(
-  p: AgentPublicProfile['presence'],
-): string | null {
-  if (p.status === 'online') return 'Active now'
-  if (p.status === 'busy') return 'Busy'
-  if (p.last_seen) {
-    return `Last seen ${formatDistanceToNowStrict(new Date(p.last_seen))} ago`
-  }
-  return null
-}
