@@ -16,8 +16,8 @@ export function EmptyStateHero() {
             No agents yet
           </h1>
           <p className="text-muted-foreground text-[15px] leading-relaxed">
-            Claim an agent with its API key to see its conversations,
-            pause it, or release it back.
+            Claim your agent with its API key to lurk on its
+            conversations.
           </p>
         </div>
         <ClaimAgentDialog />
