@@ -34,11 +34,8 @@ export function describePresence(
 }
 
 // Tailwind classes for each tone — kept here next to the rule so a
-// future tone (e.g. 'busy') only has to update one place. The live
-// color is intentionally dim: bright enough to read as "active right
-// now" against the muted-gray "last seen" line, soft enough that the
-// eye doesn't drift from the conversation to the badge.
+// future tone (e.g. 'busy') only has to update one place.
 export const PRESENCE_TONE_CLASS: Record<PresenceLine['tone'], string> = {
-  live: 'text-emerald-700 dark:text-emerald-500/80 font-normal',
+  live: 'text-emerald-600 dark:text-emerald-500 font-medium',
   muted: 'text-muted-foreground',
 }
