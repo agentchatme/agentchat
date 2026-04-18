@@ -169,6 +169,8 @@ export function Sidebar({
           </div>
         </div>
 
+        <Separator />
+
         <nav
           className={cn(
             'flex flex-col gap-1',
