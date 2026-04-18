@@ -326,7 +326,7 @@ export async function listGroupInvitationsForAgent(agentId: string) {
   const [groupsRes, agentsRes] = await Promise.all([
     getSupabaseClient()
       .from('conversations')
-      .select('id, name, description, avatar_url')
+      .select('id, name, description, avatar_url, avatar_key')
       .in('id', groupIds),
     getSupabaseClient()
       .from('agents')
@@ -368,6 +368,9 @@ export async function listGroupInvitationsForAgent(agentId: string) {
         group_id: i.conversation_id as string,
         group_name: g.name as string,
         group_description: (g.description as string | null) ?? null,
+        // Raw fields here — service layer translates `group_avatar_key`
+        // via buildAvatarUrl and falls back to the legacy URL.
+        group_avatar_key: (g.avatar_key as string | null) ?? null,
         group_avatar_url: (g.avatar_url as string | null) ?? null,
         group_member_count: memberCounts.get(i.conversation_id as string) ?? 0,
         inviter_handle: inviter.handle as string,
@@ -453,6 +456,7 @@ export async function updateGroupMetadata(
     name?: string
     description?: string | null
     avatar_url?: string | null
+    avatar_key?: string | null
     group_settings?: Record<string, unknown>
   },
 ): Promise<void> {
@@ -460,6 +464,7 @@ export async function updateGroupMetadata(
   if (patch.name !== undefined) updates.name = patch.name
   if (patch.description !== undefined) updates.description = patch.description
   if (patch.avatar_url !== undefined) updates.avatar_url = patch.avatar_url
+  if (patch.avatar_key !== undefined) updates.avatar_key = patch.avatar_key
   if (patch.group_settings !== undefined) updates.group_settings = patch.group_settings
   if (Object.keys(updates).length === 0) return
 

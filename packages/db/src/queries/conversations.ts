@@ -61,7 +61,7 @@ export async function getAgentConversations(agentId: string, limit = 50) {
     await Promise.all([
       getSupabaseClient()
         .from('conversations')
-        .select('id, type, name, avatar_url, created_at, updated_at, last_message_at')
+        .select('id, type, name, avatar_url, avatar_key, created_at, updated_at, last_message_at')
         .in('id', convIds)
         .order('last_message_at', { ascending: false, nullsFirst: false }),
       getSupabaseClient()
@@ -253,6 +253,11 @@ export async function getAgentConversations(agentId: string, limit = 50) {
           avatar_key: string | null
         }>,
         group_name: (conv.name as string | null) ?? null,
+        // Two raw fields here — the service layer translates them to
+        // the wire-format `group_avatar_url`. New uploads land in
+        // `avatar_key`; the legacy `avatar_url` is kept as a fallback
+        // for rows that pre-date the managed-storage path.
+        group_avatar_key: (conv.avatar_key as string | null) ?? null,
         group_avatar_url: (conv.avatar_url as string | null) ?? null,
         group_member_count: groupCountsRes.get(id) ?? 0,
         last_message_at: (conv.last_message_at as string | null) ?? null,

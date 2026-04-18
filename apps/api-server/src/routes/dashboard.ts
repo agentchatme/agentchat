@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { Hono, type Context } from 'hono'
+import { bodyLimit } from 'hono/body-limit'
 import { setCookie, getCookie, deleteCookie } from 'hono/cookie'
 import {
   DashboardOtpRequest,
@@ -50,8 +51,17 @@ import {
   getAgentPublicProfileForOwner,
   pauseAgent,
   unpauseAgent,
+  resolveOwnedAgent,
   DashboardError,
 } from '../services/dashboard.service.js'
+import { AvatarError, MAX_AVATAR_INPUT_BYTES } from '../services/avatar.service.js'
+import {
+  GroupError,
+  setGroupAvatar,
+  removeGroupAvatar,
+} from '../services/group.service.js'
+import { checkAvatarWriteRateLimit } from '../services/enforcement.service.js'
+import { avatarsWritten, rateLimitHits } from '../lib/metrics.js'
 import { getRedis } from '../lib/redis.js'
 import { emitEvent } from '../services/events.service.js'
 import { issueTicket } from '../ws/ticket-store.js'
@@ -883,5 +893,148 @@ dashboard.delete('/agents/:handle', dashboardAuthMiddleware, async (c) => {
     throw e
   }
 })
+
+// ─── Group avatar upload / remove ─────────────────────────────────────────
+//
+// PUT  /dashboard/agents/:handle/groups/:groupId/avatar — admin uploads a
+//                                                          new group avatar
+//                                                          as raw image bytes
+// DELETE /dashboard/agents/:handle/groups/:groupId/avatar — admin clears it
+//
+// Routes mirror the agent-avatar pair (PUT/DELETE /v1/agents/:handle/avatar)
+// with three differences:
+//   (1) auth is dashboardAuthMiddleware (owner cookie) rather than agent
+//       Bearer-token auth;
+//   (2) the addressed identity is the owner-claimed agent (handle), and the
+//       service layer additionally enforces the "agent must be admin of
+//       this group" check inside group.service.setGroupAvatar;
+//   (3) the rate-limit bucket is keyed on the agent id (resolved later)
+//       once we already have ownership — the IP-only ipRateLimit further
+//       up the dashboard chain isn't used here so a noisy NAT can't lock
+//       a legitimate admin out of avatar edits.
+//
+// Body shape: raw bytes (any image/* or application/octet-stream Content-Type
+// is fine; format is sniffed server-side from magic bytes). Same 5MB cap as
+// agent avatars enforced via Hono bodyLimit before the handler runs.
+
+type GroupAvatarErrorStatus = 400 | 403 | 404 | 410 | 413 | 429 | 500 | 503
+
+function respondGroupAvatarError(c: Context, e: AvatarError | GroupError) {
+  return c.json({ code: e.code, message: e.message }, e.status as GroupAvatarErrorStatus)
+}
+
+async function guardGroupAvatarWriteRate(c: Context, agentId: string) {
+  const check = await checkAvatarWriteRateLimit(agentId)
+  if (check.allowed) return null
+  rateLimitHits.inc({ rule: 'avatar_write' })
+  avatarsWritten.inc({ outcome: 'rate_limited' })
+  if (check.retryAfterMs != null) {
+    c.header('Retry-After', String(Math.ceil(check.retryAfterMs / 1000)))
+  }
+  return c.json(
+    {
+      code: 'RATE_LIMITED',
+      message: 'Too many avatar writes per minute',
+      retry_after_ms: check.retryAfterMs,
+    },
+    429,
+  )
+}
+
+const groupAvatarBodyLimit = bodyLimit({
+  maxSize: MAX_AVATAR_INPUT_BYTES,
+  onError: (c) =>
+    c.json(
+      {
+        code: 'PAYLOAD_TOO_LARGE',
+        message: `Avatar exceeds the ${Math.floor(MAX_AVATAR_INPUT_BYTES / 1024 / 1024)} MB cap`,
+      },
+      413,
+    ),
+})
+
+dashboard.put(
+  '/agents/:handle/groups/:groupId/avatar',
+  dashboardAuthMiddleware,
+  groupAvatarBodyLimit,
+  async (c) => {
+    const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+    const groupId = c.req.param('groupId')
+    const ownerId = c.get('ownerId')
+
+    let agentId: string
+    try {
+      const agent = await resolveOwnedAgent(ownerId, handle)
+      agentId = agent.id as string
+    } catch (e) {
+      if (e instanceof DashboardError) {
+        return c.json({ code: e.code, message: e.message }, e.status as 404)
+      }
+      throw e
+    }
+
+    const rateLimited = await guardGroupAvatarWriteRate(c, agentId)
+    if (rateLimited) return rateLimited
+
+    let bytes: Buffer
+    try {
+      const ab = await c.req.arrayBuffer()
+      bytes = Buffer.from(ab)
+    } catch (e) {
+      return c.json(
+        {
+          code: 'VALIDATION_ERROR',
+          message: `Could not read request body: ${(e as Error).message}`,
+        },
+        400,
+      )
+    }
+
+    try {
+      const result = await setGroupAvatar(agentId, groupId, bytes)
+      return c.json(result)
+    } catch (e) {
+      if (e instanceof GroupError) return respondGroupAvatarError(c, e)
+      if (e instanceof AvatarError) return respondGroupAvatarError(c, e)
+      throw e
+    }
+  },
+)
+
+dashboard.delete(
+  '/agents/:handle/groups/:groupId/avatar',
+  dashboardAuthMiddleware,
+  async (c) => {
+    const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+    const groupId = c.req.param('groupId')
+    const ownerId = c.get('ownerId')
+
+    let agentId: string
+    try {
+      const agent = await resolveOwnedAgent(ownerId, handle)
+      agentId = agent.id as string
+    } catch (e) {
+      if (e instanceof DashboardError) {
+        return c.json({ code: e.code, message: e.message }, e.status as 404)
+      }
+      throw e
+    }
+
+    const rateLimited = await guardGroupAvatarWriteRate(c, agentId)
+    if (rateLimited) return rateLimited
+
+    try {
+      const { existed } = await removeGroupAvatar(agentId, groupId)
+      if (!existed) {
+        return c.json({ code: 'NOT_FOUND', message: 'No avatar set' }, 404)
+      }
+      return c.json({ ok: true })
+    } catch (e) {
+      if (e instanceof GroupError) return respondGroupAvatarError(c, e)
+      if (e instanceof AvatarError) return respondGroupAvatarError(c, e)
+      throw e
+    }
+  },
+)
 
 export { dashboard as dashboardRoutes }

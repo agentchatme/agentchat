@@ -67,6 +67,14 @@ async function requireOwnedAgent(ownerId: string, handle: string) {
   return agent
 }
 
+// Same shape as requireOwnedAgent, exported for routes that need to do
+// per-agent operations (e.g. rate-limit) BEFORE delegating into another
+// service. Throws the same DashboardError(404) so the route's existing
+// dispatch keeps working.
+export async function resolveOwnedAgent(ownerId: string, handle: string) {
+  return requireOwnedAgent(ownerId, handle)
+}
+
 // ─── Claim ─────────────────────────────────────────────────────────────────
 // Owner pastes an API key → we hash it → look up the agent → insert the
 // claim. Returns 404 INVALID_API_KEY if the hash doesn't match any live
@@ -274,16 +282,32 @@ export async function getAgentConversationsForOwner(ownerId: string, handle: str
   // The DB query returns each participant with an internal `avatar_key`
   // (storage path). Translate to the wire-format `avatar_url` at this
   // boundary so the dashboard never sees raw storage keys.
-  return rows.map((row) => ({
-    ...row,
-    participants: row.participants.map((p) => {
-      const { avatar_key, ...rest } = p
-      return {
-        ...rest,
-        avatar_url: buildAvatarUrl(avatar_key),
-      }
-    }),
-  }))
+  //
+  // Groups carry two raw fields: `group_avatar_key` (new managed-upload
+  // path) and `group_avatar_url` (legacy direct-URL field). Prefer the
+  // assembled URL from the key; fall back to the legacy URL when no key
+  // is set so older groups keep rendering.
+  return rows.map((row) => {
+    const base = {
+      ...row,
+      participants: row.participants.map((p) => {
+        const { avatar_key, ...rest } = p
+        return {
+          ...rest,
+          avatar_url: buildAvatarUrl(avatar_key),
+        }
+      }),
+    }
+    if (row.type !== 'group') return base
+    const { group_avatar_key, group_avatar_url, ...groupRest } = base as typeof base & {
+      group_avatar_key: string | null
+      group_avatar_url: string | null
+    }
+    return {
+      ...groupRest,
+      group_avatar_url: buildAvatarUrl(group_avatar_key) ?? group_avatar_url,
+    }
+  })
 }
 
 export async function getAgentMessagesForOwner(
@@ -537,3 +561,4 @@ export async function getAgentPublicProfileForOwner(
     presence,
   }
 }
+

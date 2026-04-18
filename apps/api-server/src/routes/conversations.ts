@@ -17,16 +17,27 @@ conversations.get('/', authMiddleware, async (c) => {
   // DB returns participants with internal `avatar_key`; translate to
   // wire-format `avatar_url` before responding so callers never see raw
   // storage paths.
-  const wire = convs.map((conv) => ({
-    ...conv,
-    participants: conv.participants.map((p) => {
-      const { avatar_key, ...rest } = p
-      return {
-        ...rest,
-        avatar_url: buildAvatarUrl(avatar_key),
-      }
-    }),
-  }))
+  const wire = convs.map((conv) => {
+    const base = {
+      ...conv,
+      participants: conv.participants.map((p) => {
+        const { avatar_key, ...rest } = p
+        return {
+          ...rest,
+          avatar_url: buildAvatarUrl(avatar_key),
+        }
+      }),
+    }
+    if (conv.type !== 'group') return base
+    const { group_avatar_key, group_avatar_url, ...groupRest } = base as typeof base & {
+      group_avatar_key: string | null
+      group_avatar_url: string | null
+    }
+    return {
+      ...groupRest,
+      group_avatar_url: buildAvatarUrl(group_avatar_key) ?? group_avatar_url,
+    }
+  })
   return c.json(wire)
 })
 

@@ -25,6 +25,7 @@ import {
   hasParticipantHistory,
   atomicSendMessage,
   getPausedByOwner,
+  getSupabaseClient,
 } from '@agentchat/db'
 import {
   GROUP_MAX_MEMBERS,
@@ -40,6 +41,15 @@ import {
 import { checkGroupInviteCap } from './enforcement.service.js'
 import { sendToAgent } from '../ws/events.js'
 import { fireWebhooks } from './webhook.service.js'
+import {
+  AvatarError,
+  buildAvatarUrl,
+  deriveGroupKeyPrefix,
+  processAvatarImage,
+} from './avatar.service.js'
+import { env } from '../env.js'
+import { logger } from '../lib/logger.js'
+import { avatarsWritten } from '../lib/metrics.js'
 
 export class GroupError extends Error {
   code: string
@@ -448,7 +458,9 @@ export async function listInvites(callerId: string): Promise<GroupInvitation[]> 
     group_id: r.group_id,
     group_name: r.group_name,
     group_description: r.group_description,
-    group_avatar_url: r.group_avatar_url,
+    // Prefer the managed-upload key; fall back to the legacy URL for
+    // groups that pre-date migration 039.
+    group_avatar_url: buildAvatarUrl(r.group_avatar_key) ?? r.group_avatar_url,
     group_member_count: r.group_member_count,
     inviter_handle: r.inviter_handle,
     created_at: r.created_at,
@@ -469,7 +481,9 @@ async function buildInviteEnvelope(inviteId: string): Promise<GroupInvitation | 
     group_id: invite.conversation_id as string,
     group_name: (group.name as string | null) ?? '',
     group_description: (group.description as string | null) ?? null,
-    group_avatar_url: (group.avatar_url as string | null) ?? null,
+    group_avatar_url:
+      buildAvatarUrl((group.avatar_key as string | null | undefined) ?? null) ??
+      ((group.avatar_url as string | null) ?? null),
     group_member_count: memberCount,
     inviter_handle: inviter.handle,
     created_at: invite.created_at as string,
@@ -975,7 +989,9 @@ async function assembleGroupDetail(
     id: group.id as string,
     name: (group.name as string | null) ?? '',
     description: (group.description as string | null) ?? null,
-    avatar_url: (group.avatar_url as string | null) ?? null,
+    avatar_url:
+      buildAvatarUrl((group.avatar_key as string | null | undefined) ?? null) ??
+      ((group.avatar_url as string | null) ?? null),
     created_by: creator?.handle ?? 'unknown',
     settings: {
       who_can_invite:
@@ -987,4 +1003,183 @@ async function assembleGroupDetail(
     members: members as GroupMember[],
     your_role: callerRole,
   }
+}
+
+// ─── Group avatar upload / remove ──────────────────────────────────────────
+//
+// Mirrors the agent-avatar pipeline (see services/avatar.service.ts) — same
+// magic-byte sniff, sharp re-encode, content-addressed key, storage-before-row
+// write order. The differences are scoped to:
+//   (1) authorization: any group admin can set/clear, gated by requireAdmin;
+//   (2) key prefix:    "g/{first 16 hex of sha256(group_id)}" so the public
+//                      CDN path never surfaces the raw conversation UUID and
+//                      a future cleanup job can target group bytes alone;
+//   (3) row update:    we write conversations.avatar_key AND clear the legacy
+//                      conversations.avatar_url column atomically — once a
+//                      group has a managed avatar, the legacy URL is stale
+//                      and would just confuse the read-path fallback chain;
+//   (4) audit trail:   one 'avatar_changed' system message per change so the
+//                      group timeline shows discrete events, matching the
+//                      pattern updateGroup uses for name / description edits.
+//
+// Caller is the agent id (the admin's claimed agent), not the dashboard
+// owner — owner→handle resolution happens one layer up in dashboard.service.
+
+export interface SetGroupAvatarResult {
+  avatar_key: string
+  avatar_url: string
+}
+
+export async function setGroupAvatar(
+  callerId: string,
+  groupId: string,
+  input: Buffer,
+): Promise<SetGroupAvatarResult> {
+  await requireAdmin(groupId, callerId)
+  const group = await loadGroupOrThrow(groupId)
+  if (group.deleted_at) {
+    // Mirror the read path's 410 contract: a deleted group is gone, you
+    // can't reskin its tombstone. The frontend should never reach this
+    // branch (the group is hidden from the list) but the service-level
+    // check keeps the contract honest.
+    throw new GroupError('GROUP_DELETED', 'Group has been deleted', 410)
+  }
+
+  const processed = await processAvatarImage(input)
+  const newKey = `${deriveGroupKeyPrefix(groupId)}/${processed.contentHash}.webp`
+  const priorKey: string | null = (group.avatar_key as string | null | undefined) ?? null
+
+  const storage = getSupabaseClient().storage.from(env.AVATARS_BUCKET)
+
+  // upsert=true: identical re-uploads collapse to a no-op at the storage
+  // layer because the content hash makes the key deterministic. cacheControl
+  // matches the agent path so the CDN serves group avatars with the same
+  // immutable-by-content-hash semantics.
+  const { error: uploadError } = await storage.upload(newKey, processed.bytes, {
+    contentType: 'image/webp',
+    upsert: true,
+    cacheControl: 'public, max-age=31536000, immutable',
+  })
+
+  if (uploadError) {
+    avatarsWritten.inc({ outcome: 'storage_error' })
+    logger.error(
+      { group_id: groupId, key: newKey, error: uploadError.message },
+      'group_avatar_upload_failed',
+    )
+    throw new AvatarError(
+      'STORAGE_UNAVAILABLE',
+      'Storage backend could not accept the avatar upload',
+      503,
+    )
+  }
+
+  // Clear the legacy avatar_url at the same time we set avatar_key so the
+  // read-path fallback chain (avatar_key → avatar_url) doesn't keep serving
+  // a stale URL for groups that were on the old direct-PATCH path.
+  try {
+    await updateGroupMetadata(groupId, {
+      avatar_key: newKey,
+      avatar_url: null,
+    })
+  } catch (err) {
+    avatarsWritten.inc({ outcome: 'storage_error' })
+    logger.error(
+      { group_id: groupId, key: newKey, error: (err as Error).message },
+      'group_avatar_row_update_failed',
+    )
+    throw new AvatarError(
+      'INTERNAL_ERROR',
+      'Failed to persist group avatar reference',
+      500,
+    )
+  }
+
+  // Best-effort prior-bytes cleanup. Failure here just leaves orphaned
+  // bytes for the nightly sweeper — never block the user on cleanup.
+  if (priorKey && priorKey !== newKey) {
+    void storage.remove([priorKey]).catch((err) => {
+      logger.warn(
+        { group_id: groupId, prior_key: priorKey, error: (err as Error).message },
+        'group_avatar_prior_delete_failed',
+      )
+    })
+  }
+
+  const actor = await findAgentById(callerId)
+  await emitSystemEvent(groupId, callerId, {
+    event: 'avatar_changed',
+    actor_handle: actor?.handle ?? 'unknown',
+  })
+
+  avatarsWritten.inc({ outcome: 'uploaded' })
+  logger.info(
+    {
+      group_id: groupId,
+      key: newKey,
+      source_format: processed.sourceFormat,
+      processed_bytes: processed.bytes.length,
+    },
+    'group_avatar_uploaded',
+  )
+
+  return { avatar_key: newKey, avatar_url: buildAvatarUrl(newKey)! }
+}
+
+export async function removeGroupAvatar(
+  callerId: string,
+  groupId: string,
+): Promise<{ existed: boolean }> {
+  await requireAdmin(groupId, callerId)
+  const group = await loadGroupOrThrow(groupId)
+  if (group.deleted_at) {
+    throw new GroupError('GROUP_DELETED', 'Group has been deleted', 410)
+  }
+
+  const priorKey: string | null = (group.avatar_key as string | null | undefined) ?? null
+  const priorLegacyUrl: string | null = (group.avatar_url as string | null | undefined) ?? null
+  if (!priorKey && !priorLegacyUrl) return { existed: false }
+
+  // Clear both columns so neither fallback path can resurrect the avatar
+  // after the user has explicitly removed it. Row-before-bytes order: a
+  // failed storage delete leaves orphaned bytes (nightly sweep), but the
+  // group already presents as avatarless from the next read.
+  try {
+    await updateGroupMetadata(groupId, {
+      avatar_key: null,
+      avatar_url: null,
+    })
+  } catch (err) {
+    logger.error(
+      { group_id: groupId, error: (err as Error).message },
+      'group_avatar_row_clear_failed',
+    )
+    throw new AvatarError(
+      'INTERNAL_ERROR',
+      'Failed to clear group avatar reference',
+      500,
+    )
+  }
+
+  if (priorKey) {
+    void getSupabaseClient()
+      .storage.from(env.AVATARS_BUCKET)
+      .remove([priorKey])
+      .catch((err) => {
+        logger.warn(
+          { group_id: groupId, prior_key: priorKey, error: (err as Error).message },
+          'group_avatar_delete_bytes_failed',
+        )
+      })
+  }
+
+  const actor = await findAgentById(callerId)
+  await emitSystemEvent(groupId, callerId, {
+    event: 'avatar_changed',
+    actor_handle: actor?.handle ?? 'unknown',
+  })
+
+  avatarsWritten.inc({ outcome: 'removed' })
+  logger.info({ group_id: groupId, prior_key: priorKey }, 'group_avatar_removed')
+  return { existed: true }
 }

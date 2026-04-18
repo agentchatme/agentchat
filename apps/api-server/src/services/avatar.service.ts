@@ -61,6 +61,19 @@ export function deriveAgentKeyPrefix(agentId: string): string {
   return createHash('sha256').update(agentId).digest('hex').slice(0, AGENT_KEY_PREFIX_HEX_LEN)
 }
 
+/**
+ * Deterministic per-group storage-key prefix. The leading "g/" sentinel
+ * separates group keys from agent keys in the same bucket so a future
+ * cleanup job (orphaned-byte sweeper, per-tenant deletion) can target one
+ * or the other unambiguously. Same pre-image-resistance reasoning as the
+ * agent variant — the public CDN URL never surfaces the raw conversation
+ * UUID.
+ */
+export function deriveGroupKeyPrefix(groupId: string): string {
+  const hash = createHash('sha256').update(groupId).digest('hex').slice(0, AGENT_KEY_PREFIX_HEX_LEN)
+  return `g/${hash}`
+}
+
 // Bound sharp's decoded-pixel ceiling. Default is 268 million (≈1 GB
 // RAM per decode at 4 bytes/pixel), acceptable for a photo-editing
 // service but massive overkill for avatars. 24 MP covers a 6000×4000

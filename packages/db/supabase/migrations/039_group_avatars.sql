@@ -1,0 +1,30 @@
+-- Migration 039: Add avatar_key to conversations for group profile pictures.
+--
+-- Mirrors migration 035 (agent avatars). Group admins can upload an avatar
+-- via PUT /dashboard/agents/:handle/groups/:groupId/avatar. The API server
+-- runs the same image pipeline as agents (sharp center-crop → 512×512 →
+-- WebP re-encode → EXIF strip) and uploads the result to the same `avatars`
+-- bucket under a group-scoped prefix.
+--
+-- Key format (documented, not DB-enforced):
+--   {group_key_prefix}/{content_hash}.webp
+-- where:
+--   group_key_prefix = "g/" + first 16 hex chars of sha256(conversation_id)
+--   content_hash     = first 32 hex chars of sha256(processed bytes)
+--
+-- The "g/" sentinel prefix separates group keys from agent keys in the same
+-- bucket so a future cleanup job can target one or the other without
+-- ambiguity. Same non-reversible-id rationale as agents — we don't want the
+-- raw conversation UUID on the public CDN URL.
+--
+-- The existing `conversations.avatar_url` column is kept for backward
+-- compatibility (it was nullable and only ever populated by direct PATCH
+-- calls without a managed file). The read path prefers `avatar_key`
+-- (assembled via buildAvatarUrl at the service boundary) and falls back
+-- to `avatar_url` only when `avatar_key` is NULL. New uploads always set
+-- `avatar_key` and clear `avatar_url`.
+--
+-- NULL = no avatar set (the default for every existing row). The dashboard
+-- renders its existing Users-icon fallback in that case.
+
+ALTER TABLE conversations ADD COLUMN avatar_key TEXT DEFAULT NULL;
