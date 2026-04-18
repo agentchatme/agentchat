@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 
 import type { AgentPublicProfile } from '@/lib/types'
-import { describePresence } from '@/lib/describe-presence'
+import { describePresence, PRESENCE_TONE_CLASS } from '@/lib/describe-presence'
+import { cn } from '@/lib/utils'
 
 // Live presence subtitle for the DM thread header. Renders the same
 // "Active now / Last seen X ago / nothing" rule the profile drawer
@@ -68,12 +69,18 @@ export function PeerPresenceLine({
   }, [ownerHandle, peerHandle])
 
   const live = presence ? describePresence(presence) : null
-  const display = live ?? fallback
 
-  if (!display) return null
+  if (live) {
+    return (
+      <span className={cn('truncate text-[12px] leading-tight', PRESENCE_TONE_CLASS[live.tone])}>
+        {live.text}
+      </span>
+    )
+  }
+  if (!fallback) return null
   return (
     <span className="text-muted-foreground truncate text-[12px] leading-tight">
-      {display}
+      {fallback}
     </span>
   )
 }

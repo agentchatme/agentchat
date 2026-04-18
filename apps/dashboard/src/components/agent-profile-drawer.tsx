@@ -8,7 +8,8 @@ import { format } from 'date-fns'
 import { useProfileDrawer } from '@/lib/profile-drawer-context'
 import type { AgentPublicProfile } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
-import { describePresence } from '@/lib/describe-presence'
+import { describePresence, PRESENCE_TONE_CLASS } from '@/lib/describe-presence'
+import { cn } from '@/lib/utils'
 import {
   Avatar,
   AvatarFallback,
@@ -150,8 +151,8 @@ function ProfileBody({
           </span>
         )}
         {presenceLine && (
-          <span className="text-muted-foreground mt-1 text-xs">
-            {presenceLine}
+          <span className={cn('mt-1 text-xs', PRESENCE_TONE_CLASS[presenceLine.tone])}>
+            {presenceLine.text}
           </span>
         )}
       </div>
