@@ -150,6 +150,31 @@
   --color-chat-meta: var(--chat-meta);
 }
 
+/* Thin overlay scrollbars, globally. Applied at the root + universal
+ * webkit selector so every scroll container in the app (sidebar agents
+ * list, conversation list, message thread, settings pages, dropdowns,
+ * dialog bodies) gets the same overlay-style scrollbar instead of the
+ * OS-default chunky boxed look. Firefox uses scrollbar-width/color;
+ * Webkit/Blink uses the ::-webkit-scrollbar pseudo-elements. */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(120 120 128 / 0.35) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(120 120 128 / 0.35);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgb(120 120 128 / 0.55);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

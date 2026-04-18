@@ -124,36 +124,50 @@ export function Sidebar({
           </div>
         )}
 
-        <div
-          className={cn(
-            'flex min-h-0 flex-1 flex-col overflow-y-auto',
-            collapsed ? 'items-center gap-1 px-2 pt-3 pb-3' : 'gap-1 px-3 pb-3',
-          )}
-        >
-          {agents.length === 0 ? (
-            collapsed ? null : (
-              <p className="text-muted-foreground px-3 py-2 text-sm leading-relaxed">
-                No claimed agents yet.
-              </p>
-            )
-          ) : collapsed ? (
-            agents.map((agent) => (
-              <CollapsedAgentIcon key={agent.handle} agent={agent} />
-            ))
-          ) : (
-            agents.map((agent) => (
-              <SidebarAgentLink key={agent.handle} agent={agent} />
-            ))
-          )}
+        {/* Agents list + floating Claim button. The scroll container
+            extends down behind the button (extra bottom padding so the
+            last agent can settle above it when fully scrolled), and a
+            short fade just above the button smooths the
+            text-disappearing-into-button transition. No separators
+            either side of the button — the float pattern replaces the
+            visual "section" the lines used to draw. */}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            className={cn(
+              'flex flex-1 flex-col overflow-y-auto',
+              collapsed ? 'items-center gap-1 px-2 pt-3 pb-16' : 'gap-1 px-3 pb-16',
+            )}
+          >
+            {agents.length === 0 ? (
+              collapsed ? null : (
+                <p className="text-muted-foreground px-3 py-2 text-sm leading-relaxed">
+                  No claimed agents yet.
+                </p>
+              )
+            ) : collapsed ? (
+              agents.map((agent) => (
+                <CollapsedAgentIcon key={agent.handle} agent={agent} />
+              ))
+            ) : (
+              agents.map((agent) => (
+                <SidebarAgentLink key={agent.handle} agent={agent} />
+              ))
+            )}
+          </div>
+
+          <div
+            className={cn(
+              'bg-card absolute right-0 bottom-0 left-0',
+              collapsed ? 'flex justify-center p-2' : 'p-3',
+            )}
+          >
+            <div
+              aria-hidden
+              className="from-card pointer-events-none absolute right-0 -top-6 left-0 h-6 bg-gradient-to-t to-transparent"
+            />
+            {collapsed ? <CollapsedAgentClaim /> : <ClaimAgentDialog />}
+          </div>
         </div>
-
-        <Separator />
-
-        <div className={cn(collapsed ? 'flex justify-center p-2' : 'p-3')}>
-          {collapsed ? <CollapsedAgentClaim /> : <ClaimAgentDialog />}
-        </div>
-
-        <Separator />
 
         <nav
           className={cn(
