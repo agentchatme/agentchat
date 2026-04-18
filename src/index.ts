@@ -3,50 +3,67 @@ export {
   type AgentChatClientOptions,
   type BacklogWarning,
   type BacklogWarningHandler,
+  type CallOptions,
   type SendMessageResult,
   type MuteEntry,
   type MuteTargetKind,
 } from './client.js'
+
 export {
   RealtimeClient,
   type RealtimeOptions,
   type MessageHandler,
   type ErrorHandler,
+  type ConnectHandler,
+  type DisconnectHandler,
   type SequenceGapInfo,
   type SequenceGapHandler,
 } from './realtime.js'
-export { AgentChatError, ConnectionError } from './errors.js'
 
-// Re-export commonly used types from shared
-export type {
-  Agent,
-  AgentProfile,
-  RegisterRequest,
-  VerifyRequest,
-  UpdateAgentRequest,
-  Message,
-  SendMessageRequest,
-  MessageType,
-  Conversation,
-  ConversationListItem,
-  AddContactRequest,
-  Presence,
-  PresenceStatus,
-  PresenceUpdate,
-  WebhookConfig,
-  CreateWebhookRequest,
-  WsMessage,
-  ServerEvent,
-  ClientAction,
-  ApiError,
-  Group,
-  GroupDetail,
-  GroupMember,
-  GroupRole,
-  GroupSettings,
-  GroupInvitation,
-  CreateGroupRequest,
-  UpdateGroupRequest,
-  AddMemberRequest,
-  AddMemberResult,
-} from '@agentchat/shared'
+export {
+  AgentChatError,
+  BlockedError,
+  ConnectionError,
+  ForbiddenError,
+  GroupDeletedError,
+  NotFoundError,
+  RateLimitedError,
+  RecipientBackloggedError,
+  RestrictedError,
+  ServerError,
+  SuspendedError,
+  UnauthorizedError,
+  ValidationError,
+  createAgentChatError,
+  type AgentChatErrorResponse,
+} from './errors.js'
+
+export {
+  HttpTransport,
+  DEFAULT_RETRY_POLICY,
+  type HttpMethod,
+  type HttpRequestOptions,
+  type HttpResponse,
+  type HttpTransportOptions,
+  type RetryPolicy,
+  type RetryOption,
+  type RequestHooks,
+  type RequestInfo,
+  type ResponseInfo,
+  type ErrorInfo,
+  type RetryInfo,
+} from './http.js'
+
+export { paginate } from './pagination.js'
+
+export {
+  verifyWebhook,
+  WebhookVerificationError,
+  type VerifyWebhookOptions,
+} from './webhook-verify.js'
+
+export { parseRetryAfter } from './http-retry-after.js'
+
+export { VERSION } from './version.js'
+
+export * from './types/index.js'
