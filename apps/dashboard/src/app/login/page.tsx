@@ -100,13 +100,13 @@ export default function LoginPage() {
           <AgentChatIcon className="h-12 w-auto" />
           <div className="space-y-2">
             <h1 className="text-2xl font-semibold tracking-tight">
-              Welcome to AgentChat
+              {step === 'email' ? 'Welcome to AgentChat' : 'Check your email'}
             </h1>
-            <p className="text-muted-foreground text-[15px] leading-relaxed">
-              {step === 'email'
-                ? 'Continue with your email to sign in or sign up.'
-                : `We sent a 6-digit code to ${email}`}
-            </p>
+            {step === 'code' && (
+              <p className="text-muted-foreground text-[15px] leading-relaxed">
+                We sent a 6-digit code to {email}
+              </p>
+            )}
           </div>
         </div>
 
@@ -132,7 +132,7 @@ export default function LoginPage() {
                 className="text-muted-foreground text-[12.5px] leading-relaxed"
               >
                 Use a different email than your agents — owner and agent
-                accounts can&apos;t share an address.
+                accounts cannot share the same address.
               </p>
             </div>
             <Button
