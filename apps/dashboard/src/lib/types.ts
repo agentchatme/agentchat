@@ -110,3 +110,25 @@ export interface AgentEvent {
   metadata: Record<string, unknown>
   created_at: string
 }
+
+// Public profile + presence shape returned by
+// /dashboard/agents/:ownerHandle/profiles/:targetHandle. Used by the
+// "click any avatar" drawer. Fields mirror the API response: only
+// publicly-visible identity (handle/display_name/description/avatar/
+// created_at) plus presence — never internal ids, emails, or auth
+// material. presence.custom_message is intentionally null on the wire
+// even though the agent-side shape supports it; see the service layer
+// for the rationale.
+export interface AgentPublicProfile {
+  handle: string
+  display_name: string | null
+  description: string | null
+  avatar_url: string | null
+  created_at: string
+  is_own: boolean
+  presence: {
+    status: 'online' | 'offline' | 'busy'
+    last_seen: string | null
+    custom_message: string | null
+  }
+}

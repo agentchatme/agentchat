@@ -9,6 +9,8 @@ import {
   setPausedByOwner,
   getAgentConversations,
   getAgentMessagesForOwnerRPC,
+  getAgentProfileForOwnerRPC,
+  getAgentIdsByHandles,
   listEventsForTarget,
   listContacts,
   listBlocks,
@@ -458,4 +460,80 @@ export async function getAgentPresenceForOwner(ownerId: string, handle: string) 
   const agent = await requireOwnedAgent(ownerId, handle)
   const { getPresence } = await import('./presence.service.js')
   return getPresence(agent.id as string, agent.handle as string)
+}
+
+/**
+ * Public profile for any agent visible to the caller's owner — their own
+ * agent, or any participant in a conversation one of their agents is in.
+ * The dashboard uses this to render the "click an avatar" profile drawer.
+ *
+ * Security properties, in order of importance:
+ *   1. RPC strips agents.id (never on the wire).
+ *   2. RPC only returns active / restricted agents; suspended and deleted
+ *      are treated as non-existent.
+ *   3. Cross-owner enumeration is blocked by the shared-conversation check.
+ *   4. Emails, api_key_hash, webhook_url, webhook_secret are never in the
+ *      RETURNS TABLE, so even a future bug in this layer can't expose them.
+ *   5. Presence is fetched via a private handle → id lookup in this
+ *      service; the id never leaves the service boundary.
+ *
+ * Missing / invisible targets collapse to the same 404, by design — the
+ * client can't distinguish "doesn't exist" from "can't see it".
+ */
+export async function getAgentPublicProfileForOwner(
+  ownerId: string,
+  ownerHandle: string,
+  targetHandle: string,
+) {
+  const row = await getAgentProfileForOwnerRPC({
+    owner_id: ownerId,
+    owner_handle: ownerHandle,
+    target_handle: targetHandle,
+  }).catch((e: unknown) => {
+    const msg = e instanceof Error ? e.message : ''
+    if (msg.includes('OWNER_AGENT_NOT_FOUND') || msg.includes('TARGET_NOT_VISIBLE')) {
+      return null
+    }
+    throw e
+  })
+  if (!row) {
+    throw new DashboardError('AGENT_NOT_FOUND', `Account @${targetHandle} not found`, 404)
+  }
+
+  // Resolve the target's id privately so we can read its live presence
+  // from Redis. The id is consumed here and discarded — the response
+  // shape has no id field.
+  const idMap = await getAgentIdsByHandles([row.handle])
+  const targetId = idMap.get(row.handle) ?? null
+
+  let presence: {
+    status: 'online' | 'offline' | 'busy'
+    last_seen: string | null
+    custom_message: string | null
+  } = { status: 'offline', last_seen: null, custom_message: null }
+
+  if (targetId) {
+    const { getPresence } = await import('./presence.service.js')
+    const live = await getPresence(targetId, row.handle)
+    presence = {
+      status: live.status,
+      last_seen: live.last_seen,
+      // Keep custom_message out of the dashboard response for now — it's
+      // agent-authored free text not yet surfaced anywhere else in the
+      // lurker UI, and including it would be the first place a crafted
+      // message could reach the dashboard without passing through the
+      // message pipeline's content sanitizers.
+      custom_message: null,
+    }
+  }
+
+  return {
+    handle: row.handle,
+    display_name: row.display_name,
+    description: row.description,
+    avatar_url: buildAvatarUrl(row.avatar_key),
+    created_at: row.created_at,
+    is_own: row.is_own,
+    presence,
+  }
 }

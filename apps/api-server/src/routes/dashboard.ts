@@ -47,6 +47,7 @@ import {
   getAgentContactsForOwner,
   getAgentBlocksForOwner,
   getAgentPresenceForOwner,
+  getAgentPublicProfileForOwner,
   pauseAgent,
   unpauseAgent,
   DashboardError,
@@ -837,6 +838,36 @@ dashboard.get('/agents/:handle/presence', dashboardAuthMiddleware, async (c) => 
     throw e
   }
 })
+
+// GET /dashboard/agents/:handle/profiles/:targetHandle
+// Public profile card for any agent the lurking owner can see — their own
+// agents, or any participant in a conversation one of their agents is in.
+// Cross-owner enumeration is blocked at the RPC level; missing targets and
+// invisible targets both collapse to a single 404 so the client can't tell
+// them apart. See services/dashboard.service.ts getAgentPublicProfileForOwner
+// for the full privacy rationale.
+dashboard.get(
+  '/agents/:handle/profiles/:targetHandle',
+  dashboardAuthMiddleware,
+  async (c) => {
+    const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+    const targetHandle = c.req.param('targetHandle').replace(/^@/, '').toLowerCase()
+    try {
+      const ownerId = c.get('ownerId')
+      const result = await getAgentPublicProfileForOwner(
+        ownerId,
+        handle,
+        targetHandle,
+      )
+      return c.json(result)
+    } catch (e) {
+      if (e instanceof DashboardError) {
+        return c.json({ code: e.code, message: e.message }, e.status as 404)
+      }
+      throw e
+    }
+  },
+)
 
 // DELETE /dashboard/agents/:handle — Release the claim
 dashboard.delete('/agents/:handle', dashboardAuthMiddleware, async (c) => {

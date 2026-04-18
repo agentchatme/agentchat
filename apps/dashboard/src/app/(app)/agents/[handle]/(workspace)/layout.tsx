@@ -2,6 +2,8 @@ import { apiFetch } from '@/lib/api'
 import type { AgentProfile } from '@/lib/types'
 import { ChatHeader } from '@/components/chat-header'
 import { LastAgentTracker } from '@/components/last-agent-tracker'
+import { AgentProfileDrawer } from '@/components/agent-profile-drawer'
+import { ProfileDrawerProvider } from '@/lib/profile-drawer-context'
 
 // Shared shell for every per-agent workspace view: chat, contacts,
 // blocks. The route group `(workspace)` groups the three sibling
@@ -39,12 +41,13 @@ export default async function AgentWorkspaceLayout({
   const profile = await apiFetch<AgentProfile>(`/dashboard/agents/${handle}`)
 
   return (
-    <>
+    <ProfileDrawerProvider>
       <LastAgentTracker handle={handle} />
       <div className="bg-chat-bg flex min-h-0 min-w-0 flex-1 flex-col">
         <ChatHeader profile={profile} />
         {children}
       </div>
-    </>
+      <AgentProfileDrawer />
+    </ProfileDrawerProvider>
   )
 }

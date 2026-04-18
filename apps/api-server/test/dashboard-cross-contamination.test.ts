@@ -32,6 +32,8 @@ const listClaimedAgents = vi.fn()
 const setPausedByOwner = vi.fn()
 const getAgentConversations = vi.fn()
 const getAgentMessagesForOwnerRPC = vi.fn()
+const getAgentProfileForOwnerRPC = vi.fn()
+const getAgentIdsByHandles = vi.fn()
 const listEventsForTarget = vi.fn()
 const listContacts = vi.fn()
 const listBlocks = vi.fn()
@@ -46,10 +48,19 @@ vi.mock('@agentchat/db', () => ({
   setPausedByOwner,
   getAgentConversations,
   getAgentMessagesForOwnerRPC,
+  getAgentProfileForOwnerRPC,
+  getAgentIdsByHandles,
   listEventsForTarget,
   listContacts,
   listBlocks,
   invalidateOwnerCache,
+}))
+
+// Stub the presence service. The profile drawer test suite relies on a
+// predictable presence response; real Redis isn't reachable from here.
+const getPresence = vi.fn()
+vi.mock('../src/services/presence.service.js', () => ({
+  getPresence,
 }))
 
 // Stub env so importing dashboard.service.ts (which now transitively
@@ -95,6 +106,7 @@ const {
   releaseClaim,
   listAgentsForOwner,
   getAgentProfile,
+  getAgentPublicProfileForOwner,
   getAgentConversationsForOwner,
   getAgentMessagesForOwner,
   getAgentEventsForOwner,
@@ -128,9 +140,12 @@ function resetAllMocks() {
   setPausedByOwner.mockReset()
   getAgentConversations.mockReset()
   getAgentMessagesForOwnerRPC.mockReset()
+  getAgentProfileForOwnerRPC.mockReset()
+  getAgentIdsByHandles.mockReset()
   listEventsForTarget.mockReset()
   listContacts.mockReset()
   listBlocks.mockReset()
+  getPresence.mockReset()
   emitEvent.mockReset().mockResolvedValue(undefined)
 }
 
@@ -531,6 +546,125 @@ describe('dashboard.service — owner A happy path', () => {
     expect((dave as Record<string, unknown>)['avatar_key']).toBeUndefined()
   })
 
+})
+
+// ─── Public profile drawer ─────────────────────────────────────────────────
+// getAgentPublicProfileForOwner is the read path behind the lurker's "click
+// any avatar" drawer. The migration 038 RPC handles ownership + visibility
+// in SQL and strips the internal id; the service translates avatar_key →
+// avatar_url and merges live Redis presence. These tests pin four properties
+// the dashboard's privacy posture depends on:
+//   1. The internal id never reaches the wire.
+//   2. avatar_key is replaced with avatar_url (same rule as contacts/blocks).
+//   3. RPC visibility miss surfaces as 404 AGENT_NOT_FOUND — identical to
+//      a missing handle, so clients can't distinguish the two.
+//   4. presence.custom_message (agent-authored free text) is suppressed at
+//      the service boundary as a defense-in-depth against that payload
+//      being used to ship crafted content into the dashboard UI.
+
+describe('dashboard.service — getAgentPublicProfileForOwner', () => {
+  beforeEach(() => {
+    resetAllMocks()
+  })
+
+  it('happy path: returns public fields + presence, strips avatar_key and any internal id', async () => {
+    getAgentProfileForOwnerRPC.mockResolvedValueOnce({
+      handle: 'bob',
+      display_name: 'Bob',
+      description: 'hello world',
+      avatar_key: 'deadbeef00112233/abc123.webp',
+      created_at: '2026-01-15T00:00:00Z',
+      is_own: false,
+    })
+    getAgentIdsByHandles.mockResolvedValueOnce(new Map([['bob', 'agt_bob']]))
+    getPresence.mockResolvedValueOnce({
+      handle: 'bob',
+      status: 'online',
+      custom_message: 'whatever the agent set',
+      last_seen: '2026-04-18T10:00:00Z',
+    })
+
+    const result = await getAgentPublicProfileForOwner(OWNER_A, 'alice', 'bob')
+
+    expect(result.handle).toBe('bob')
+    expect(result.display_name).toBe('Bob')
+    expect(result.avatar_url).toBe(
+      'https://test.supabase.co/storage/v1/object/public/avatars/deadbeef00112233/abc123.webp',
+    )
+    expect(result.is_own).toBe(false)
+    expect(result.presence.status).toBe('online')
+    expect(result.presence.last_seen).toBe('2026-04-18T10:00:00Z')
+    // Defense-in-depth: agent-authored free text never reaches the dashboard.
+    expect(result.presence.custom_message).toBeNull()
+
+    const rec = result as Record<string, unknown>
+    expect(rec['avatar_key']).toBeUndefined()
+    expect(rec['id']).toBeUndefined()
+  })
+
+  it('RPC returns null → 404 AGENT_NOT_FOUND (same code as missing handle)', async () => {
+    getAgentProfileForOwnerRPC.mockResolvedValueOnce(null)
+    await expect(
+      getAgentPublicProfileForOwner(OWNER_A, 'alice', 'ghost'),
+    ).rejects.toMatchObject({
+      name: 'DashboardError',
+      code: 'AGENT_NOT_FOUND',
+      status: 404,
+    })
+  })
+
+  it('RPC raises OWNER_AGENT_NOT_FOUND → 404 AGENT_NOT_FOUND', async () => {
+    getAgentProfileForOwnerRPC.mockRejectedValueOnce(new Error('OWNER_AGENT_NOT_FOUND'))
+    await expect(
+      getAgentPublicProfileForOwner(OWNER_B, 'alice', 'bob'),
+    ).rejects.toMatchObject({
+      code: 'AGENT_NOT_FOUND',
+      status: 404,
+    })
+  })
+
+  it('RPC raises TARGET_NOT_VISIBLE → 404 AGENT_NOT_FOUND (collapses visibility miss)', async () => {
+    getAgentProfileForOwnerRPC.mockRejectedValueOnce(new Error('TARGET_NOT_VISIBLE'))
+    await expect(
+      getAgentPublicProfileForOwner(OWNER_A, 'alice', 'stranger'),
+    ).rejects.toMatchObject({
+      code: 'AGENT_NOT_FOUND',
+      status: 404,
+    })
+  })
+
+  it('unrelated RPC errors bubble up as 500-equivalent (not mapped to 404)', async () => {
+    // Any unknown DB error must not be swallowed into a 404 — that would
+    // hide infrastructure problems as a "not found" and make debugging
+    // hostile. The service only catches the two named RPC exceptions.
+    getAgentProfileForOwnerRPC.mockRejectedValueOnce(new Error('connection refused'))
+    await expect(
+      getAgentPublicProfileForOwner(OWNER_A, 'alice', 'bob'),
+    ).rejects.toThrow('connection refused')
+  })
+
+  it('falls back to presence=offline when id lookup returns empty (no Redis read attempted)', async () => {
+    // If the handle → id resolver somehow misses (race with a rename or
+    // hard-delete after the RPC returned), the service must NOT call
+    // getPresence with an undefined id — it should quietly default to
+    // offline/null. This is a belt-and-braces check against a crash on
+    // a rare consistency corner.
+    getAgentProfileForOwnerRPC.mockResolvedValueOnce({
+      handle: 'carol',
+      display_name: 'Carol',
+      description: null,
+      avatar_key: null,
+      created_at: '2026-01-20T00:00:00Z',
+      is_own: true,
+    })
+    getAgentIdsByHandles.mockResolvedValueOnce(new Map())
+
+    const result = await getAgentPublicProfileForOwner(OWNER_A, 'alice', 'carol')
+
+    expect(result.presence.status).toBe('offline')
+    expect(result.presence.last_seen).toBeNull()
+    expect(getPresence).not.toHaveBeenCalled()
+  })
 })
 
 describe('dashboard.service — claimAgent', () => {

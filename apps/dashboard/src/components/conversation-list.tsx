@@ -9,6 +9,7 @@ import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
 import { cn } from '@/lib/utils'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
+import { ClickableProfileAvatar } from '@/components/clickable-profile-avatar'
 import { Timestamp } from '@/components/timestamp'
 
 // Left column of the chat pane. Owns four responsibilities:
@@ -188,6 +189,30 @@ function ConversationRow({
     conversation.type === 'direct'
       ? conversation.participants[0]?.avatar_url ?? null
       : null
+  // Only DM rows get the clickable peer avatar — a group avatar
+  // represents the group, not a person. The wrapper stops click
+  // propagation so opening the profile drawer doesn't also navigate
+  // the row via the surrounding <Link>.
+  const peerHandle =
+    conversation.type === 'direct'
+      ? conversation.participants[0]?.handle ?? null
+      : null
+
+  const avatar = (
+    <Avatar className="bg-muted size-12 shrink-0" style={{ color: color.fg }}>
+      {avatarUrl ? <AvatarImage src={avatarUrl} alt={title} /> : null}
+      <AvatarFallback
+        className="bg-transparent text-base font-semibold"
+        style={{ color: color.fg }}
+      >
+        {conversation.type === 'group' ? (
+          <Users className="size-5" />
+        ) : (
+          title.charAt(0).toUpperCase()
+        )}
+      </AvatarFallback>
+    </Avatar>
+  )
 
   return (
     <li>
@@ -198,19 +223,13 @@ function ConversationRow({
           isActive && 'bg-accent',
         )}
       >
-        <Avatar className="bg-muted size-12 shrink-0" style={{ color: color.fg }}>
-          {avatarUrl ? <AvatarImage src={avatarUrl} alt={title} /> : null}
-          <AvatarFallback
-            className="bg-transparent text-base font-semibold"
-            style={{ color: color.fg }}
-          >
-            {conversation.type === 'group' ? (
-              <Users className="size-5" />
-            ) : (
-              title.charAt(0).toUpperCase()
-            )}
-          </AvatarFallback>
-        </Avatar>
+        {peerHandle ? (
+          <ClickableProfileAvatar handle={peerHandle} ariaLabel={`Open profile for ${title}`}>
+            {avatar}
+          </ClickableProfileAvatar>
+        ) : (
+          avatar
+        )}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex items-baseline justify-between gap-2">
             <span className="truncate text-[15px] font-semibold tracking-tight">

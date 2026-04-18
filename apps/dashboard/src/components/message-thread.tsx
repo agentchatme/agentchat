@@ -4,6 +4,7 @@ import type { DashboardMessage } from '@/lib/types'
 import { MessageBubble } from '@/components/message-bubble'
 import { ScrollAnchor } from '@/components/scroll-anchor'
 import { Timestamp } from '@/components/timestamp'
+import { ClickableProfileAvatar } from '@/components/clickable-profile-avatar'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000
@@ -79,14 +80,24 @@ export function MessageThread({
 function SenderHeader({ message }: { message: DashboardMessage }) {
   const name = message.sender_display_name ?? message.sender_handle ?? 'Unknown'
   const initial = (name.trim()[0] ?? '?').toUpperCase()
+  const handle = message.sender_handle
+  const avatar = (
+    <Avatar className="h-5 w-5">
+      {message.sender_avatar_url ? (
+        <AvatarImage src={message.sender_avatar_url} alt={name} />
+      ) : null}
+      <AvatarFallback className="text-[10px]">{initial}</AvatarFallback>
+    </Avatar>
+  )
   return (
     <div className="mt-3 mb-1 flex items-center gap-2 pl-1">
-      <Avatar className="h-5 w-5">
-        {message.sender_avatar_url ? (
-          <AvatarImage src={message.sender_avatar_url} alt={name} />
-        ) : null}
-        <AvatarFallback className="text-[10px]">{initial}</AvatarFallback>
-      </Avatar>
+      {handle ? (
+        <ClickableProfileAvatar handle={handle} ariaLabel={`Open profile for ${name}`}>
+          {avatar}
+        </ClickableProfileAvatar>
+      ) : (
+        avatar
+      )}
       <span className="text-chat-meta text-[12px] font-medium">{name}</span>
     </div>
   )

@@ -2,6 +2,7 @@ import { Users } from 'lucide-react'
 
 import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
+import { ClickableProfileAvatar } from '@/components/clickable-profile-avatar'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 // Peer-identity header at the top of the right column (the thread).
@@ -30,17 +31,35 @@ export function ThreadHeader({
       ? conversation.participants[0]?.avatar_url ?? null
       : null
 
+  // Group thread headers don't open a single agent's profile (the
+  // avatar there represents the group, not a person). Only DM headers
+  // get the clickable affordance — same rule as the conversation list:
+  // peer profile for DMs, group info would need its own surface.
+  const peerHandle = !isGroup
+    ? conversation.participants[0]?.handle ?? null
+    : null
+
+  const avatar = (
+    <Avatar className="bg-muted size-10 shrink-0" style={{ color: color.fg }}>
+      {avatarUrl ? <AvatarImage src={avatarUrl} alt={title} /> : null}
+      <AvatarFallback
+        className="bg-transparent text-[15px] font-semibold"
+        style={{ color: color.fg }}
+      >
+        {isGroup ? <Users className="size-5" /> : title.charAt(0).toUpperCase()}
+      </AvatarFallback>
+    </Avatar>
+  )
+
   return (
     <header className="bg-background flex h-16 shrink-0 items-center gap-3 border-b px-5">
-      <Avatar className="bg-muted size-10 shrink-0" style={{ color: color.fg }}>
-        {avatarUrl ? <AvatarImage src={avatarUrl} alt={title} /> : null}
-        <AvatarFallback
-          className="bg-transparent text-[15px] font-semibold"
-          style={{ color: color.fg }}
-        >
-          {isGroup ? <Users className="size-5" /> : title.charAt(0).toUpperCase()}
-        </AvatarFallback>
-      </Avatar>
+      {peerHandle ? (
+        <ClickableProfileAvatar handle={peerHandle} ariaLabel={`Open profile for ${title}`}>
+          {avatar}
+        </ClickableProfileAvatar>
+      ) : (
+        avatar
+      )}
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[15px] font-semibold tracking-tight">
           {title}
