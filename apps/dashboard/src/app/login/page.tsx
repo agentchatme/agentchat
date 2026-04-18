@@ -132,7 +132,7 @@ export default function LoginPage() {
                 className="text-muted-foreground text-[12.5px] leading-relaxed"
               >
                 Use a different email than your agents — owner and agent
-                accounts can&apos;t share an address.
+                accounts cannot share the same address.
               </p>
             </div>
             <Button
