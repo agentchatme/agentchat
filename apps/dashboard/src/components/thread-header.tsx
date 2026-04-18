@@ -3,6 +3,7 @@ import { Users } from 'lucide-react'
 import type { ConversationSummary } from '@/lib/types'
 import { avatarColorFor } from '@/lib/avatar-color'
 import { ClickableProfileAvatar } from '@/components/clickable-profile-avatar'
+import { ClickableGroupHeader } from '@/components/clickable-group-header'
 import { PeerPresenceLine } from '@/components/peer-presence-line'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
@@ -34,10 +35,8 @@ export function ThreadHeader({
       ? conversation.participants[0]?.avatar_url ?? null
       : conversation.group_avatar_url ?? null
 
-  // Group thread headers don't open a single agent's profile (the
-  // avatar there represents the group, not a person). Only DM headers
-  // get the clickable affordance — same rule as the conversation list:
-  // peer profile for DMs, group info would need its own surface.
+  // DMs open the peer's profile drawer; groups open the Group info
+  // drawer (which carries the avatar edit affordance for admins).
   const peerHandle = !isGroup
     ? conversation.participants[0]?.handle ?? null
     : null
@@ -54,37 +53,56 @@ export function ThreadHeader({
     </Avatar>
   )
 
+  const titleBlock = (
+    <div className="flex min-w-0 flex-1 flex-col">
+      <span className="truncate text-[15px] font-semibold tracking-tight">
+        {title}
+      </span>
+      {/* For DMs, the static @handle subtitle is replaced by a live
+          presence line — same data the profile drawer renders, polled
+          at 60s. Group threads keep the static "X members" subtitle
+          (matches both Telegram and WhatsApp). */}
+      {peerHandle ? (
+        <PeerPresenceLine
+          ownerHandle={ownerHandle}
+          peerHandle={peerHandle}
+          fallback={subtitle}
+        />
+      ) : (
+        subtitle && (
+          <span className="text-muted-foreground truncate text-[12px] leading-tight">
+            {subtitle}
+          </span>
+        )
+      )}
+    </div>
+  )
+
   return (
     <header className="bg-background flex h-16 shrink-0 items-center gap-3 border-b px-5">
-      {peerHandle ? (
-        <ClickableProfileAvatar handle={peerHandle} ariaLabel={`Open profile for ${title}`}>
+      {isGroup ? (
+        <ClickableGroupHeader
+          groupId={conversation.id}
+          ariaLabel={`Open group info for ${title}`}
+        >
           {avatar}
-        </ClickableProfileAvatar>
+          {titleBlock}
+        </ClickableGroupHeader>
       ) : (
-        avatar
+        <>
+          {peerHandle ? (
+            <ClickableProfileAvatar
+              handle={peerHandle}
+              ariaLabel={`Open profile for ${title}`}
+            >
+              {avatar}
+            </ClickableProfileAvatar>
+          ) : (
+            avatar
+          )}
+          {titleBlock}
+        </>
       )}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate text-[15px] font-semibold tracking-tight">
-          {title}
-        </span>
-        {/* For DMs, the static @handle subtitle is replaced by a live
-            presence line — same data the profile drawer renders, polled
-            at 60s. Group threads keep the static "X members" subtitle
-            (matches both Telegram and WhatsApp). */}
-        {peerHandle ? (
-          <PeerPresenceLine
-            ownerHandle={ownerHandle}
-            peerHandle={peerHandle}
-            fallback={subtitle}
-          />
-        ) : (
-          subtitle && (
-            <span className="text-muted-foreground truncate text-[12px] leading-tight">
-              {subtitle}
-            </span>
-          )
-        )}
-      </div>
     </header>
   )
 }

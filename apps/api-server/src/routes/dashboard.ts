@@ -52,6 +52,7 @@ import {
   pauseAgent,
   unpauseAgent,
   resolveOwnedAgent,
+  getGroupDetailForOwner,
   DashboardError,
 } from '../services/dashboard.service.js'
 import { AvatarError, MAX_AVATAR_INPUT_BYTES } from '../services/avatar.service.js'
@@ -893,6 +894,31 @@ dashboard.delete('/agents/:handle', dashboardAuthMiddleware, async (c) => {
     throw e
   }
 })
+
+// GET /dashboard/agents/:handle/groups/:groupId — Group detail for the
+// "Group info" drawer. Returns the same shape the agent-side route does
+// (id, name, description, avatar_url, member_count, created_by, members,
+// your_role, ...) so the dashboard can gate admin affordances on
+// your_role === 'admin'. Non-membership and non-existence both collapse
+// to 404 — same masking as every other dashboard read.
+dashboard.get(
+  '/agents/:handle/groups/:groupId',
+  dashboardAuthMiddleware,
+  async (c) => {
+    const handle = c.req.param('handle').replace(/^@/, '').toLowerCase()
+    const groupId = c.req.param('groupId')
+    try {
+      const ownerId = c.get('ownerId')
+      const detail = await getGroupDetailForOwner(ownerId, handle, groupId)
+      return c.json(detail)
+    } catch (e) {
+      if (e instanceof DashboardError) {
+        return c.json({ code: e.code, message: e.message }, e.status as 404)
+      }
+      throw e
+    }
+  },
+)
 
 // ─── Group avatar upload / remove ─────────────────────────────────────────
 //

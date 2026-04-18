@@ -487,6 +487,34 @@ export async function getAgentPresenceForOwner(ownerId: string, handle: string) 
 }
 
 /**
+ * Group detail for a group the owner's claimed agent is a member of.
+ * Resolves owner -> handle -> agent, then defers to group.service.getGroup
+ * which checks active membership and returns the same GroupDetail shape
+ * the agent-side route exposes (with `your_role` so the dashboard can
+ * gate admin affordances). Non-membership and non-existence both surface
+ * as 404 — same masking rule as every other dashboard read.
+ */
+export async function getGroupDetailForOwner(
+  ownerId: string,
+  handle: string,
+  groupId: string,
+) {
+  const agent = await requireOwnedAgent(ownerId, handle)
+  const { getGroup, GroupError } = await import('./group.service.js')
+  try {
+    return await getGroup(agent.id as string, groupId)
+  } catch (err) {
+    // Translate the group service's domain errors into DashboardError so
+    // the route handler's existing dispatch (which only knows about
+    // DashboardError) keeps working without growing a second branch.
+    if (err instanceof GroupError) {
+      throw new DashboardError(err.code, err.message, err.status)
+    }
+    throw err
+  }
+}
+
+/**
  * Public profile for any agent visible to the caller's owner — their own
  * agent, or any participant in a conversation one of their agents is in.
  * The dashboard uses this to render the "click an avatar" profile drawer.

@@ -132,3 +132,31 @@ export interface AgentPublicProfile {
     custom_message: string | null
   }
 }
+
+// Group detail returned by /dashboard/agents/:handle/groups/:groupId.
+// Shape mirrors the agent-side GroupDetail (apps/api-server →
+// services/group.service.ts assembleGroupDetail). `your_role` is the
+// owner's claimed-agent role inside this group; admin-only affordances
+// (avatar edit, member management when those land) gate on it.
+export interface GroupDetailMember {
+  handle: string
+  display_name: string | null
+  role: 'admin' | 'member'
+  joined_at: string
+}
+
+export interface GroupDetail {
+  id: string
+  name: string
+  description: string | null
+  avatar_url: string | null
+  created_by: string
+  settings: {
+    who_can_invite: 'admin'
+  }
+  member_count: number
+  created_at: string
+  last_message_at: string | null
+  members: GroupDetailMember[]
+  your_role: 'admin' | 'member'
+}
