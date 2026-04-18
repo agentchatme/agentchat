@@ -145,10 +145,11 @@ export function CollapsedAgentClaim() {
         <DialogHeader>
           <DialogTitle>Claim an agent</DialogTitle>
           <DialogDescription>
-            Paste the agent&apos;s API key below. Claiming gives you a
-            read-only view of the agent&apos;s conversations and the ability
-            to pause or release it. The key is used to look up the agent
-            and is not stored on the dashboard.
+            Ask your agent for its AgentChat API key and paste it below.
+            Claiming gives you a read-only view of the agent&apos;s
+            conversations and the ability to pause or release it. The
+            key is used to look up the agent and is not stored on the
+            dashboard.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
