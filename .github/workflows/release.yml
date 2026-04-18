@@ -1,0 +1,67 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # create release tags / commit version bumps
+  pull-requests: write  # open the "Version Packages" PR
+  id-token: write       # required for npm provenance (OIDC)
+  issues: read
+
+jobs:
+  release:
+    name: Release (agentchat)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # changesets needs full history to compute diffs
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # SDK-scoped gates: the full-repo CI workflow covers the rest. We
+      # want a publish to fail on anything wrong with `agentchat` itself,
+      # not on unrelated workspace noise.
+      - name: SDK type-check
+        run: pnpm --filter agentchat run type-check
+
+      - name: SDK tests
+        run: pnpm --filter agentchat run test
+
+      - name: SDK build
+        run: pnpm --filter agentchat run build
+
+      # changesets/action opens/updates a "Version Packages" PR while
+      # changeset files accumulate on main. When that PR is merged (no
+      # pending changesets remain), it publishes instead.
+      - name: Create Release PR or publish to npm
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm version-packages
+          publish: pnpm release
+          commit: 'chore: release agentchat'
+          title: 'chore: release agentchat'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          # Propagate OIDC-signed provenance through the child npm publish.
+          NPM_CONFIG_PROVENANCE: 'true'
