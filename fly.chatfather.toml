@@ -1,0 +1,43 @@
+app = "agentchat-chatfather"
+primary_region = "sjc"
+
+# This file lives at the repo root (not apps/chatfather/) because flyctl
+# uses the fly.toml's directory as the Docker build context, and the
+# chatfather Dockerfile needs the monorepo root so it can COPY
+# packages/shared/, packages/sdk-typescript/, pnpm-lock.yaml, etc.
+# Deploy with: `flyctl deploy -c fly.chatfather.toml`
+
+[build]
+  dockerfile = "apps/chatfather/Dockerfile"
+
+[processes]
+  web = "node dist/index.js"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+  processes = ["web"]
+
+[deploy]
+  strategy = "rolling"
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8080
+    path = "/healthz"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    processes = ["web"]
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"
