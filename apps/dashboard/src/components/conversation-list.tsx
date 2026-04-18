@@ -188,7 +188,7 @@ function ConversationRow({
   const avatarUrl =
     conversation.type === 'direct'
       ? conversation.participants[0]?.avatar_url ?? null
-      : null
+      : conversation.group_avatar_url ?? null
   // Only DM rows get the clickable peer avatar — a group avatar
   // represents the group, not a person. The wrapper stops click
   // propagation so opening the profile drawer doesn't also navigate

@@ -32,7 +32,7 @@ export function ThreadHeader({
   const avatarUrl =
     conversation.type === 'direct'
       ? conversation.participants[0]?.avatar_url ?? null
-      : null
+      : conversation.group_avatar_url ?? null
 
   // Group thread headers don't open a single agent's profile (the
   // avatar there represents the group, not a person). Only DM headers
