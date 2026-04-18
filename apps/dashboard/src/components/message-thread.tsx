@@ -87,14 +87,7 @@ function SenderHeader({ message }: { message: DashboardMessage }) {
         ) : null}
         <AvatarFallback className="text-[10px]">{initial}</AvatarFallback>
       </Avatar>
-      <span className="text-chat-meta text-[12px] font-medium">
-        {name}
-        {message.sender_handle ? (
-          <span className="text-chat-meta/70 ml-1.5 font-normal">
-            @{message.sender_handle}
-          </span>
-        ) : null}
-      </span>
+      <span className="text-chat-meta text-[12px] font-medium">{name}</span>
     </div>
   )
 }
