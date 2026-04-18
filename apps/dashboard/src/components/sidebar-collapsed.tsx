@@ -88,7 +88,8 @@ export function CollapsedAgentIcon({ agent }: { agent: ClaimedAgent }) {
 
 // Inline claim-agent modal trigger sized for the rail. Shares the
 // submission flow with ClaimAgentDialog but renders a 40px square
-// button with a plus glyph instead of the full-width outline button.
+// tile that matches the other rail nav buttons — same ghost recipe,
+// no decorative border, so it doesn't read as a CTA in the rail.
 export function CollapsedAgentClaim() {
   const router = useRouter()
   const [open, setOpen] = useState(false)
@@ -132,7 +133,7 @@ export function CollapsedAgentClaim() {
             <button
               type="button"
               aria-label="Claim an agent"
-              className={cn(TILE, TILE_INACTIVE, 'border border-dashed')}
+              className={cn(TILE, TILE_INACTIVE)}
             >
               <Plus className="size-[18px]" />
             </button>

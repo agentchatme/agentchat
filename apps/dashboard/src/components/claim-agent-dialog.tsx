@@ -21,6 +21,12 @@ import {
 // Claim-an-agent modal. Replaces the old /agents/claim route — per
 // §3.1.2 this is a modal triggered from the sidebar, not a page.
 //
+// Visually the trigger is a ghost-link row (same recipe as the
+// Discord/Documentation links lower in the sidebar) so it doesn't
+// read as a primary CTA — claiming is a feature, not the headline
+// action of the dashboard. Slack/Notion/Linear all treat sidebar
+// "Add" affordances this way.
+//
 // The input is password-type so it doesn't end up in browser
 // autofill history. On success we navigate to the newly-claimed
 // agent's chat view and refresh the RSC tree so the sidebar picks
@@ -71,10 +77,13 @@ export function ClaimAgentDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" className="w-full">
-          <Plus className="size-4" />
+        <button
+          type="button"
+          className="text-muted-foreground hover:bg-accent hover:text-foreground flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm font-medium transition-colors"
+        >
+          <Plus className="size-[18px]" />
           Claim an agent
-        </Button>
+        </button>
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>
