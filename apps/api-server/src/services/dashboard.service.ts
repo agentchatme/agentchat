@@ -299,15 +299,20 @@ export async function getAgentMessagesForOwner(
   // CONVERSATION_NOT_FOUND both surface as 404 so the wire shape
   // never distinguishes "you don't own this agent" from "conversation
   // doesn't exist for your agent". sender_id is stripped inside the
-  // RPC and replaced with is_own, so nothing in the result needs
-  // further sanitization here.
+  // RPC and replaced with is_own + sender_handle/display_name/avatar_key.
+  // We translate sender_avatar_key → sender_avatar_url here so the raw
+  // storage key never hits the wire (same pattern as contacts/blocks).
   try {
-    return await getAgentMessagesForOwnerRPC({
+    const rows = await getAgentMessagesForOwnerRPC({
       owner_id: ownerId,
       handle,
       conversation_id: conversationId,
       before_seq: beforeSeq,
       limit: MSG_LIMIT,
+    })
+    return rows.map((r) => {
+      const { sender_avatar_key, ...rest } = r
+      return { ...rest, sender_avatar_url: buildAvatarUrl(sender_avatar_key) }
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : ''

@@ -66,6 +66,9 @@ export interface DashboardMessage {
   id: string
   conversation_id: string
   is_own: boolean
+  sender_handle: string | null
+  sender_display_name: string | null
+  sender_avatar_url: string | null
   seq: number
   type: string
   content: Record<string, unknown>

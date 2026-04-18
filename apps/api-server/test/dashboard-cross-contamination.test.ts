@@ -349,13 +349,14 @@ describe('dashboard.service — owner A happy path', () => {
     })
   })
 
-  it('getAgentMessagesForOwner returns RPC rows unchanged — no sender_id, is_own already set', async () => {
-    // The RPC strips sender_id in-SQL and emits is_own (boolean) so the
-    // service can forward its rows directly. This test pins that
-    // contract: the service must NOT re-shape rows. If someone
-    // re-introduces a `.map(...)` here, it will break the recipient-
-    // scoped delivery envelope fields (delivery_id, status, delivered_at,
-    // read_at) that the RPC emits and the dashboard depends on.
+  it('getAgentMessagesForOwner strips sender_avatar_key and surfaces sender_avatar_url; raw sender_id never present', async () => {
+    // The RPC strips sender_id in-SQL and emits is_own plus the sender's
+    // public identity (handle, display_name, avatar_key — all NULL for
+    // is_own rows). The service translates avatar_key → avatar_url
+    // using the same buildAvatarUrl pattern as contacts/blocks, so the
+    // raw storage key never crosses the wire. This test pins both
+    // invariants: sender_id must never appear, and sender_avatar_key
+    // must be replaced with sender_avatar_url.
     const rpcRows = [
       {
         id: 'msg_self',
@@ -367,6 +368,9 @@ describe('dashboard.service — owner A happy path', () => {
         metadata: {},
         created_at: '2026-01-03T00:00:00Z',
         is_own: true,
+        sender_handle: null,
+        sender_display_name: null,
+        sender_avatar_key: null,
         delivery_id: 'del_1',
         status: 'read',
         delivered_at: '2026-01-03T00:00:01Z',
@@ -382,6 +386,9 @@ describe('dashboard.service — owner A happy path', () => {
         metadata: {},
         created_at: '2026-01-03T00:01:00Z',
         is_own: false,
+        sender_handle: 'bob',
+        sender_display_name: 'Bob',
+        sender_avatar_key: 'abc123/deadbeef.webp',
         delivery_id: 'del_2',
         status: 'delivered',
         delivered_at: '2026-01-03T00:01:01Z',
@@ -390,10 +397,18 @@ describe('dashboard.service — owner A happy path', () => {
     ]
     getAgentMessagesForOwnerRPC.mockResolvedValueOnce(rpcRows)
     const result = await getAgentMessagesForOwner(OWNER_A, 'alice', 'conv_ok')
-    expect(result).toEqual(rpcRows)
     for (const m of result) {
-      expect((m as Record<string, unknown>)['sender_id']).toBeUndefined()
+      const rec = m as Record<string, unknown>
+      expect(rec['sender_id']).toBeUndefined()
+      expect(rec['sender_avatar_key']).toBeUndefined()
+      expect('sender_avatar_url' in rec).toBe(true)
     }
+    expect(result[0]!.sender_avatar_url).toBeNull()
+    expect(result[1]!.sender_avatar_url).toBe(
+      'https://test.supabase.co/storage/v1/object/public/avatars/abc123/deadbeef.webp',
+    )
+    expect(result[1]!.sender_handle).toBe('bob')
+    expect(result[1]!.sender_display_name).toBe('Bob')
   })
 
   it('getAgentEventsForOwner strips actor_id/target_id and filters metadata to a whitelist', async () => {

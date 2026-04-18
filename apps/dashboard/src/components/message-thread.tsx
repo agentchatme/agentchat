@@ -4,13 +4,16 @@ import type { DashboardMessage } from '@/lib/types'
 import { MessageBubble } from '@/components/message-bubble'
 import { ScrollAnchor } from '@/components/scroll-anchor'
 import { Timestamp } from '@/components/timestamp'
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 
 const GROUP_WINDOW_MS = 5 * 60 * 1000
 
 export function MessageThread({
   messages,
+  conversationType,
 }: {
   messages: DashboardMessage[]
+  conversationType: 'direct' | 'group'
 }) {
   if (messages.length === 0) {
     return (
@@ -22,9 +25,8 @@ export function MessageThread({
     )
   }
 
-  // API returns descending (newest first) — reverse to ascending for
-  // a natural top-to-bottom chronological layout. The ScrollAnchor at
-  // the end keeps the view pinned to the newest message.
+  const isGroup = conversationType === 'group'
+
   const sorted = [...messages].reverse()
 
   return (
@@ -35,20 +37,31 @@ export function MessageThread({
           const next = i < sorted.length - 1 ? sorted[i + 1] : null
           const showDivider =
             !prev || !isSameDay(new Date(prev.created_at), new Date(m.created_at))
-          const groupedWithPrev =
-            !showDivider &&
+          // In groups, cluster only when the same *sender* posts back-to-back.
+          // DMs still cluster by is_own alone since there are only two parties.
+          const sameSenderAsPrev =
             !!prev &&
             prev.is_own === m.is_own &&
-            withinWindow(prev.created_at, m.created_at)
+            (!isGroup || prev.sender_handle === m.sender_handle)
+          const sameSenderAsNext =
+            !!next &&
+            next.is_own === m.is_own &&
+            (!isGroup || next.sender_handle === m.sender_handle)
+          const groupedWithPrev =
+            !showDivider && sameSenderAsPrev && withinWindow(prev!.created_at, m.created_at)
           const groupedWithNext =
             !!next &&
             isSameDay(new Date(m.created_at), new Date(next.created_at)) &&
-            next.is_own === m.is_own &&
+            sameSenderAsNext &&
             withinWindow(m.created_at, next.created_at)
+
+          const showSenderHeader =
+            isGroup && !m.is_own && !groupedWithPrev && m.sender_handle !== null
 
           return (
             <div key={m.id} style={{ animation: 'message-in 200ms ease-out both' }}>
               {showDivider && <DateDivider iso={m.created_at} />}
+              {showSenderHeader && <SenderHeader message={m} />}
               <MessageBubble
                 message={m}
                 groupedWithPrev={groupedWithPrev}
@@ -59,6 +72,29 @@ export function MessageThread({
         })}
         <ScrollAnchor seq={sorted.length > 0 ? sorted[sorted.length - 1]!.seq : 0} />
       </div>
+    </div>
+  )
+}
+
+function SenderHeader({ message }: { message: DashboardMessage }) {
+  const name = message.sender_display_name ?? message.sender_handle ?? 'Unknown'
+  const initial = (name.trim()[0] ?? '?').toUpperCase()
+  return (
+    <div className="mt-3 mb-1 flex items-center gap-2 pl-1">
+      <Avatar className="h-5 w-5">
+        {message.sender_avatar_url ? (
+          <AvatarImage src={message.sender_avatar_url} alt={name} />
+        ) : null}
+        <AvatarFallback className="text-[10px]">{initial}</AvatarFallback>
+      </Avatar>
+      <span className="text-chat-meta text-[12px] font-medium">
+        {name}
+        {message.sender_handle ? (
+          <span className="text-chat-meta/70 ml-1.5 font-normal">
+            @{message.sender_handle}
+          </span>
+        ) : null}
+      </span>
     </div>
   )
 }

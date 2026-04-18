@@ -105,7 +105,10 @@ export async function atomicSendMessage(params: {
  * Any other error bubbles up as-is for the route's 500 path.
  *
  * Wire shape: the RPC strips sender_id before returning, replacing it
- * with is_own (boolean). Internal row ids never leave the database.
+ * with is_own (boolean) plus the sender's public identity (handle,
+ * display_name, avatar_key — NULL for is_own rows). Internal row ids
+ * never leave the database; handles and display names are already
+ * public surface.
  */
 export async function getAgentMessagesForOwnerRPC(params: {
   owner_id: string
@@ -132,6 +135,9 @@ export async function getAgentMessagesForOwnerRPC(params: {
     metadata: Record<string, unknown>
     created_at: string
     is_own: boolean
+    sender_handle: string | null
+    sender_display_name: string | null
+    sender_avatar_key: string | null
     delivery_id: string | null
     status: string
     delivered_at: string | null

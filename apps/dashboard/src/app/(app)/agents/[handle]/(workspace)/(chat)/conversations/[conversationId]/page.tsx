@@ -37,7 +37,10 @@ export default async function AgentConversationPage({
   return (
     <>
       {active && <ThreadHeader conversation={active} />}
-      <MessageThread messages={messages} />
+      <MessageThread
+        messages={messages}
+        conversationType={active?.type ?? 'direct'}
+      />
     </>
   )
 }
