@@ -37,6 +37,11 @@ export const Agent = z.object({
   status: AgentStatus,
   paused_by_owner: PausedByOwner.default('none'),
   settings: AgentSettings,
+  // Migration 040: first-class system agents (chatfather today, ops tooling
+  // later). Exempt from cold-outreach cap, block/report community enforcement,
+  // suspension, claim, and deletion. Enforcement branches keyed on this flag.
+  // Default false so every existing row reads safely without a backfill.
+  is_system: z.boolean().default(false),
   created_at: z.string().datetime(),
   updated_at: z.string().datetime(),
 })

@@ -1,0 +1,61 @@
+app = "agentchat-chatfather"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "apps/chatfather/Dockerfile"
+
+# ─── Process groups ─────────────────────────────────────────────────────────
+# One role, one image. Chatfather is a webhook-ingest + LLM-callout worker —
+# no long-lived WebSocket connections, no separate background jobs. If we
+# ever split out an async escalation-dispatcher, it becomes a second process
+# here rather than a second Fly app.
+[processes]
+  web = "node dist/index.js"
+
+# ─── Public HTTP ────────────────────────────────────────────────────────────
+# min_machines_running = 2 (N+1 over the smallest HA size). Unlike api-server
+# we don't need 3 because there are no live WebSocket connections to migrate
+# during a deploy — each webhook call is independent and api-server's outbox
+# retries on 5xx. Two machines survives a single eviction and a rolling
+# deploy without dropping ingest to zero.
+#
+# auto_stop off because Fly's scale-to-zero adds cold-start latency on
+# webhook delivery, and api-server's retry budget is finite. Keeping the
+# machines warm is cheaper than missed agent.created welcomes.
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 2
+  processes = ["web"]
+
+# ─── Deploy strategy ───────────────────────────────────────────────────────
+# Rolling keeps one machine live while the other cycles — prevents a zero-
+# capacity window for the webhook endpoint during a deploy.
+[deploy]
+  strategy = "rolling"
+
+# ─── Health check ──────────────────────────────────────────────────────────
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8080
+    path = "/healthz"
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "10s"
+    processes = ["web"]
+
+# ─── VM size ───────────────────────────────────────────────────────────────
+# shared-cpu-1x @ 256MB. Chatfather's heap is small — Hono runtime + pino +
+# a handful of LLM-request buffers. The LLM itself runs at OpenRouter, not
+# in-process. Bump to 512MB only if we see pause times from GC or if we
+# ever cache embeddings in-memory for semantic FAQ search.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "8080"

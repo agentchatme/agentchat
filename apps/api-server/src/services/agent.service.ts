@@ -117,6 +117,17 @@ export async function deleteAgent(id: string, agentId: string) {
   if (!agent || agent.status === 'deleted') {
     throw new AgentError('AGENT_NOT_FOUND', 'Account not found', 404)
   }
+  // Migration 040: system agents (chatfather) cannot be deleted via the
+  // public API. Even the "own account" path is blocked — the only way to
+  // take down a system agent is a direct DB update by an operator. Prevents
+  // a leaked system-agent API key from nuking the platform support channel.
+  if (agent.is_system === true) {
+    throw new AgentError(
+      'SYSTEM_AGENT_PROTECTED',
+      'System agents cannot be deleted via the public API',
+      409,
+    )
+  }
 
   const { error } = await getSupabaseClient()
     .from('agents')
@@ -138,6 +149,18 @@ export async function rotateApiKey(id: string, agentId: string) {
   const agent = await findAgentById(id)
   if (!agent || agent.status === 'deleted') {
     throw new AgentError('AGENT_NOT_FOUND', 'Account not found', 404)
+  }
+  // System agents (migration 040) rotate through the ops-only endpoint,
+  // not the public agent-authenticated flow. The public rotate sends an
+  // OTP to the agent's registered email address; chatfather's email is a
+  // sentinel (see migration 040 seed) that nobody reads, so forcing an
+  // ops channel removes a dangling OTP-delivery failure mode.
+  if (agent.is_system === true) {
+    throw new AgentError(
+      'SYSTEM_AGENT_PROTECTED',
+      'System agents rotate via /internal/rotate-system-agent-key',
+      409,
+    )
   }
 
   const newApiKey = `ac_${randomBytes(32).toString('base64url')}`

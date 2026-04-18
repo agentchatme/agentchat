@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { generateId } from '../lib/id.js'
 import {
   createWebhook,
+  findAgentById,
   getWebhooksByAgent,
   getWebhookById,
   deleteWebhook,
@@ -22,7 +23,31 @@ export class WebhookError extends Error {
   }
 }
 
+// Platform-fan-out events that only system agents (migration 040) are allowed
+// to subscribe to. A regular agent listing any of these in its webhook's
+// `events` array is rejected with 403 at create time. Keeping the gate here
+// means the outbox / worker pipeline never has to ask "should this agent
+// have received this event?" — by the time a delivery row exists, the
+// authorization decision has already been made.
+const SYSTEM_ONLY_WEBHOOK_EVENTS: ReadonlySet<WebhookEvent> = new Set(['agent.created'])
+
 export async function registerWebhook(agentId: string, url: string, events: WebhookEvent[]) {
+  // Reject platform-fan-out events if the caller is not a system agent.
+  // Done before the 5-webhook cap check so a misconfigured subscription
+  // surfaces the real reason (authorization) rather than a red-herring
+  // "limit reached" if the agent happens to be at the cap.
+  const systemOnlyRequested = events.filter((e) => SYSTEM_ONLY_WEBHOOK_EVENTS.has(e))
+  if (systemOnlyRequested.length > 0) {
+    const caller = await findAgentById(agentId)
+    if (!caller || caller.is_system !== true) {
+      throw new WebhookError(
+        'FORBIDDEN',
+        `Events reserved for platform agents: ${systemOnlyRequested.join(', ')}`,
+        403,
+      )
+    }
+  }
+
   // Limit to 5 webhooks per agent
   const existing = await getWebhooksByAgent(agentId)
   if (existing.length >= 5) {

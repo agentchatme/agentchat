@@ -24,6 +24,14 @@ export const ErrorCode = {
   INVALID_API_KEY: 'INVALID_API_KEY',
   ALREADY_CLAIMED: 'ALREADY_CLAIMED',
   CLAIM_NOT_FOUND: 'CLAIM_NOT_FOUND',
+  // System-agent class exemptions (migration 040). Returned when a caller
+  // tries to block/report/delete/claim chatfather or any future system
+  // agent. Surfaced as 409 — the action is not forbidden by authorization,
+  // it's structurally impossible on a system-class target.
+  SYSTEM_AGENT_PROTECTED: 'SYSTEM_AGENT_PROTECTED',
+  // Internal-only endpoints (e.g. /internal/rotate-system-agent-key) reject
+  // with this when the ops bearer token is missing, malformed, or stale.
+  OPS_AUTH_REQUIRED: 'OPS_AUTH_REQUIRED',
 } as const
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode]

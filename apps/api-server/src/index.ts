@@ -19,6 +19,7 @@ import { attachmentRoutes } from './routes/attachments.js'
 import { metricsRoutes } from './routes/metrics.js'
 import { openapiRoutes } from './routes/openapi.js'
 import { dashboardRoutes } from './routes/dashboard.js'
+import { internalRoutes } from './routes/internal.js'
 import { errorHandler } from './middleware/error-handler.js'
 import { requestLogger } from './middleware/logger.js'
 import { authenticateWs, handleWsConnection, stopAllHeartbeats } from './ws/handler.js'
@@ -406,6 +407,11 @@ app.route('/v1/attachments', attachmentRoutes)
 // it. The METRICS_TOKEN env var still gates access in case the prefix
 // rule isn't in place.
 app.route('/internal/metrics', metricsRoutes)
+// Ops admin endpoints (system-agent key rotation). Protected by
+// OPS_ADMIN_TOKEN with a separate bearer check — see internal.ts. Defaults
+// to 503 if the env var is unset so a misconfigured deploy can't silently
+// expose this surface.
+app.route('/internal', internalRoutes)
 app.route('/v1/openapi.json', openapiRoutes)
 app.route('/dashboard', dashboardRoutes)
 

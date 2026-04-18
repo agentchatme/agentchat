@@ -36,6 +36,15 @@ const envSchema = z.object({
   // anonymously. When set, every scrape must send `Authorization: Bearer
   // <METRICS_TOKEN>` or get a 401.
   METRICS_TOKEN: z.string().optional(),
+  // Bearer token required for /internal/rotate-system-agent-key (migration
+  // 040). Separate from METRICS_TOKEN because the rotation endpoint has a
+  // much higher blast radius — a leaked rotation credential can lock
+  // chatfather out of its own account. Rotation is intended to run once
+  // on first deploy and on each key rotation window; the token should
+  // live in a sealed secrets store (Fly secrets, 1Password, etc.) and
+  // NOT be shared with Grafana/Prometheus credentials.
+  // Unset = the endpoint is 503, i.e. disabled. Do NOT default to public.
+  OPS_ADMIN_TOKEN: z.string().min(32).optional(),
 })
 
 function loadEnv() {

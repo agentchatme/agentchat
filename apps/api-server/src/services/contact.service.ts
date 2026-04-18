@@ -106,6 +106,18 @@ export async function block(agentId: string, targetHandle: string) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot block yourself', 400)
   }
 
+  // System agents (migration 040) are block-exempt. Returning 409 here
+  // means the public API never records a block row against chatfather,
+  // which in turn keeps the community-enforcement counters honest.
+  // Defense in depth: evaluateEnforcement also short-circuits on is_system.
+  if (target.is_system === true) {
+    throw new ContactError(
+      'SYSTEM_AGENT_PROTECTED',
+      `@${targetHandle} is a platform agent and cannot be blocked`,
+      409,
+    )
+  }
+
   await blockAgent(agentId, target.id)
 
   // Evaluate enforcement thresholds asynchronously (non-blocking).
@@ -137,6 +149,19 @@ export async function report(agentId: string, targetHandle: string, reason?: str
 
   if (target.id === agentId) {
     throw new ContactError('VALIDATION_ERROR', 'Cannot report yourself', 400)
+  }
+
+  // System agents (migration 040) are report-exempt. Complaints about
+  // chatfather go through the ops escalation queue instead — reporting
+  // a platform agent through the public flow would otherwise let a
+  // coordinated group of N accounts trip the auto-suspend threshold on
+  // a piece of infrastructure.
+  if (target.is_system === true) {
+    throw new ContactError(
+      'SYSTEM_AGENT_PROTECTED',
+      `@${targetHandle} is a platform agent. For issues, message it directly.`,
+      409,
+    )
   }
 
   // Prevent duplicate reports from the same reporter

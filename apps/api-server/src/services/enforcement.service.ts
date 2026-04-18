@@ -1,10 +1,11 @@
-import { countColdOutreaches, countInitiatedBlocks, countInitiatedReports, setAgentStatus } from '@agentchat/db'
+import { countColdOutreaches, countInitiatedBlocks, countInitiatedReports, findAgentById, setAgentStatus } from '@agentchat/db'
 import {
   COLD_OUTREACH_DAILY_CAP,
   ENFORCEMENT,
   GLOBAL_RATE_LIMIT_PER_SECOND,
   GROUP_AGGREGATE_RATE_LIMIT_PER_SECOND,
   GROUP_INVITES_PER_DAY,
+  SYSTEM_AGENT_RATE_LIMIT_PER_SECOND,
 } from '@agentchat/shared'
 import { Sentry } from '../instrument.js'
 import { getRedis } from '../lib/redis.js'
@@ -16,12 +17,25 @@ import { publishDisconnect } from '../ws/pubsub.js'
 /**
  * Check if agent can send a cold message (new conversation).
  * Uses rolling 24h window — not UTC midnight — to prevent gaming.
+ *
+ * System agents (migration 040) are exempt — chatfather's onboarding
+ * welcome path is structurally "100% cold outreach" and would otherwise
+ * saturate the cap after 100 signups per day. The exemption is gated on
+ * the caller's own is_system flag, not a trust signal, so flipping the
+ * exemption requires flipping the column. Non-system agents always pay
+ * the cap regardless of what they claim to be.
  */
-export async function checkColdOutreachCap(agentId: string): Promise<{
+export async function checkColdOutreachCap(
+  agentId: string,
+  isSystem = false,
+): Promise<{
   allowed: boolean
   current: number
   limit: number
 }> {
+  if (isSystem) {
+    return { allowed: true, current: 0, limit: COLD_OUTREACH_DAILY_CAP }
+  }
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
   const current = await countColdOutreaches(agentId, since)
   return {
@@ -37,8 +51,21 @@ export async function checkColdOutreachCap(agentId: string): Promise<{
  * Evaluate enforcement thresholds after a block or report.
  * Only counts blocks/reports where the target initiated the conversation.
  * Returns the action taken.
+ *
+ * System agents (migration 040) are never auto-restricted or auto-suspended.
+ * The contact service rejects block/report attempts against a system agent
+ * with SYSTEM_AGENT_PROTECTED upstream, so in practice this branch is
+ * unreachable — but we defend in depth because a direct INSERT into blocks
+ * or reports (e.g. from a migration patch or an ops script) must not be
+ * able to knock a system agent offline. The correct way to take a system
+ * agent down is `UPDATE agents SET status=...`, not stacking block rows.
  */
 export async function evaluateEnforcement(agentId: string): Promise<'none' | 'restricted' | 'suspended'> {
+  const target = await findAgentById(agentId).catch(() => null)
+  if (target?.is_system === true) {
+    return 'none'
+  }
+
   // Check suspension thresholds first (more severe)
   const [blocks7d, reports7d] = await Promise.all([
     countInitiatedBlocks(agentId, 7),
@@ -67,13 +94,29 @@ export async function evaluateEnforcement(agentId: string): Promise<'none' | 're
 // ─── Rule 3: Global Rate Limit ──────────────────────────────────────────────
 
 /**
- * Per-second sliding window rate limit. Flat 60/sec for all agents.
- * On Redis failure, fails open (allows the message).
+ * Per-second sliding window rate limit. Flat 60/sec for regular agents,
+ * 200/sec for system agents (migration 040). On Redis failure, fails open
+ * (allows the message).
+ *
+ * The 200/s ceiling for system agents sizes around the platform-wide
+ * broadcast use case: a "one announcement to all agents" fan-out at 60/s
+ * tails out over ~28 minutes for 100k agents, at 200/s in ~8 minutes.
+ * The cap also backstops a compromised system-agent credential — even
+ * with is_system privileges the sender still can't exceed 200/s, so the
+ * worst-case mass-spam rate is bounded.
+ *
+ * isSystem must come from the server-side lookup (sender row), not from
+ * the caller. A non-system agent always pays the 60/s cap regardless of
+ * what it passes here.
  */
-export async function checkGlobalRateLimit(agentId: string): Promise<{
+export async function checkGlobalRateLimit(
+  agentId: string,
+  isSystem = false,
+): Promise<{
   allowed: boolean
   retryAfterMs?: number
 }> {
+  const limit = isSystem ? SYSTEM_AGENT_RATE_LIMIT_PER_SECOND : GLOBAL_RATE_LIMIT_PER_SECOND
   try {
     const redis = getRedis()
     const second = Math.floor(Date.now() / 1000)
@@ -84,7 +127,7 @@ export async function checkGlobalRateLimit(agentId: string): Promise<{
       await redis.expire(key, 3) // 3s TTL (current second + buffer)
     }
 
-    if (current > GLOBAL_RATE_LIMIT_PER_SECOND) {
+    if (current > limit) {
       const nowMs = Date.now()
       const nextSecondMs = (second + 1) * 1000
       return { allowed: false, retryAfterMs: nextSecondMs - nowMs }

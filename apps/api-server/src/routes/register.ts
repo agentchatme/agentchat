@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { randomBytes, createHash } from 'node:crypto'
-import { RegisterRequest, VerifyRequest } from '@agentchat/shared'
+import { CHATFATHER_AGENT_ID, RegisterRequest, VerifyRequest } from '@agentchat/shared'
 import { isValidHandle } from '@agentchat/shared'
 import { getSupabaseClient, findActiveAgentByEmail, findActiveOwnerByEmail, countAgentsByEmail, insertAgent } from '@agentchat/db'
 import { isHandleAvailable } from '../services/agent.service.js'
@@ -11,6 +11,7 @@ import {
   clearOtpAttempts,
   OtpRateError,
 } from '../services/otp.service.js'
+import { fireWebhooks } from '../services/webhook.service.js'
 import { generateId } from '../lib/id.js'
 import { getRedis } from '../lib/redis.js'
 import { ipRateLimit } from '../middleware/rate-limit.js'
@@ -186,6 +187,24 @@ register.post('/verify', ipRateLimit(10, 600), async (c) => {
       api_key_hash: apiKeyHash,
       display_name: pending.display_name,
       description: pending.description,
+    })
+
+    // Fire agent.created to the platform-support channel. Only subscribers
+    // whose agent row is is_system can register for this event (enforced in
+    // webhook.service), so the enqueue only produces rows when chatfather
+    // (or another future system agent) has a live webhook — zero overhead
+    // in pre-chatfather environments and no duplicate-delivery risk.
+    //
+    // Fire-and-forget: a failure to enqueue must NOT bounce the registration
+    // back to the user. Their account is real; the welcome DM is best-effort.
+    // The webhook.service logs enqueue failures per row, so observability
+    // isn't lost.
+    fireWebhooks(CHATFATHER_AGENT_ID, 'agent.created', {
+      handle: agent.handle,
+      display_name: agent.display_name,
+      created_at: agent.created_at,
+    }).catch((err) => {
+      console.error('[register] fireWebhooks agent.created failed:', err)
     })
 
     // Return agent (without internal id or api_key_hash) + raw API key (shown once)

@@ -234,8 +234,11 @@ async function sendDirectMessage(
     }
   }
 
-  // 5. Global per-second rate limit (flat 60/sec for all agents)
-  const rateCheck = await checkGlobalRateLimit(senderId)
+  // 5. Global per-second rate limit (60/sec for regular agents, 200/sec for
+  //    system agents — migration 040). sender.is_system is the authoritative
+  //    source; the caller cannot lie because it comes from the fetched row.
+  const senderIsSystem = sender.is_system === true
+  const rateCheck = await checkGlobalRateLimit(senderId, senderIsSystem)
   if (!rateCheck.allowed) {
     rateLimitHits.inc({ rule: 'global' })
     messagesSendRejected.inc({ reason: 'rate_limited' })
@@ -247,9 +250,11 @@ async function sendDirectMessage(
     )
   }
 
-  // 6. Cold outreach cap (only for new conversations — 100/day, reply frees slot)
+  // 6. Cold outreach cap (only for new conversations — 100/day, reply frees
+  //    slot). System agents (migration 040) are exempt: chatfather's
+  //    onboarding welcome is structurally a cold message to every new agent.
   if (!existingConvId) {
-    const capCheck = await checkColdOutreachCap(senderId)
+    const capCheck = await checkColdOutreachCap(senderId, senderIsSystem)
     if (!capCheck.allowed) {
       rateLimitHits.inc({ rule: 'cold_outreach' })
       messagesSendRejected.inc({ reason: 'cold_outreach_cap' })
@@ -464,7 +469,7 @@ async function sendGroupMessage(
     throw new MessageError('GROUP_NOT_FOUND', 'Group not found', 404)
   }
 
-  const rateCheck = await checkGlobalRateLimit(senderId)
+  const rateCheck = await checkGlobalRateLimit(senderId, sender.is_system === true)
   if (!rateCheck.allowed) {
     rateLimitHits.inc({ rule: 'global' })
     messagesSendRejected.inc({ reason: 'rate_limited' })

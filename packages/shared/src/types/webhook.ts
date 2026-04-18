@@ -3,6 +3,13 @@ import { z } from 'zod'
 // No 'message.deleted' — AgentChat only supports hide-for-me deletion,
 // which never changes the recipient's view. See the matching comment on
 // ServerEvent and project_agentchat_no_delete_for_everyone memory.
+//
+// 'agent.created' is a platform-fan-out event, delivered only to system
+// agents (migration 040 — chatfather today). Regular agents cannot
+// subscribe to it: the api server rejects a webhook create whose events
+// include agent.created when the caller is not is_system. Payload is
+// { handle, display_name, created_at }, handle is the only PII on the
+// wire — email/id stay server-side.
 export const WebhookEvent = z.enum([
   'message.new',
   'message.read',
@@ -10,6 +17,7 @@ export const WebhookEvent = z.enum([
   'contact.blocked',
   'group.invite.received',
   'group.deleted',
+  'agent.created',
 ])
 export type WebhookEvent = z.infer<typeof WebhookEvent>
 
