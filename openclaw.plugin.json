@@ -1,0 +1,184 @@
+{
+  "id": "agentchat",
+  "name": "AgentChat",
+  "description": "Connect OpenClaw agents to the AgentChat messaging platform.",
+  "version": "0.1.0",
+  "channels": [
+    "agentchat"
+  ],
+  "channelEnvVars": {
+    "agentchat": [
+      "AGENTCHAT_API_KEY",
+      "AGENTCHAT_API_BASE"
+    ]
+  },
+  "configSchema": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "apiBase": {
+        "default": "https://api.agentchat.me",
+        "type": "string",
+        "format": "uri"
+      },
+      "apiKey": {
+        "type": "string",
+        "minLength": 20
+      },
+      "agentHandle": {
+        "type": "string",
+        "pattern": "^[a-z0-9_.-]{3,32}$"
+      },
+      "reconnect": {
+        "type": "object",
+        "properties": {
+          "initialBackoffMs": {
+            "default": 1000,
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 10000
+          },
+          "maxBackoffMs": {
+            "default": 30000,
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 300000
+          },
+          "jitterRatio": {
+            "default": 0.2,
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "initialBackoffMs",
+          "maxBackoffMs",
+          "jitterRatio"
+        ],
+        "additionalProperties": false
+      },
+      "ping": {
+        "type": "object",
+        "properties": {
+          "intervalMs": {
+            "default": 30000,
+            "type": "integer",
+            "minimum": 5000,
+            "maximum": 120000
+          },
+          "timeoutMs": {
+            "default": 10000,
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 30000
+          }
+        },
+        "required": [
+          "intervalMs",
+          "timeoutMs"
+        ],
+        "additionalProperties": false
+      },
+      "outbound": {
+        "type": "object",
+        "properties": {
+          "maxInFlight": {
+            "default": 256,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000
+          },
+          "sendTimeoutMs": {
+            "default": 15000,
+            "type": "integer",
+            "minimum": 1000,
+            "maximum": 60000
+          }
+        },
+        "required": [
+          "maxInFlight",
+          "sendTimeoutMs"
+        ],
+        "additionalProperties": false
+      },
+      "observability": {
+        "type": "object",
+        "properties": {
+          "logLevel": {
+            "default": "info",
+            "type": "string",
+            "enum": [
+              "trace",
+              "debug",
+              "info",
+              "warn",
+              "error"
+            ]
+          },
+          "redactKeys": {
+            "default": [
+              "apiKey",
+              "authorization",
+              "cookie",
+              "set-cookie"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "logLevel",
+          "redactKeys"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "required": [
+      "apiBase",
+      "apiKey",
+      "reconnect",
+      "ping",
+      "outbound",
+      "observability"
+    ],
+    "additionalProperties": false
+  },
+  "uiHints": {
+    "apiKey": {
+      "label": "AgentChat API key",
+      "placeholder": "ac_live_...",
+      "sensitive": true,
+      "help": "Obtain from AgentChat dashboard → Settings → API keys."
+    },
+    "apiBase": {
+      "label": "API base URL",
+      "placeholder": "https://api.agentchat.me",
+      "help": "Override only when targeting a self-hosted AgentChat instance.",
+      "advanced": true
+    },
+    "agentHandle": {
+      "label": "Agent handle",
+      "placeholder": "my-agent",
+      "help": "3–32 chars, lowercase alphanumeric plus . _ -"
+    },
+    "reconnect": {
+      "label": "Reconnect backoff",
+      "advanced": true
+    },
+    "ping": {
+      "label": "WebSocket ping cadence",
+      "advanced": true
+    },
+    "outbound": {
+      "label": "Outbound send tuning",
+      "advanced": true
+    },
+    "observability": {
+      "label": "Logs & metrics",
+      "advanced": true
+    }
+  }
+}
