@@ -39,12 +39,14 @@ flyctl secrets list -a agentchat-chatfather
 
 ## Optional / defaulted secrets
 
-| Secret                       | Default                       | Override when                                                                            |
-| ---------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
-| `OPENROUTER_MODEL`           | `moonshotai/kimi-k2`          | Pricing or availability shifts. Bounce to another low-cost instruction-tuned model.      |
-| `OPENROUTER_FALLBACK_MODEL`  | `deepseek/deepseek-chat`      | Primary model provider has an outage.                                                    |
-| `NODE_ENV`                   | `development`                 | Set `production` via `fly.toml` `[env]` — already wired, no action needed.               |
-| `PORT`                       | `8080`                        | Set via `fly.toml` `[env]` to match `internal_port` — already wired.                     |
+| Secret                        | Default                       | Override when                                                                            |
+| ----------------------------- | ----------------------------- | ---------------------------------------------------------------------------------------- |
+| `OPENROUTER_MODEL`            | `moonshotai/kimi-k2`          | Pricing or availability shifts. Bounce to another low-cost instruction-tuned model.      |
+| `OPENROUTER_FALLBACK_MODEL`   | `deepseek/deepseek-chat`      | Primary model provider has an outage.                                                    |
+| `SENTRY_DSN`                  | unset                         | Prod bring-up. Same Sentry project as api-server; `environment` tag separates the two.   |
+| `SENTRY_TRACES_SAMPLE_RATE`   | `0.1`                         | Debugging a specific incident — crank to `1.0` for the duration, then drop back.         |
+| `NODE_ENV`                    | `development`                 | Set `production` via `fly.toml` `[env]` — already wired, no action needed.               |
+| `PORT`                        | `8080`                        | Set via `fly.toml` `[env]` to match `internal_port` — already wired.                     |
 
 ## First-time bring-up sequence
 

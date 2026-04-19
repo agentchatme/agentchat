@@ -58,6 +58,16 @@ const envSchema = z.object({
   // insert. Do NOT proxy this key to the LLM or surface it in responses.
   SUPABASE_URL: z.string().url(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+
+  // ─── Sentry (optional — error reporting) ────────────────────────────
+  // When unset, src/instrument.ts skips init and Sentry.captureException
+  // is a noop, so leaving SENTRY_DSN empty in dev is fine. In prod we
+  // set it via Fly secrets to the same project as api-server with a
+  // distinct environment tag (chatfather vs api). If the DSN is malformed
+  // the SDK logs and becomes a noop rather than crashing the process —
+  // we don't want a bad DSN to take the service down.
+  SENTRY_DSN: z.string().optional(),
+  SENTRY_TRACES_SAMPLE_RATE: z.coerce.number().min(0).max(1).optional(),
 })
 
 function loadEnv() {

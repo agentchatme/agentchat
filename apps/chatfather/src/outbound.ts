@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { AgentChatClient, type SendMessageResult } from 'agentchat'
 import { env } from './env.js'
+import { Sentry } from './instrument.js'
 import { logger } from './lib/logger.js'
 
 // ─── Outbound SDK singleton ────────────────────────────────────────────────
@@ -100,6 +101,13 @@ export async function sendReply(
       { err, recipient: recipientHandle, client_msg_id: clientMsgId },
       'reply_send_failed',
     )
+    // Reply failures mean the user is sitting in silence — page operators
+    // so we catch api-key revocations, outages, or SDK bugs fast. The
+    // caller re-throws this anyway, but top-level dispatch swallows it
+    // to keep webhook 200s, so Sentry here is the only real signal.
+    Sentry.captureException(err, {
+      tags: { failure: 'reply_send', recipient: recipientHandle },
+    })
     throw err
   }
 }

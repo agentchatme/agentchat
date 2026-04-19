@@ -1,6 +1,7 @@
 import type { Context } from 'hono'
 import { WebhookPayload, type WebhookEvent } from '@agentchat/shared'
 import { env } from './env.js'
+import { Sentry } from './instrument.js'
 import { getRedis } from './lib/redis.js'
 import { logger } from './lib/logger.js'
 import { verifyWebhookSignature } from './lib/verify.js'
@@ -160,6 +161,12 @@ export async function handleWebhook(c: Context): Promise<Response> {
       { err, event, delivery_id: deliveryId },
       'webhook_dispatch_failed',
     )
+    // Tag the error with event + delivery so it's grep-able in Sentry.
+    // We don't attach the raw data blob — it may contain user message
+    // content and Sentry is configured sendDefaultPii=false for a reason.
+    Sentry.captureException(err, {
+      tags: { event, delivery_id: deliveryId },
+    })
     // Intentional: still 200. See comment above.
   }
 
@@ -360,6 +367,11 @@ async function processEscalation(
     })
   } catch (err) {
     logger.error({ err, sender }, 'escalation_create_failed')
+    // DB write failures are user-visible (ack is suppressed). Capture so
+    // we notice Supabase outages or schema drift before users complain.
+    Sentry.captureException(err, {
+      tags: { failure: 'escalation_create', sender },
+    })
     await sendReply(
       sender,
       `I hit an error recording that report — please try again in a minute. If it keeps failing, reply with "urgent" and I'll flag it for the on-call human.`,
