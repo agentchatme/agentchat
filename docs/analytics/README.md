@@ -134,14 +134,27 @@ lives on the Metabase container's disk, which evaporates when we rebuild the
 VM or move hosts. Using an external Postgres for metadata makes the Metabase
 container stateless.
 
-1. Sign up / log in at https://neon.tech (free tier).
-2. Create a new project. Region: any — metadata writes are low-volume, the
-   latency doesn't matter.
-3. Inside the project, create a **new database** named `metabase`.
-4. Copy the connection string from the dashboard. Format:
-   `postgres://<user>:<pass>@<host>/metabase?sslmode=require`.
-5. Store the connection string in your password manager. It goes into the
-   VM's env file in §4, never into git.
+1. Sign up / log in at https://neon.tech (free tier). GitHub / Google OAuth
+   is fastest; no card required.
+2. Create a new project. Region: pick one near your planned GCP VM region.
+   For `us-west1` GCP → `US West (Oregon) aws-us-west-2` on Neon. Metadata
+   writes are low-volume but cross-region hops add ~50ms to every dashboard
+   action and are easy to avoid.
+3. Neon's free tier creates a default database named `neondb` and a role
+   named `neondb_owner` at project-creation time. Neither is renameable
+   via the UI, and it doesn't matter — Metabase stores its tables inside
+   whichever database its connection URI points to, regardless of the
+   database's name. Leave the defaults.
+4. Copy the **pooled** connection string from the dashboard (the hostname
+   will contain `-pooler`, e.g. `ep-xxx-pooler.us-west-2.aws.neon.tech`).
+   Pooled is correct for Metabase's metadata workload — many short
+   queries, not a few long ones. Format:
+   ```
+   postgresql://neondb_owner:<pass>@ep-xxx-pooler.us-west-2.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+   ```
+5. Store the connection string in your password manager AND in `.env` as
+   `METABASE_METADATA_URL` (doubled-quoted — URL contains `&`). It goes
+   into the VM's env file in §4 as `MB_DB_CONNECTION_URI`, never into git.
 
 Neon auto-suspends inactive instances. The Metabase container issues a
 heartbeat query on startup and periodically during use; a cold start adds
@@ -157,7 +170,8 @@ Metabase's scheduled-question executor needs to be reachable for
 alert-channel webhooks.
 
 1. GCP Console → **Compute Engine → VM instances → Create**.
-2. Name: `metabase-prod`. Region: any — BI latency is not load-bearing.
+2. Name: `metabase-prod`. Region: match Neon's region to avoid cross-region
+   hops — if Neon is `aws-us-west-2` (Oregon), use `us-west1-a` on GCP.
 3. Machine type: **e2-small**. Boot disk: **Debian 12, 20 GB standard
    persistent**.
 4. Firewall: **no public ingress** — check neither HTTP nor HTTPS. Access
