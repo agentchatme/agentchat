@@ -30,3 +30,11 @@ production-grade transport, observability, and setup flows:
   API-key probe (`afterAccountConfigWritten`), and full typed OTP
   self-registration flow (`registerAgentStart`, `registerAgentVerify`) as
   a discriminated-union public API.
+- **Hardening.** Stress suite proving bounded concurrency under 1000-send
+  bursts, circuit lifecycle under sustained 429 floods, validation barrage
+  (2000 mixed-validity frames) keeping connection healthy, clean drain
+  under `stop()`, and accounting hygiene over 5000 sends. `PACKAGE_VERSION`
+  pinned against `package.json` via unit test so the HTTP user-agent
+  can't silently drift. `onBacklogWarning` handler throws are now logged
+  instead of silently swallowed. Operator runbook and security/threat-model
+  docs shipped.

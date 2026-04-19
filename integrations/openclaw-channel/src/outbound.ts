@@ -32,6 +32,7 @@ import type { MetricsRecorder } from './metrics.js'
 import { CircuitBreaker, retryWithPolicy, type CircuitBreakerOptions, type RetryPolicy } from './retry.js'
 import type { AgentchatChannelConfig } from './config-schema.js'
 import type { UnixMillis } from './types.js'
+import { PACKAGE_VERSION } from './version.js'
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -221,7 +222,7 @@ export class OutboundAdapter {
     const headers: Record<string, string> = {
       'authorization': `Bearer ${this.config.apiKey}`,
       'content-type': 'application/json',
-      'user-agent': `agentchat-openclaw-channel/0.1.0 (+attempt=${attempt})`,
+      'user-agent': `agentchat-openclaw-channel/${PACKAGE_VERSION} (+attempt=${attempt})`,
     }
 
     let res: Response
@@ -258,8 +259,13 @@ export class OutboundAdapter {
       if (backlogWarning && this.onBacklogWarning) {
         try {
           this.onBacklogWarning(backlogWarning)
-        } catch {
-          /* handler errors must not break send */
+        } catch (err) {
+          // Handler errors must not break send, but silent swallow leaves
+          // operators blind — log it so the failure is at least diagnosable.
+          log.error(
+            { err: err instanceof Error ? err.message : String(err) },
+            'onBacklogWarning handler threw — swallowed to protect send path',
+          )
         }
       }
       return { message, backlogWarning, idempotentReplay, requestId }
