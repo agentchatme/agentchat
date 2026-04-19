@@ -11,7 +11,7 @@
     "format:check": "prettier --check .",
     "changeset": "changeset",
     "version-packages": "changeset version",
-    "release": "turbo build --filter=agentchat && changeset publish"
+    "release": "turbo build --filter=agentchat --filter=agentchat-openclaw-channel && changeset publish"
   },
   "devDependencies": {
     "@changesets/changelog-github": "^0.5.0",
