@@ -437,3 +437,61 @@ export const pubsubPublishSeconds = histogram(
   'Wall-clock duration of one Redis PUBLISH, labeled by channel.',
   [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
 )
+
+// ─── Analytics refresh (migration 042) ────────────────────────────────────
+//
+// The analytics-refresh worker ticks hourly and calls
+// public.refresh_analytics_views() which rebuilds 9 matviews under a
+// transaction-scoped advisory lock. Three Prometheus signals cover the
+// full lifecycle:
+//
+//   * outcome counter (success|skipped|failed) — rate-of-work over time.
+//     Steady state = one `success` per hour per cluster. A sustained
+//     `failed` rate is the Sentry streak trigger; `skipped` labels split
+//     into lock_held / too_soon in the code path and should be dominated
+//     by `too_soon` (cheap cadence guard) not `lock_held` (contention).
+//
+//   * duration histogram — how long the refresh takes. Matview refreshes
+//     scale with underlying table size; we want to see the p95 climb
+//     before the tick approaches the hourly cadence. The top bucket (300s
+//     = 5 min) is also the alarm threshold: a refresh at 5+ min means
+//     scaling pressure and probably time to add incremental refresh.
+//
+//   * last-success gauge (unix seconds) — lets Grafana render
+//     "time since last success" as (time() - gauge), which is how
+//     freshness SLOs are usually phrased. Complements the counter: the
+//     counter tells you the rate, the gauge tells you the staleness.
+//
+// All three are WORKER-only. They never fire from the api process — the
+// api-server has no reason to know about refresh ticks.
+
+export const analyticsRefreshOutcome = counter(
+  'agentchat_analytics_refresh_total',
+  'Analytics refresh outcomes (success|skipped_lock|skipped_cadence|failed|error).',
+)
+
+// Buckets cover the realistic range for 9 CONCURRENTLY refreshes over
+// growing partitioned tables: sub-second at launch volume, tens of seconds
+// once the cluster accumulates months of message partitions, 5-minute
+// ceiling to catch pathological cases. Matview refresh time grows roughly
+// linearly with source row count, so the 10s / 30s / 60s triple gives good
+// resolution through the "getting bigger but still fine" phase before the
+// 300s red line.
+export const analyticsRefreshDurationSeconds = histogram(
+  'agentchat_analytics_refresh_duration_seconds',
+  'Wall-clock duration of a successful analytics refresh tick.',
+  [0.1, 0.5, 1, 5, 10, 30, 60, 300],
+)
+
+// Unix seconds of the most recent successful refresh completion. Grafana
+// renders "data staleness" as (time() - gauge). Worker overrides via .set
+// when a tick lands success. Initial value 0 → staleness ≈ wall-clock,
+// which is the right signal pre-bootstrap ("no successes yet"). Migration
+// 042 writes an initial refresh_log row at `NOW()` during deploy so the
+// analytics.last_refresh view also has a non-null staleness; this gauge
+// picks up the live value once the worker's first tick runs.
+export const analyticsRefreshLastSuccess = gauge(
+  'agentchat_analytics_refresh_last_success_seconds',
+  'Unix timestamp (seconds) of the most recent successful analytics refresh.',
+  () => 0, // analytics-refresh worker overrides via .set on boot
+)

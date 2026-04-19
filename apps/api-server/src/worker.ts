@@ -9,6 +9,10 @@ import {
 } from './services/group-deletion-fanout-worker.js'
 import { startOutboxWorker, stopOutboxWorker } from './services/outbox-worker.js'
 import { startDlqProbe, stopDlqProbe } from './services/dlq-probe.js'
+import {
+  startAnalyticsRefresh,
+  stopAnalyticsRefresh,
+} from './services/analytics-refresh.js'
 import { initPubSub, shutdownPubSub, getPubSubHealth } from './ws/pubsub.js'
 import { logger } from './lib/logger.js'
 import { serialize } from './lib/metrics.js'
@@ -96,6 +100,7 @@ startWebhookWorker()
 startGroupDeletionFanoutWorker()
 startOutboxWorker()
 startDlqProbe()
+startAnalyticsRefresh()
 logger.info({ pid: process.pid }, 'worker_started')
 
 // Graceful shutdown. Fly sends SIGINT, then SIGTERM after the grace period;
@@ -116,6 +121,10 @@ async function shutdown(signal: string) {
     stopWebhookWorker(),
     stopGroupDeletionFanoutWorker(),
     stopOutboxWorker(),
+    // analytics-refresh awaits a potentially long-running REFRESH MAT VIEW
+    // so its savepoint block can commit the audit row before we drop the
+    // DB connection. Up to 60s budget inside stopAnalyticsRefresh().
+    stopAnalyticsRefresh(),
   ])
   stopDlqProbe()
 
