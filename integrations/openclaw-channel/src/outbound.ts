@@ -24,7 +24,7 @@
  *     than OOM.
  */
 
-import type { Message } from 'agentchat'
+import type { Message } from './types/message.js'
 
 import { AgentChatChannelError, classifyHttpStatus, classifyNetworkError, parseRetryAfter } from './errors.js'
 import type { Logger } from './log.js'

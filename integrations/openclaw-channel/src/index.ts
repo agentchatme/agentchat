@@ -51,6 +51,13 @@ export type {
   SendResult,
 } from './outbound.js'
 
+export type {
+  Message,
+  MessageContent,
+  MessageType,
+  MessageStatus,
+} from './types/message.js'
+
 export { AgentChatChannelError } from './errors.js'
 export type { ErrorClass } from './errors.js'
 

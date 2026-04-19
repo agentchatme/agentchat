@@ -224,9 +224,6 @@ importers:
 
   integrations/openclaw-channel:
     dependencies:
-      agentchat:
-        specifier: workspace:*
-        version: link:../../packages/sdk-typescript
       pino:
         specifier: ^9.5.0
         version: 9.14.0
