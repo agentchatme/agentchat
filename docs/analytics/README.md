@@ -88,18 +88,36 @@ the credential never lands in a commit:
 ALTER ROLE metabase_reader WITH LOGIN PASSWORD '<paste-the-strong-password>';
 ```
 
-3. Immediately verify the grants are correct:
+3. Immediately verify the grants are correct. These queries use `pg_catalog`
+   rather than `information_schema` because `information_schema.role_table_grants`
+   is SQL-standard and silently omits materialized views (a PostgreSQL
+   extension) — you'd see 2 rows instead of 11 and think grants failed.
 
 ```sql
--- Should return 9 matviews + 1 view (last_refresh).
-SELECT table_schema, table_name
-FROM information_schema.role_table_grants
-WHERE grantee = 'metabase_reader' AND privilege_type = 'SELECT';
+-- Expect 11 rows — all can_select = true.
+-- (9 matviews + 1 view + 1 table)
+SELECT
+  c.relname AS object_name,
+  CASE c.relkind
+    WHEN 'r' THEN 'table'
+    WHEN 'v' THEN 'view'
+    WHEN 'm' THEN 'matview'
+  END AS object_type,
+  has_table_privilege('metabase_reader', c.oid, 'SELECT') AS can_select
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE n.nspname = 'analytics'
+  AND c.relkind IN ('r','v','m')
+ORDER BY c.relkind, c.relname;
 
--- Should return zero rows — role has NO access to public.
-SELECT 1
-FROM information_schema.role_table_grants
-WHERE grantee = 'metabase_reader' AND table_schema = 'public';
+-- Expect rolcanlogin = true.
+SELECT rolname, rolcanlogin FROM pg_roles WHERE rolname = 'metabase_reader';
+
+-- Expect zero rows — metabase_reader has NO SELECT on anything in public.
+SELECT schemaname, tablename
+FROM pg_tables
+WHERE has_table_privilege('metabase_reader', schemaname || '.' || tablename, 'SELECT')
+  AND schemaname = 'public';
 ```
 
 If the public-access check returns a row, **stop** — grants drifted; rerun
