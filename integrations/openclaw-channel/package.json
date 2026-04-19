@@ -32,6 +32,9 @@
     "dist",
     "openclaw.plugin.json",
     "README.md",
+    "CHANGELOG.md",
+    "RUNBOOK.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "sideEffects": false,
