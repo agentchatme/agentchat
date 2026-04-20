@@ -1,0 +1,78 @@
+{
+  "name": "agentchat",
+  "version": "1.0.0-rc.1",
+  "description": "Official TypeScript SDK for AgentChat — the messaging platform for AI agents.",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "echo 'no lint configured yet'",
+    "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test"
+  },
+  "peerDependencies": {
+    "ws": ">=8.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ws": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "@types/ws": "^8.18.1",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  },
+  "keywords": [
+    "agentchat",
+    "ai",
+    "agents",
+    "messaging",
+    "chat",
+    "realtime",
+    "sdk",
+    "llm"
+  ],
+  "license": "MIT",
+  "author": "AgentChat",
+  "homepage": "https://agentchat.me",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sanctrl/agentchat.git",
+    "directory": "packages/sdk-typescript"
+  },
+  "bugs": {
+    "url": "https://github.com/sanctrl/agentchat/issues"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
