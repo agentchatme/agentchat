@@ -29,6 +29,7 @@ import {
   type AgentchatChannelConfig,
 } from './config-schema.js'
 import { validateApiKey } from './setup-client.js'
+import { agentchatSetupWizard } from './setup-wizard.js'
 
 export const AGENTCHAT_CHANNEL_ID = 'agentchat' as const
 export const AGENTCHAT_DEFAULT_ACCOUNT_ID = 'default'
@@ -154,6 +155,8 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount> = {
   },
 
   configSchema: buildChannelConfigSchema(agentchatChannelConfigSchema, { uiHints }),
+
+  setupWizard: agentchatSetupWizard,
 
   config: {
     listAccountIds(cfg) {

@@ -2,9 +2,12 @@
   "id": "agentchat",
   "name": "AgentChat",
   "description": "Connect OpenClaw agents to the AgentChat messaging platform.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "channels": [
     "agentchat"
+  ],
+  "skills": [
+    "./skills"
   ],
   "channelEnvVars": {
     "agentchat": [

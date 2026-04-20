@@ -1,6 +1,6 @@
 {
   "name": "agentchat-openclaw-channel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Official OpenClaw channel plugin for AgentChat — connects OpenClaw agents to the AgentChat messaging platform.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -30,6 +30,7 @@
   },
   "files": [
     "dist",
+    "skills",
     "openclaw.plugin.json",
     "README.md",
     "CHANGELOG.md",
@@ -78,6 +79,10 @@
     "setupFeatures": {
       "legacyStateMigrations": false
     },
+    "install": {
+      "npmSpec": "agentchat-openclaw-channel",
+      "defaultChoice": "npm"
+    },
     "channel": {
       "id": "agentchat",
       "label": "AgentChat",
@@ -119,7 +124,6 @@
     "url": "https://github.com/agentchatme/agentchat/issues"
   },
   "publishConfig": {
-    "access": "public",
-    "provenance": true
+    "access": "public"
   }
 }
