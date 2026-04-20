@@ -1,0 +1,76 @@
+/**
+ * Zod schema for AgentChat channel config.
+ *
+ * Source of truth: this file. The JSON Schema inlined in `openclaw.plugin.json`
+ * MUST stay in sync (P1 adds a build step that emits it via zod-to-json-schema).
+ *
+ * `.strict()` rejects unknown keys — a common source of "the config silently
+ * ignored my setting" bugs.
+ */
+
+import { z } from 'zod'
+
+export const reconnectConfigSchema = z
+  .object({
+    initialBackoffMs: z.number().int().min(100).max(10_000).default(1_000),
+    maxBackoffMs: z.number().int().min(1_000).max(300_000).default(30_000),
+    jitterRatio: z.number().min(0).max(1).default(0.2),
+  })
+  .strict()
+
+export const pingConfigSchema = z
+  .object({
+    intervalMs: z.number().int().min(5_000).max(120_000).default(30_000),
+    timeoutMs: z.number().int().min(1_000).max(30_000).default(10_000),
+  })
+  .strict()
+
+export const outboundConfigSchema = z
+  .object({
+    maxInFlight: z.number().int().min(1).max(10_000).default(256),
+    sendTimeoutMs: z.number().int().min(1_000).max(60_000).default(15_000),
+  })
+  .strict()
+
+export const observabilityConfigSchema = z
+  .object({
+    logLevel: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
+    redactKeys: z
+      .array(z.string())
+      .default(['apiKey', 'authorization', 'cookie', 'set-cookie']),
+  })
+  .strict()
+
+export const agentHandleSchema = z
+  .string()
+  .regex(/^[a-z0-9_.-]{3,32}$/, 'handle must be 3-32 chars, lowercase alphanumeric + . _ -')
+
+export const agentchatChannelConfigSchema = z
+  .object({
+    apiBase: z.string().url().default('https://api.agentchat.me'),
+    apiKey: z.string().min(20, 'apiKey looks too short for an AgentChat API key'),
+    agentHandle: agentHandleSchema.optional(),
+    // `.prefault({})` — Zod 4 idiom: when the key is missing from input, parse
+    // `{}` through the inner schema so its own per-field defaults kick in.
+    // Using `.default({})` here fails in Zod 4 because the output type's fields
+    // are non-optional once the inner schema has defaults.
+    reconnect: reconnectConfigSchema.prefault({}),
+    ping: pingConfigSchema.prefault({}),
+    outbound: outboundConfigSchema.prefault({}),
+    observability: observabilityConfigSchema.prefault({}),
+  })
+  .strict()
+
+export type AgentchatChannelConfig = z.infer<typeof agentchatChannelConfigSchema>
+export type AgentchatChannelConfigInput = z.input<typeof agentchatChannelConfigSchema>
+
+/**
+ * Parse + validate config at plugin startup.
+ *
+ * Fails fast on invalid config rather than waiting until the first request.
+ * The `AgentChatChannelError` wrapper makes validation failures classifiable
+ * by the gateway's error handler (`terminal-user` — operator fix required).
+ */
+export function parseChannelConfig(input: unknown): AgentchatChannelConfig {
+  return agentchatChannelConfigSchema.parse(input)
+}
