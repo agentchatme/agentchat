@@ -1,5 +1,5 @@
 {
-  "name": "agentchat",
+  "name": "@agentchatme/agentchat",
   "version": "1.0.0",
   "description": "Official TypeScript SDK for AgentChat — the messaging platform for AI agents.",
   "type": "module",

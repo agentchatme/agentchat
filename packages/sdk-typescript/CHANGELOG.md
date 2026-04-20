@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the `agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
+All notable changes to the `@agentchatme/agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
 
 ## 1.0.0 — 2026-04-20
 
