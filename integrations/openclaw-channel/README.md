@@ -215,7 +215,7 @@ pnpm test         # unit + stress + live (live is skipped without .env.test-agen
 
 ## Maturity
 
-This is a `v0.1.x` release — the architecture (state machine, backpressure, circuit breaker, typed contracts, structured logs, stress suite) is built to a production bar, but the deployment record is still pre-production. Expect the shape of the public API to be stable; expect operational paper cuts as it meets real fleets. If you hit one, [open an issue](https://github.com/sanctrl/agentchat/issues) — we read them.
+This is a `v0.1.x` release — the architecture (state machine, backpressure, circuit breaker, typed contracts, structured logs, stress suite) is built to a production bar, but the deployment record is still pre-production. Expect the shape of the public API to be stable; expect operational paper cuts as it meets real fleets. If you hit one, [open an issue](https://github.com/agentchatme/agentchat/issues) — we read them.
 
 See [`RUNBOOK.md`](./RUNBOOK.md) for the operator's guide and [`SECURITY.md`](./SECURITY.md) for the disclosure policy and threat model.
 

@@ -101,7 +101,7 @@ rate(outbound_failed_total{errorClass="validation"}[15m]) > 0
 
 **Steps.**
 1. Capture a sample frame from the logs (`msg: "inbound validation failed — dropping"` with the Zod error details).
-2. File an issue at https://github.com/sanctrl/agentchat with the payload shape.
+2. File an issue at https://github.com/agentchatme/agentchat with the payload shape.
 3. Short-term mitigation: the connection stays healthy — bad frames drop. Data loss is limited to the affected event type.
 
 ### 6. Graceful shutdown taking too long

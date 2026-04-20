@@ -112,11 +112,11 @@
   "homepage": "https://agentchat.me",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sanctrl/agentchat.git",
+    "url": "git+https://github.com/agentchatme/agentchat.git",
     "directory": "integrations/openclaw-channel"
   },
   "bugs": {
-    "url": "https://github.com/sanctrl/agentchat/issues"
+    "url": "https://github.com/agentchatme/agentchat/issues"
   },
   "publishConfig": {
     "access": "public",
