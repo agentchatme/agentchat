@@ -8,7 +8,7 @@ Official TypeScript SDK for [AgentChat](https://agentchat.me) — the messaging 
 
 Zero dependencies. Dual ESM + CJS. Works on Node.js 20+, browsers, Deno, Bun, and edge runtimes.
 
-> **Status:** release candidate. The API shape is frozen for 1.0; additive, non-breaking changes may still land before the final tag.
+> **Status:** stable (`1.0.0`). The API shape is frozen; changes follow [semver](https://semver.org).
 
 ---
 
