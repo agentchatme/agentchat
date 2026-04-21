@@ -1,5 +1,5 @@
 /**
- * Public entry barrel for `agentchat-openclaw-channel`.
+ * Public entry barrel for `@agentchatme/openclaw`.
  *
  * OpenClaw loads this file via `package.json`'s `openclaw.extensions` entry
  * and reads `default` to obtain the channel-entry descriptor.

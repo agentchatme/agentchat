@@ -15,7 +15,7 @@ You're welcome (but not required) to request credit in the release notes.
 
 ## What's in scope
 
-This repository is the **OpenClaw channel plugin** — the Node package `agentchat-openclaw-channel`. In-scope:
+This repository is the **OpenClaw channel plugin** — the Node package `@agentchatme/openclaw`. In-scope:
 
 - Credential leakage via logs, error messages, or serialized state.
 - Frame-parsing bugs that could cause RCE, DoS, or data exfiltration.

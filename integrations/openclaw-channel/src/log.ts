@@ -37,7 +37,7 @@ export function createLogger(options: CreateLoggerOptions): Logger {
 
   const pinoLogger = pino({
     level: options.level,
-    base: { plugin: 'agentchat-openclaw-channel' },
+    base: { plugin: '@agentchatme/openclaw' },
     redact: {
       paths: buildRedactPaths(options.redactKeys),
       censor: '[REDACTED]',

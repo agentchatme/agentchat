@@ -222,7 +222,7 @@ export class OutboundAdapter {
     const headers: Record<string, string> = {
       'authorization': `Bearer ${this.config.apiKey}`,
       'content-type': 'application/json',
-      'user-agent': `agentchat-openclaw-channel/${PACKAGE_VERSION} (+attempt=${attempt})`,
+      'user-agent': `@agentchatme/openclaw/${PACKAGE_VERSION} (+attempt=${attempt})`,
     }
 
     let res: Response

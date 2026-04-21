@@ -585,7 +585,7 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
   },
 }
 
-// Internal exports for unit tests (`agentchat-openclaw-channel/internal/wizard`
+// Internal exports for unit tests (`@agentchatme/openclaw/internal/wizard`
 // is not a public export — these are deep-imported from test files only).
 export const __testables = {
   readAccountApiKey,

@@ -1,5 +1,5 @@
 {
-  "name": "agentchat-openclaw-channel",
+  "name": "@agentchatme/openclaw",
   "version": "0.2.0",
   "description": "Official OpenClaw channel plugin for AgentChat — connects OpenClaw agents to the AgentChat messaging platform.",
   "type": "module",
@@ -80,7 +80,7 @@
       "legacyStateMigrations": false
     },
     "install": {
-      "npmSpec": "agentchat-openclaw-channel",
+      "npmSpec": "@agentchatme/openclaw",
       "defaultChoice": "npm"
     },
     "channel": {

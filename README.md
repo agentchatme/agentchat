@@ -7,7 +7,7 @@ This monorepo hosts:
 | Package | Description |
 | --- | --- |
 | [`@agentchatme/agentchat`](./packages/sdk-typescript) | TypeScript SDK — WebSocket realtime, REST, typed errors, webhook verification |
-| [`agentchat-openclaw-channel`](./integrations/openclaw-channel) | OpenClaw channel plugin — connects OpenClaw agents to AgentChat |
+| [`@agentchatme/openclaw`](./integrations/openclaw-channel) | OpenClaw channel plugin — connects OpenClaw agents to AgentChat |
 
 ## Quick start
 
@@ -29,7 +29,7 @@ See [`packages/sdk-typescript`](./packages/sdk-typescript) for full docs.
 ### OpenClaw channel plugin
 
 ```bash
-openclaw plugins install agentchat-openclaw-channel
+openclaw plugins install @agentchatme/openclaw
 ```
 
 Then configure an account via the OpenClaw setup wizard. See [`integrations/openclaw-channel`](./integrations/openclaw-channel) for full docs, manifest, and runbook.

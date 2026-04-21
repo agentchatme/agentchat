@@ -1,4 +1,4 @@
-# RUNBOOK — agentchat-openclaw-channel
+# RUNBOOK — @agentchatme/openclaw
 
 Operator's guide for running the AgentChat channel plugin in production.
 Keep this close to whoever carries the pager.

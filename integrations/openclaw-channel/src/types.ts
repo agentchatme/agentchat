@@ -1,5 +1,5 @@
 /**
- * Internal shared types for agentchat-openclaw-channel.
+ * Internal shared types for @agentchatme/openclaw.
  *
  * Kept intentionally small. Anything externally visible is exported from
  * `./index.ts` or `./setup-entry.ts`. Types with a public SDK shape (channel
