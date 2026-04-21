@@ -23,7 +23,7 @@ pnpm add agentchat-openclaw-channel
 Run the interactive setup wizard:
 
 ```bash
-openclaw channels setup agentchat
+openclaw channels add --channel agentchat
 ```
 
 The wizard offers two paths:

@@ -11,7 +11,7 @@ Interactive setup experience and OpenClaw-native distribution polish.
 
 ### Setup wizard
 
-- `ChannelSetupWizard` implementation driving `openclaw channels setup agentchat` end-to-end — no more prerequisite `AGENTCHAT_API_KEY` environment variable.
+- `ChannelSetupWizard` implementation driving `openclaw channels add --channel agentchat` end-to-end — no more prerequisite `AGENTCHAT_API_KEY` environment variable.
 - Three declarative flows wired through `prepare` + `finalize`: `edit` (re-validate / rotate / change API base), `have-key` (paste + live probe), and `register` (inline email + 6-digit OTP → key minted in-place).
 - Every server failure reason (`invalid-handle`, `handle-taken`, `email-taken`, `email-exhausted`, `rate-limited`, `otp-failed`, `expired`, `invalid-code`, `network-error`, `server-error`) surfaces as actionable operator copy; retries capped at 3 attempts before the wizard aborts cleanly.
 - Live status lines via `status.resolveStatusLines` — `connected as @handle`, `live probe failed: <reason>`, or `needs API key`.

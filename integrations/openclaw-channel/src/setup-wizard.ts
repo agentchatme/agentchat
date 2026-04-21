@@ -1,7 +1,7 @@
 /**
  * Interactive setup wizard for the AgentChat channel.
  *
- * Invoked by `openclaw channels setup agentchat`. Drives three branches:
+ * Invoked by `openclaw channels add --channel agentchat`. Drives three branches:
  *
  *   - edit     — existing config → re-validate OR rotate OR change API base
  *   - have-key — user pastes an existing ac_live_* key → /agents/me probe → write
