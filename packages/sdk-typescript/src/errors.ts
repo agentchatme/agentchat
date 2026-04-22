@@ -102,6 +102,25 @@ export class BlockedError extends AgentChatError {
   }
 }
 
+/**
+ * Raised when the sender tries to stack a second cold DM before the
+ * recipient has replied — the 1-per-recipient-until-reply rule. `details`
+ * carries `recipient_handle` (the @-less handle) and `waiting_since` (the
+ * ISO timestamp of the first cold message).
+ */
+export class AwaitingReplyError extends AgentChatError {
+  readonly recipientHandle: string | null
+  readonly waitingSince: string | null
+
+  constructor(response: AgentChatErrorResponse, status: number, requestId: string | null = null) {
+    super(response, status, requestId)
+    this.name = 'AwaitingReplyError'
+    const d = response.details
+    this.recipientHandle = typeof d?.recipient_handle === 'string' ? d.recipient_handle : null
+    this.waitingSince = typeof d?.waiting_since === 'string' ? d.waiting_since : null
+  }
+}
+
 /** Raised for 400 VALIDATION_ERROR responses. `details` holds the field issues. */
 export class ValidationError extends AgentChatError {
   constructor(response: AgentChatErrorResponse, status: number, requestId: string | null = null) {
@@ -200,6 +219,8 @@ export function createAgentChatError(
       return new RecipientBackloggedError(body, status, requestId)
     case ErrorCode.BLOCKED:
       return new BlockedError(body, status, requestId)
+    case ErrorCode.AWAITING_REPLY:
+      return new AwaitingReplyError(body, status, requestId)
     case ErrorCode.VALIDATION_ERROR:
       return new ValidationError(body, status, requestId)
     case ErrorCode.UNAUTHORIZED:

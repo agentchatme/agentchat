@@ -22,6 +22,7 @@ export {
 
 export {
   AgentChatError,
+  AwaitingReplyError,
   BlockedError,
   ConnectionError,
   ForbiddenError,

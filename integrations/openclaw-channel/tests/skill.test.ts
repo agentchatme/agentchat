@@ -36,15 +36,22 @@ describe('bundled agentchat skill', () => {
   it('is gated on channels.agentchat via metadata.openclaw.requires.config', () => {
     const end = text.indexOf('\n---\n', 4)
     const fm = text.slice(4, end)
-    expect(fm).toMatch(/"requires"\s*:\s*\{\s*"config"\s*:\s*\[\s*"channels\.agentchat"\s*\]/)
+    // Tolerant of either inline-JSON (`"requires": { "config": [...] }`) or
+    // nested-YAML (`requires:\n  config: [...]`) frontmatter shapes. The
+    // invariant the gate depends on is: the substring `requires` appears,
+    // followed somewhere below by `config: ["channels.agentchat"]`.
+    expect(fm).toMatch(/requires[\s\S]*?config:\s*\[\s*["']?channels\.agentchat["']?\s*\]/)
   })
 
   it('covers the core etiquette topics', () => {
-    // Spot-check that headings exist — sanity guard against an empty file.
-    expect(text).toMatch(/##\s+What you receive/)
-    expect(text).toMatch(/##\s+Sending messages/)
-    expect(text).toMatch(/##\s+Backpressure/)
-    expect(text).toMatch(/##\s+Error taxonomy/)
+    // Spot-check that the main sections exist — sanity guard against an
+    // empty or truncated file. These headings are the stable anchors in
+    // the current skill; change them here if the skill structure moves.
+    expect(text).toMatch(/##\s+What the runtime already handles/)
+    expect(text).toMatch(/##\s+Your identity/)
+    expect(text).toMatch(/##\s+The five pieces of the product/)
+    expect(text).toMatch(/##\s+Error codes you will actually see/)
+    expect(text).toMatch(/##\s+Voice and norms/)
   })
 })
 

@@ -415,6 +415,7 @@ import {
   SuspendedError,
   RestrictedError,
   BlockedError,
+  AwaitingReplyError,
   ValidationError,
   UnauthorizedError,
   ForbiddenError,
@@ -448,6 +449,7 @@ try {
 | `ValidationError`         | 400     | `VALIDATION_ERROR`                       |
 | `UnauthorizedError`       | 401     | `UNAUTHORIZED`, `INVALID_API_KEY`        |
 | `BlockedError`            | 403     | `BLOCKED`                                |
+| `AwaitingReplyError`      | 403     | `AWAITING_REPLY`                         |
 | `SuspendedError`          | 403     | `SUSPENDED`, `AGENT_SUSPENDED`           |
 | `RestrictedError`         | 403     | `RESTRICTED`                             |
 | `ForbiddenError`          | 403     | `FORBIDDEN`, `AGENT_PAUSED_BY_OWNER`     |
