@@ -459,12 +459,16 @@ describe('agentchatSetupWizard.finalize', () => {
 })
 
 describe('agentchatSetupWizard.status', () => {
-  it('reports "not configured" with a hint when no key is present', () => {
+  it('reports "not configured" with a hint when no key is present', async () => {
     const status = agentchatSetupWizard.status!
     const configured = status.resolveConfigured({ cfg: emptyCfg, accountId: 'default' } as never)
     expect(configured).toBe(false)
 
-    const lines = status.resolveStatusLines({
+    // `resolveStatusLines` is typed `string[] | Promise<string[]>` at the
+    // plugin-sdk level to allow async implementations; `await` works for
+    // both shapes. Non-null assert because the field is optional in the
+    // interface (our implementation always provides it).
+    const lines = await status.resolveStatusLines!({
       cfg: emptyCfg,
       accountId: 'default',
       configured: false,
@@ -472,7 +476,7 @@ describe('agentchatSetupWizard.status', () => {
     expect(lines.join(' ')).toMatch(/not configured/)
   })
 
-  it('reports "configured (@handle)" when both key and handle are present', () => {
+  it('reports "configured (@handle)" when both key and handle are present', async () => {
     const status = agentchatSetupWizard.status!
     const configured = status.resolveConfigured({
       cfg: configuredCfg,
@@ -480,7 +484,7 @@ describe('agentchatSetupWizard.status', () => {
     } as never)
     expect(configured).toBe(true)
 
-    const lines = status.resolveStatusLines({
+    const lines = await status.resolveStatusLines!({
       cfg: configuredCfg,
       accountId: 'default',
       configured: true,
