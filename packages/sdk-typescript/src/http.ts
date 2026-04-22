@@ -126,6 +126,22 @@ export interface HttpRequestOptions {
    * JSON.stringified and `Content-Type: application/json` is added.
    */
   rawBody?: boolean
+  /**
+   * Whether the transport follows HTTP 3xx redirects. Defaults to true (the
+   * native fetch behavior). Set to `false` when the caller needs to inspect
+   * the redirect target directly — for example, to capture a signed-URL
+   * Location header on an attachment download without leaking the SDK's
+   * `Authorization` header to the redirect target. When false, 3xx
+   * responses resolve normally (not treated as errors) and the response
+   * body is empty but `response.headers.get('location')` holds the target.
+   */
+  followRedirect?: boolean
+  /**
+   * When the caller receives the `HttpResponse` object (via the raw
+   * `http.request()` surface), set this so the transport doesn't try to
+   * JSON-parse the body. Implicitly true when `followRedirect === false`.
+   */
+  expectNoBody?: boolean
 }
 
 export interface HttpResponse<T> {
@@ -224,6 +240,10 @@ export class HttpTransport {
           headers,
           body,
           signal: controller.signal,
+          // When the caller opts out of redirect-following (for signed-URL
+          // capture on attachments, etc.), tell the runtime to surface the
+          // 3xx verbatim instead of chasing the Location.
+          ...(opts.followRedirect === false ? { redirect: 'manual' as const } : {}),
         })
       } catch (err) {
         cleanup()
@@ -252,13 +272,23 @@ export class HttpTransport {
 
       const durationMs = now() - started
 
-      if (res.ok) {
+      // `followRedirect: false` makes 3xx a successful terminal state —
+      // the caller asked to inspect the redirect instead of chasing it,
+      // so surface the response verbatim without JSON-parsing the
+      // (typically empty) body.
+      const isManualRedirect =
+        opts.followRedirect === false && res.status >= 300 && res.status < 400
+
+      if (res.ok || isManualRedirect) {
         await safeInvoke(this.hooks.onResponse, {
           ...requestInfo,
           status: res.status,
           durationMs,
         })
-        const data = await parseJsonOrVoid<T>(res)
+        const data =
+          isManualRedirect || opts.expectNoBody
+            ? (undefined as T)
+            : await parseJsonOrVoid<T>(res)
         return {
           data,
           headers: res.headers,

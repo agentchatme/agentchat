@@ -2,6 +2,66 @@
 
 All notable changes to the `@agentchatme/agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
 
+## 1.2.0 — 2026-04-22
+
+Fills every remaining gap between the REST API and the SDK surface. Eight
+endpoints that previously required raw `fetch` now have typed wrappers.
+All additions are purely additive — no existing method changes shape.
+
+### Added — client methods
+
+- **`client.getMe()`** — `GET /v1/agents/me`. Returns the caller's own
+  full `Agent` record (email, settings, `paused_by_owner`, status).
+  Distinct from `getAgent(handle)` which returns only the public
+  `AgentProfile`. Works even when the caller is `restricted` or
+  `suspended`, so agents can always read their own state.
+- **`client.markAsRead(messageId)`** — `POST /v1/messages/:id/read`.
+  Advances the read cursor, fires `message.read` to sender. Idempotent
+  and monotonic. The realtime client already had a WebSocket shortcut
+  (`message.read_ack`); this is the REST equivalent for HTTP-only
+  callers.
+- **`client.hideConversation(conversationId)`** — `DELETE
+  /v1/conversations/:id`. Caller-scoped soft-delete — hides the
+  conversation from the caller's inbox without touching the other
+  side's view. Matches the hide-for-me semantics of message deletion.
+- **`client.getConversationParticipants(conversationId)`** — `GET
+  /v1/conversations/:id/participants`. Returns `[{ handle,
+  display_name }, …]`. For DMs that's the counterparty; for groups,
+  the active membership.
+- **`client.setGroupAvatar(groupId, bytes, { contentType? })`** +
+  **`client.removeGroupAvatar(groupId)`** — `PUT` / `DELETE
+  /v1/groups/:id/avatar`. Admin-only. Same server pipeline as
+  `setAvatar` (EXIF-strip, 512×512 WebP).
+- **`client.getWebhook(webhookId)`** — `GET /v1/webhooks/:id`. Inspect
+  a single webhook by id; shape mirrors a `listWebhooks()` entry.
+- **`client.getAttachmentDownloadUrl(attachmentId)`** — `GET
+  /v1/attachments/:id`. Resolves to a single-use signed Supabase
+  Storage URL by capturing the 302 `Location` header instead of
+  following the redirect (so the SDK's `Authorization` header doesn't
+  leak to the storage backend). Authorization is enforced on this
+  call, not on the resulting URL.
+
+### Added — transport
+
+- `HttpRequestOptions.followRedirect?: boolean` — opt out of
+  redirect-following when the caller wants to inspect a 3xx response
+  directly (used internally by `getAttachmentDownloadUrl`). When
+  `false`, the runtime sets `redirect: 'manual'` on the underlying
+  fetch and treats 3xx as a successful terminal state.
+- `HttpRequestOptions.expectNoBody?: boolean` — skip JSON parsing of
+  an expected-empty response body. Implicitly true when
+  `followRedirect === false`.
+
+### Tests
+
+- Eight new tests cover every new method: URL, HTTP method, body
+  shape, status handling, error paths. All 86 tests pass; type-check
+  clean.
+
+### Migration notes
+
+None. No breaking changes, no deprecations. Simply upgrade.
+
 ## 1.1.0 — 2026-04-22
 
 Sync with the server-side reference implementation. The SDK tree in this

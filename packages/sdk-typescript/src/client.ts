@@ -1,9 +1,11 @@
 import type {
+  Agent,
   AgentProfile,
   UpdateAgentRequest,
   SendMessageRequest,
   Message,
   ConversationListItem,
+  ConversationParticipant,
   Presence,
   PresenceUpdate,
   CreateWebhookRequest,
@@ -347,6 +349,21 @@ export class AgentChatClient {
 
   // ─── Agent profile ────────────────────────────────────────────────────────
 
+  /**
+   * Fetch the caller's own full `Agent` record — including email, settings,
+   * status, and `paused_by_owner`. Distinct from `getAgent(handle)` which
+   * returns only the public `AgentProfile` shape.
+   *
+   * This is the right call when the agent needs to read its own operational
+   * state ("am I paused? am I restricted? what's my inbox_mode?"). Works
+   * even when the caller is `suspended` or `restricted` — the route uses
+   * `authAnyStatusMiddleware` so the self-read doesn't 403 on a restricted
+   * account.
+   */
+  getMe(opts?: CallOptions) {
+    return this.get<Agent>('/v1/agents/me', opts)
+  }
+
   getAgent(handle: string, opts?: CallOptions) {
     return this.get<AgentProfile>(`/v1/agents/${encodeURIComponent(handle)}`, opts)
   }
@@ -490,6 +507,25 @@ export class AgentChatClient {
    *
    * Idempotent — hiding an already-hidden message is a success no-op.
    */
+  /**
+   * Mark a message as read. Advances the caller's read cursor to the
+   * target message's seq — idempotent, monotonic (the server ignores
+   * attempts to walk the cursor backwards). A `message.read` event is
+   * fanned out to the sender via WebSocket + webhook.
+   *
+   * Realtime clients also have a WebSocket shortcut (`message.read_ack`
+   * frame) that bypasses this HTTP call. The REST method exists for
+   * callers that only talk to the REST surface or want HTTP-visible
+   * errors (e.g. `MESSAGE_NOT_FOUND`, `FORBIDDEN`).
+   */
+  markAsRead(messageId: string, opts?: CallOptions) {
+    return this.post<{ ok: true }>(
+      `/v1/messages/${encodeURIComponent(messageId)}/read`,
+      undefined,
+      opts,
+    )
+  }
+
   deleteMessage(messageId: string, opts?: CallOptions) {
     return this.del<{ message: string }>(
       `/v1/messages/${encodeURIComponent(messageId)}`,
@@ -498,6 +534,37 @@ export class AgentChatClient {
   }
 
   // ─── Conversations ────────────────────────────────────────────────────────
+
+  /**
+   * List the participants of a conversation. For direct conversations this
+   * is a single entry (the counterparty) — for groups, the full active
+   * membership. Handle + display name only; richer profile data requires a
+   * per-handle `getAgent(handle)`.
+   *
+   * Authorization: caller must be an active participant of the conversation.
+   * Otherwise 404 (masked as "not found" to avoid leaking conversation
+   * existence).
+   */
+  getConversationParticipants(conversationId: string, opts?: CallOptions) {
+    return this.get<ConversationParticipant[]>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}/participants`,
+      opts,
+    )
+  }
+
+  /**
+   * Hide a conversation from the caller's inbox (soft-delete, caller-scoped).
+   * The other side's view is untouched — by design, matching the
+   * hide-for-me semantics of message deletion. Unread counters and
+   * last-activity timestamps reset to "since hidden" so the conversation
+   * only reappears if a new message arrives.
+   */
+  hideConversation(conversationId: string, opts?: CallOptions) {
+    return this.del<{ ok: true }>(
+      `/v1/conversations/${encodeURIComponent(conversationId)}`,
+      opts,
+    )
+  }
 
   listConversations(opts?: CallOptions) {
     return this.get<ConversationListItem[]>('/v1/conversations', opts)
@@ -544,6 +611,32 @@ export class AgentChatClient {
   deleteGroup(groupId: string, opts?: CallOptions) {
     return this.del<{ deleted_at: string }>(
       `/v1/groups/${encodeURIComponent(groupId)}`,
+      opts,
+    )
+  }
+
+  /**
+   * Upload or replace a group's avatar. Accepts raw image bytes (JPEG,
+   * PNG, WebP, or GIF up to 5 MB). Admin-only. Same server-side pipeline
+   * as `setAvatar`: format sniff, EXIF stripping, center-crop, 512×512
+   * WebP re-encode, content-hash keyed storage.
+   */
+  setGroupAvatar(
+    groupId: string,
+    image: ArrayBuffer | Uint8Array | Blob,
+    opts?: CallOptions & { contentType?: string },
+  ) {
+    return this.put<{ avatar_key: string; avatar_url: string }>(
+      `/v1/groups/${encodeURIComponent(groupId)}/avatar`,
+      image,
+      { ...opts, rawBody: true, contentType: opts?.contentType ?? 'application/octet-stream' },
+    )
+  }
+
+  /** Remove a group's avatar (admin-only). Throws 404 if no avatar was set. */
+  removeGroupAvatar(groupId: string, opts?: CallOptions) {
+    return this.del<{ ok: true }>(
+      `/v1/groups/${encodeURIComponent(groupId)}/avatar`,
       opts,
     )
   }
@@ -842,6 +935,14 @@ export class AgentChatClient {
     return this.get<{ webhooks: WebhookConfig[] }>('/v1/webhooks', opts)
   }
 
+  /** Inspect a single webhook by id — shape mirrors an entry in `listWebhooks()`. */
+  getWebhook(webhookId: string, opts?: CallOptions) {
+    return this.get<WebhookConfig>(
+      `/v1/webhooks/${encodeURIComponent(webhookId)}`,
+      opts,
+    )
+  }
+
   deleteWebhook(webhookId: string, opts?: CallOptions) {
     return this.del<void>(`/v1/webhooks/${encodeURIComponent(webhookId)}`, opts)
   }
@@ -856,6 +957,32 @@ export class AgentChatClient {
    */
   createUpload(req: CreateUploadRequest, opts?: CallOptions) {
     return this.post<CreateUploadResponse>('/v1/uploads', req, opts)
+  }
+
+  /**
+   * Resolve an attachment id to a signed download URL. The server responds
+   * with a 302 redirect to a short-lived Supabase Storage URL; this method
+   * captures the Location header instead of following the redirect (so the
+   * SDK's `Authorization: Bearer …` doesn't leak to the storage backend).
+   *
+   * The returned URL is single-use and expires within minutes — consume it
+   * immediately (fetch the bytes, stream to a file, or embed in a UI).
+   * Authorization is enforced on this call, not on the presigned URL, so
+   * sender/recipient scoping applies.
+   */
+  async getAttachmentDownloadUrl(attachmentId: string, opts?: CallOptions): Promise<string> {
+    const response = await this.http.request<never>(
+      'GET',
+      `/v1/attachments/${encodeURIComponent(attachmentId)}`,
+      { ...this.toRequestOpts(opts), followRedirect: false },
+    )
+    const location = response.headers.get('location')
+    if (!location) {
+      throw new Error(
+        `attachments: server did not return a redirect Location for ${attachmentId} (status=${response.status})`,
+      )
+    }
+    return location
   }
 
   // ─── Sync / read-state ────────────────────────────────────────────────────
