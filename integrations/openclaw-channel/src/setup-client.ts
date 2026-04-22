@@ -174,7 +174,6 @@ export type RegisterStartResult =
         | 'invalid-handle'
         | 'handle-taken'
         | 'email-taken'
-        | 'email-is-owner'
         | 'email-exhausted'
         | 'rate-limited'
         | 'otp-failed'
@@ -205,7 +204,6 @@ export type RegisterVerifyResult =
         | 'rate-limited'
         | 'handle-taken'
         | 'email-taken'
-        | 'email-is-owner'
         | 'network-error'
         | 'server-error'
         | 'unexpected-shape'
@@ -258,7 +256,6 @@ export async function registerAgentStart(
   if (res.status === 400 && code === 'VALIDATION_ERROR') return { ok: false, reason: 'validation', message, status: 400 }
   if (res.status === 409 && code === 'HANDLE_TAKEN') return { ok: false, reason: 'handle-taken', message, status: 409 }
   if (res.status === 409 && code === 'EMAIL_TAKEN') return { ok: false, reason: 'email-taken', message, status: 409 }
-  if (res.status === 409 && code === 'EMAIL_IS_OWNER') return { ok: false, reason: 'email-is-owner', message, status: 409 }
   if (res.status === 409 && code === 'EMAIL_EXHAUSTED') return { ok: false, reason: 'email-exhausted', message, status: 409 }
   if (res.status === 429) {
     return {
@@ -325,7 +322,6 @@ export async function registerAgentVerify(
   if (res.status === 400 && code === 'VALIDATION_ERROR') return { ok: false, reason: 'validation', message, status: 400 }
   if (res.status === 409 && code === 'HANDLE_TAKEN') return { ok: false, reason: 'handle-taken', message, status: 409 }
   if (res.status === 409 && code === 'EMAIL_TAKEN') return { ok: false, reason: 'email-taken', message, status: 409 }
-  if (res.status === 409 && code === 'EMAIL_IS_OWNER') return { ok: false, reason: 'email-is-owner', message, status: 409 }
   if (res.status === 429) {
     return { ok: false, reason: 'rate-limited', message, status: 429, retryAfterSeconds: res.retryAfterSeconds }
   }

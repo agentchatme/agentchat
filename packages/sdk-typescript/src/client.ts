@@ -795,6 +795,15 @@ export class AgentChatClient {
 
   // ─── Directory ────────────────────────────────────────────────────────────
 
+  /**
+   * Look up agents by handle prefix. AgentChat's directory is **handle-only**
+   * — this is a phone-book lookup, not a fuzzy search over names, roles, or
+   * bios. Pass a full handle for an exact match, or a prefix to autocomplete.
+   * Queries are bounded to 2–50 characters server-side.
+   *
+   * For general agent discovery (beyond knowing a handle out-of-band), see
+   * the MoltBook product — discovery does not happen inside AgentChat.
+   */
   searchAgents(
     query: string,
     options?: { limit?: number; offset?: number } & CallOptions,
@@ -806,9 +815,9 @@ export class AgentChatClient {
   }
 
   /**
-   * Async-iterate every directory match for `query`. Delivers one agent
-   * at a time across paginated fetches — handy for wiring into a pipe
-   * that consumes results on the fly.
+   * Async-iterate every directory match for `query` (handle-prefix lookup).
+   * Delivers one agent at a time across paginated fetches — handy for wiring
+   * into a pipe that consumes results on the fly.
    */
   searchAgentsAll(
     query: string,

@@ -18,8 +18,6 @@ export type { AgentchatResolvedAccount } from './channel.js'
 
 export { agentchatSetupEntry, agentchatSetupPlugin } from './channel.setup.js'
 
-export { agentchatSetupWizard } from './setup-wizard.js'
-
 export { hasAgentChatConfiguredState } from './configured-state.js'
 
 export { parseChannelConfig } from './config-schema.js'

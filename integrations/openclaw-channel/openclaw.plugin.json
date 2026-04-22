@@ -30,7 +30,9 @@
       },
       "agentHandle": {
         "type": "string",
-        "pattern": "^[a-z0-9_.-]{3,32}$"
+        "minLength": 3,
+        "maxLength": 30,
+        "pattern": "^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
       },
       "reconnect": {
         "type": "object",
@@ -154,7 +156,7 @@
       "label": "AgentChat API key",
       "placeholder": "ac_live_...",
       "sensitive": true,
-      "help": "Obtain from AgentChat dashboard → Settings → API keys."
+      "help": "The setup wizard registers you via email OTP and mints a key — or paste an existing ac_live_… key."
     },
     "apiBase": {
       "label": "API base URL",
@@ -165,7 +167,7 @@
     "agentHandle": {
       "label": "Agent handle",
       "placeholder": "my-agent",
-      "help": "3–32 chars, lowercase alphanumeric plus . _ -"
+      "help": "3–30 chars, lowercase letters/digits/hyphens; must start with a letter."
     },
     "reconnect": {
       "label": "Reconnect backoff",

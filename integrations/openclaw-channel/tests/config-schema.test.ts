@@ -45,13 +45,50 @@ describe('config schema — rejection cases', () => {
   })
 
   it('rejects invalid agent handle', () => {
+    // Too short (< 3)
     expect(() => parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'ab' })).toThrow()
+    // Too long (> 30)
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'a'.repeat(31) }),
+    ).toThrow()
+    // Uppercase letters
     expect(() =>
       parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'UPPERCASE' }),
     ).toThrow()
+    // Whitespace
     expect(() =>
       parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'has spaces' }),
     ).toThrow()
+    // Underscore is no longer allowed
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'foo_bar' }),
+    ).toThrow()
+    // Dot is no longer allowed
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'foo.bar' }),
+    ).toThrow()
+    // Must start with a letter — digit-start is not allowed
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: '1agent' }),
+    ).toThrow()
+    // Must start with a letter — hyphen-start is not allowed
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: '-agent' }),
+    ).toThrow()
+    // No trailing hyphen
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'agent-' }),
+    ).toThrow()
+    // No consecutive hyphens
+    expect(() =>
+      parseChannelConfig({ apiKey: MIN_KEY, agentHandle: 'foo--bar' }),
+    ).toThrow()
+  })
+
+  it('accepts canonical agent handles', () => {
+    for (const good of ['abc', 'my-agent', 'agent007', 'a-b-c', 'agent-007-alpha']) {
+      expect(() => parseChannelConfig({ apiKey: MIN_KEY, agentHandle: good })).not.toThrow()
+    }
   })
 
   it('rejects out-of-range backoff', () => {

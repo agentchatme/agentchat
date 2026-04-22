@@ -1,16 +1,14 @@
 /**
  * AgentChat channel plugin — entry point.
  *
- * P1 (this file): wires the real OpenClaw SDK contracts — builds a
- *   `ChannelPlugin<AgentchatResolvedAccount>` with id / meta / capabilities /
- *   config-adapter / config-schema / setup, and wraps it via
- *   `defineChannelPluginEntry(...)` for OpenClaw's extension loader.
+ * Wires the real OpenClaw SDK contracts — builds a
+ * `ChannelPlugin<AgentchatResolvedAccount>` with id / meta / capabilities /
+ * config-adapter / config-schema / setup + setupWizard, and wraps it via
+ * `defineChannelPluginEntry(...)` for OpenClaw's extension loader.
  *
  * Config adapter supports both:
  *   - single-account flat form: `channels.agentchat.{ apiKey, apiBase, ... }`
  *   - multi-account form:       `channels.agentchat.accounts.<id>.{ apiKey, ... }`
- *
- * Runtime (WS client, inbound normalizer, outbound adapter) arrives in P2+.
  *
  * Loaded by OpenClaw via `package.json`'s `openclaw.extensions` entry.
  */
@@ -20,21 +18,34 @@ import {
   defineChannelPluginEntry,
   type ChannelConfigUiHint,
   type ChannelPlugin,
-  type OpenClawConfig,
 } from 'openclaw/plugin-sdk/channel-core'
 
+import {
+  AGENTCHAT_CHANNEL_ID,
+  AGENTCHAT_DEFAULT_ACCOUNT_ID,
+  MIN_API_KEY_LENGTH,
+  applyAgentchatAccountPatch,
+  isApiKeyPresent,
+  readAccountRaw,
+  readChannelSection,
+  splitEnabledFromRaw,
+} from './channel-account.js'
+import { agentchatSetupWizard } from './channel.wizard.js'
 import {
   agentchatChannelConfigSchema,
   parseChannelConfig,
   type AgentchatChannelConfig,
 } from './config-schema.js'
 import { validateApiKey } from './setup-client.js'
-import { agentchatSetupWizard } from './setup-wizard.js'
 
-export const AGENTCHAT_CHANNEL_ID = 'agentchat' as const
-export const AGENTCHAT_DEFAULT_ACCOUNT_ID = 'default'
-
-const MIN_API_KEY_LENGTH = 20
+export {
+  AGENTCHAT_CHANNEL_ID,
+  AGENTCHAT_DEFAULT_ACCOUNT_ID,
+  MIN_API_KEY_LENGTH,
+  applyAgentchatAccountPatch,
+  isApiKeyPresent,
+  readAgentchatConfigField,
+} from './channel-account.js'
 
 export interface AgentchatResolvedAccount {
   accountId: string
@@ -44,66 +55,12 @@ export interface AgentchatResolvedAccount {
   parseError: string | null
 }
 
-type ChannelSectionRaw = Record<string, unknown> & {
-  accounts?: Record<string, unknown>
-  enabled?: unknown
-  apiKey?: unknown
-  apiBase?: unknown
-  agentHandle?: unknown
-}
-
-function readChannelSection(cfg: OpenClawConfig | undefined): ChannelSectionRaw | undefined {
-  const channels = (cfg as { channels?: Record<string, unknown> } | undefined)?.channels
-  const section = channels?.[AGENTCHAT_CHANNEL_ID]
-  return section && typeof section === 'object' && !Array.isArray(section)
-    ? (section as ChannelSectionRaw)
-    : undefined
-}
-
-function readAccountRaw(
-  section: ChannelSectionRaw | undefined,
-  accountId: string,
-): Record<string, unknown> | undefined {
-  if (!section) return undefined
-  const { accounts } = section
-  if (accounts && typeof accounts === 'object' && !Array.isArray(accounts)) {
-    const entry = (accounts as Record<string, unknown>)[accountId]
-    if (entry && typeof entry === 'object') return entry as Record<string, unknown>
-  }
-  // Single-account fallback: treat section-level fields as the 'default' account,
-  // stripping the `accounts` subsection (but preserving `enabled`, which the
-  // caller extracts before Zod parsing).
-  if (accountId === AGENTCHAT_DEFAULT_ACCOUNT_ID) {
-    const { accounts: _accounts, ...rest } = section
-    void _accounts
-    return rest as Record<string, unknown>
-  }
-  return undefined
-}
-
-/**
- * Pulls the `enabled` flag out of a raw account record and returns a copy
- * safe to feed into `parseChannelConfig` (which enforces `.strict()` — an
- * unknown `enabled` key would otherwise reject).
- */
-function splitEnabledFromRaw(
-  raw: Record<string, unknown> | undefined,
-): { enabled: boolean; forParse: Record<string, unknown> | undefined } {
-  if (!raw) return { enabled: true, forParse: undefined }
-  const { enabled, ...rest } = raw
-  return { enabled: enabled !== false, forParse: rest }
-}
-
-function isApiKeyPresent(value: unknown): value is string {
-  return typeof value === 'string' && value.length >= MIN_API_KEY_LENGTH
-}
-
 const uiHints: Record<string, ChannelConfigUiHint> = {
   apiKey: {
     label: 'AgentChat API key',
     placeholder: 'ac_live_...',
     sensitive: true,
-    help: 'Obtain from AgentChat dashboard → Settings → API keys.',
+    help: 'The setup wizard registers you via email OTP and mints a key — or paste an existing ac_live_… key.',
   },
   apiBase: {
     label: 'API base URL',
@@ -114,7 +71,7 @@ const uiHints: Record<string, ChannelConfigUiHint> = {
   agentHandle: {
     label: 'Agent handle',
     placeholder: 'my-agent',
-    help: '3–32 chars, lowercase alphanumeric plus . _ -',
+    help: '3–30 chars, lowercase letters/digits/hyphens; must start with a letter.',
   },
   reconnect: { label: 'Reconnect backoff', advanced: true },
   ping: { label: 'WebSocket ping cadence', advanced: true },
@@ -267,36 +224,10 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount> = {
     },
 
     applyAccountConfig({ cfg, accountId, input }) {
-      const channels: Record<string, unknown> = {
-        ...((cfg as { channels?: Record<string, unknown> } | undefined)?.channels ?? {}),
-      }
-      const currentSection = channels[AGENTCHAT_CHANNEL_ID]
-      const section: ChannelSectionRaw =
-        currentSection && typeof currentSection === 'object' && !Array.isArray(currentSection)
-          ? { ...(currentSection as ChannelSectionRaw) }
-          : {}
-
       const patch: Record<string, unknown> = {}
       if (typeof input.token === 'string' && input.token.length > 0) patch.apiKey = input.token
       if (typeof input.url === 'string' && input.url.length > 0) patch.apiBase = input.url
-
-      if (accountId === AGENTCHAT_DEFAULT_ACCOUNT_ID && !section.accounts) {
-        // Flat form for the simple single-account case.
-        Object.assign(section, patch)
-      } else {
-        const accounts: Record<string, unknown> = {
-          ...((section.accounts as Record<string, unknown> | undefined) ?? {}),
-        }
-        const prevAccount =
-          typeof accounts[accountId] === 'object' && accounts[accountId] !== null
-            ? (accounts[accountId] as Record<string, unknown>)
-            : {}
-        accounts[accountId] = { ...prevAccount, ...patch }
-        section.accounts = accounts
-      }
-
-      channels[AGENTCHAT_CHANNEL_ID] = section
-      return { ...cfg, channels } as OpenClawConfig
+      return applyAgentchatAccountPatch(cfg, accountId, patch)
     },
 
     /**

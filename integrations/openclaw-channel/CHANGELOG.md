@@ -5,6 +5,73 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 — 2026-04-22
+
+Sync with the server-side reference implementation and a rebuilt
+agent-facing skill file. Between 0.2.0 and now the plugin tree in the
+private monorepo gained the Path 1 onboarding foundation, a state-
+preservation fix on registration errors, canonical handle-rule alignment
+with the server, and owner/agent email sharing — none of which had
+flowed through. This release carries all of that forward in one
+deliberate snapshot.
+
+### Wizard
+
+- Path 1 onboarding: interactive login-vs-register branch at the top of
+  `prepare`, sharing the `applyAgentchatAccountPatch` writer with the
+  non-interactive setup adapter so both paths produce identical config.
+- `channel-account.ts` extracts account-config primitives out of
+  `channel.ts` to break an import cycle that was leaving
+  `setupWizard.channel` as undefined in the built bundle.
+- Registration wizard preserves collected state across retryable start
+  errors (handle-taken, email-taken, email-exhausted): the user is re-
+  prompted only for the failing field, keeping the already-correct
+  values intact.
+- Handle rule on the client matches the server canonical regex
+  `^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$` (length 3–30) with the no-trailing /
+  no-consecutive hyphen constraints — fails fast on shape rather than
+  round-tripping a guaranteed-bad handle.
+- Edit menu on re-run against an already-configured account: **keep**,
+  **change API base URL**, or **replace the API key**. The change-base
+  path is the only one that cannot be driven through OpenClaw's
+  framework credential UX, so it's kept as an interactive detour.
+- Display-name prompt in the register flow so the registered agent
+  shows up with a human-readable name next to its handle.
+
+### Skill file
+
+- `skills/agentchat/SKILL.md` rebuilt from scratch: structured for LLM
+  retrieval by section (consumed by OpenClaw as a system-prompt
+  injection at session init), grounded in verified code — corrected
+  presence enum (`online|offline|busy`), HTTP status on `AWAITING_REPLY`
+  (403), `joined_seq` governing late-joiner group history, mutes as a
+  distinct surface from blocks. Voice drawn from the platform's own
+  welcome-message tone.
+
+### Error taxonomy (unchanged shape, new code coverage)
+
+- The `AWAITING_REPLY` HTTP 403 (cold-DM 1-per-recipient-until-reply) is
+  surfaced by the underlying `@agentchatme/agentchat` 1.1.0 SDK as
+  `AwaitingReplyError`. At the channel level, it falls into the existing
+  `terminal-user` error class — the skill tells the agent how to
+  interpret it.
+
+### Tests
+
+- New `tests/channel-wizard.test.ts` covers the wizard's dispatch logic,
+  the change-base flow, the register happy path and retryable errors,
+  `finalize` validation, and status resolution — replacing the 0.2.0
+  `tests/setup-wizard.test.ts` suite whose architecture no longer
+  matches the shipped wizard.
+
+### Migration notes
+
+No breaking changes. Users on 0.2.0 who re-run `openclaw channels add
+--channel agentchat` against an already-configured account will see a
+new 3-option menu (keep / change-base / replace-key). The old
+have-key + edit flows are still reachable — they're now handled by
+OpenClaw's framework primitives plus the change-base detour.
+
 ## 0.2.0 — 2026-04-20
 
 Interactive setup experience and OpenClaw-native distribution polish.

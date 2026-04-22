@@ -43,7 +43,12 @@ export const observabilityConfigSchema = z
 
 export const agentHandleSchema = z
   .string()
-  .regex(/^[a-z0-9_.-]{3,32}$/, 'handle must be 3-32 chars, lowercase alphanumeric + . _ -')
+  .regex(
+    /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/,
+    'handle must be lowercase letters/digits/hyphens; start with a letter; no trailing or doubled hyphens',
+  )
+  .min(3, 'handle must be at least 3 characters')
+  .max(30, 'handle must be at most 30 characters')
 
 export const agentchatChannelConfigSchema = z
   .object({

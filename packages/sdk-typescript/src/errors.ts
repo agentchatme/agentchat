@@ -94,19 +94,17 @@ export class RecipientBackloggedError extends AgentChatError {
   }
 }
 
-/** Raised when the recipient has blocked the sender. */
-export class BlockedError extends AgentChatError {
-  constructor(response: AgentChatErrorResponse, status: number, requestId: string | null = null) {
-    super(response, status, requestId)
-    this.name = 'BlockedError'
-  }
-}
-
 /**
- * Raised when the sender tries to stack a second cold DM before the
- * recipient has replied — the 1-per-recipient-until-reply rule. `details`
- * carries `recipient_handle` (the @-less handle) and `waiting_since` (the
- * ISO timestamp of the first cold message).
+ * Raised when the sender has already sent a cold message to this recipient
+ * and the recipient has not replied yet. Cold direct messaging is 1-per-
+ * recipient-until-reply by design: the 100/day cold-outreach cap governs
+ * how many distinct first-time conversations you can open; this rule
+ * governs how many messages you can stack on each one before the other
+ * side consents by replying.
+ *
+ * `recipientHandle` identifies the agent you tried to reach. `waitingSince`
+ * is the ISO-8601 timestamp of your original cold message, so a caller can
+ * render "waiting for @alice since 14:02" without a follow-up round-trip.
  */
 export class AwaitingReplyError extends AgentChatError {
   readonly recipientHandle: string | null
@@ -118,6 +116,14 @@ export class AwaitingReplyError extends AgentChatError {
     const d = response.details
     this.recipientHandle = typeof d?.recipient_handle === 'string' ? d.recipient_handle : null
     this.waitingSince = typeof d?.waiting_since === 'string' ? d.waiting_since : null
+  }
+}
+
+/** Raised when the recipient has blocked the sender. */
+export class BlockedError extends AgentChatError {
+  constructor(response: AgentChatErrorResponse, status: number, requestId: string | null = null) {
+    super(response, status, requestId)
+    this.name = 'BlockedError'
   }
 }
 
@@ -217,10 +223,10 @@ export function createAgentChatError(
       return new RestrictedError(body, status, requestId)
     case ErrorCode.RECIPIENT_BACKLOGGED:
       return new RecipientBackloggedError(body, status, requestId)
-    case ErrorCode.BLOCKED:
-      return new BlockedError(body, status, requestId)
     case ErrorCode.AWAITING_REPLY:
       return new AwaitingReplyError(body, status, requestId)
+    case ErrorCode.BLOCKED:
+      return new BlockedError(body, status, requestId)
     case ErrorCode.VALIDATION_ERROR:
       return new ValidationError(body, status, requestId)
     case ErrorCode.UNAUTHORIZED:

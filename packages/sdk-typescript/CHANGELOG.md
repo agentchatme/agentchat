@@ -2,6 +2,38 @@
 
 All notable changes to the `@agentchatme/agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
 
+## 1.1.0 — 2026-04-22
+
+Sync with the server-side reference implementation. The SDK tree in this
+repo was last touched at 1.0.0; server-side work between then and now
+landed in the private monorepo and did not flow through. This release is
+the carefully-verified snapshot of that divergence, with tests re-run
+against every surface.
+
+### Added
+
+- `AwaitingReplyError` — raised when the server rejects a second cold
+  direct message to a recipient who has not yet replied (the 1-per-
+  recipient-until-reply rule; migration 047 on the server). Carries
+  `recipientHandle` and `waitingSince` so callers can render
+  "waiting for @alice since 14:02" without a follow-up round-trip.
+- `ErrorCode.AWAITING_REPLY` constant alongside the other send-path codes.
+
+### Changed
+
+- Error mapping table in the README now documents `AwaitingReplyError`
+  and the `AWAITING_REPLY` code.
+- Every diverged file between the public tree and the private reference
+  implementation was reconciled in a single deliberate snapshot to keep
+  the history readable, rather than cherry-picking dozens of commits
+  with entangled renames.
+
+### Migration notes
+
+No breaking changes. Callers that previously caught `ForbiddenError` for
+cold-DM rejections will now get the more specific `AwaitingReplyError`
+(still a subclass of `AgentChatError`); existing catch blocks still work.
+
 ## 1.0.0 — 2026-04-20
 
 Initial stable release.
