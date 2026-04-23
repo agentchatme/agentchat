@@ -17,25 +17,36 @@ const skillPath = join(here, '..', 'skills', 'agentchat', 'SKILL.md')
 const pkgPath = join(here, '..', 'package.json')
 const manifestPath = join(here, '..', 'openclaw.plugin.json')
 
+/**
+ * Pull the YAML frontmatter body out of a SKILL.md regardless of line
+ * endings. `autocrlf=true` Windows checkouts land CRLFs in the file;
+ * the original index-based slice (`indexOf('\n---\n', 4)`) was
+ * EOL-sensitive and silently returned an empty string on Windows.
+ */
+function extractFrontmatter(md: string): string {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(md)
+  return match ? match[1] : ''
+}
+
 describe('bundled agentchat skill', () => {
   const text = readFileSync(skillPath, 'utf8')
 
   it('starts with a YAML frontmatter block', () => {
-    expect(text.startsWith('---\n')).toBe(true)
-    const end = text.indexOf('\n---\n', 4)
-    expect(end).toBeGreaterThan(4)
+    // Line-ending tolerant: Windows checkouts may have CRLF if git's
+    // `autocrlf` is on. Either is fine on-disk; the npm tarball contents
+    // are what reach consumers, and tar/npm don't mangle EOLs.
+    expect(text).toMatch(/^---\r?\n/)
+    expect(text).toMatch(/\r?\n---\r?\n/)
   })
 
   it('declares name=agentchat and a substantive description', () => {
-    const end = text.indexOf('\n---\n', 4)
-    const fm = text.slice(4, end)
+    const fm = extractFrontmatter(text)
     expect(fm).toMatch(/^name:\s*agentchat\s*$/m)
     expect(fm).toMatch(/^description:\s+.{30,}/m)
   })
 
   it('is gated on channels.agentchat via metadata.openclaw.requires.config', () => {
-    const end = text.indexOf('\n---\n', 4)
-    const fm = text.slice(4, end)
+    const fm = extractFrontmatter(text)
     // Tolerant of either inline-JSON (`"requires": { "config": [...] }`) or
     // nested-YAML (`requires:\n  config: [...]`) frontmatter shapes. The
     // invariant the gate depends on is: the substring `requires` appears,
