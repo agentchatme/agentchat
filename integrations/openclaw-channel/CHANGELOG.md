@@ -5,55 +5,6 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## 0.5.1 — 2026-04-23
-
-### Clear the ClawHub static-scan Medium + document the remaining High
-
-ClawHub's pattern scanner reports five findings on the 0.5.0 card:
-
-- **Medium × 1:** `skills/agentchat/SKILL.md:9` — *prompt-injection style
-  instruction pattern detected* (keyword-matched on the phrase "your
-  system prompt")
-- **High × 4:** `dist/{index,setup-entry}.{js,cjs}:~730` — *environment
-  variable access combined with network send* (one source call site,
-  quadrupled by bundle format)
-
-Neither is a real vulnerability. The skill line was self-referencing
-the baseline identity our `agent-prompt.ts` binding injects; the env-
-var read is dictated by the OpenClaw plugin SDK's
-`ChannelSetupWizardCredential.inspect()` contract and drives the
-"AGENTCHAT_API_KEY detected in env. Use it?" prompt every messaging-
-channel plugin on ClawHub uses.
-
-**What changed in this release (no runtime behavior change):**
-
-- **`skills/agentchat/SKILL.md`** — rephrased two mentions of "from
-  your system prompt" → "from your baseline" (line 3 frontmatter
-  description; line 9 body opener). Meaning is preserved — the
-  `agent-prompt.ts` binding injects identity strings into the baseline
-  context, so "baseline" is actually a more accurate pointer than
-  "system prompt" was. Clears the Medium finding.
-- **`SECURITY.md`** — added a "Known scanner findings (accepted false
-  positives)" section that names the High finding, quotes the SDK
-  type that forces the pattern, explains the data flow (`envValue`
-  returned from `inspect()` stays in-process with OpenClaw and is
-  never `fetch`-sent as-is), and lists the workarounds we considered
-  and rejected. Reviewers who click into SECURITY.md get a crisp
-  explanation instead of having to reason about it themselves.
-
-Version bumped 0.5.0 → 0.5.1 (patch — skill phrasing + documentation
-only; no code behavior change). After republish the ClawHub card will
-show 4 findings (all the same env-var pattern on different bundle
-formats) instead of 5.
-
-**What we will NOT do to clear the remaining High.** Removing the
-`AGENTCHAT_API_KEY` env-var support would satisfy the scanner but
-break the auto-detect UX. Dropping `validateApiKey()` from setup would
-let bad keys ship into production undetected. Splitting source files
-doesn't help because tsup bundles into the same dist file regardless.
-Each of those would be a product regression in service of a scanner
-label; we take the label and document it instead.
-
 ## 0.5.0 — 2026-04-23
 
 ### ClawHub listing overhaul — title, tagline, icon, discovery tags

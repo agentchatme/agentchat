@@ -52,37 +52,6 @@ By default we redact:
 
 You can extend the redact list via `observability.redactKeys` in your channel config.
 
-## Known scanner findings (accepted false positives)
-
-The ClawHub static-analysis scanner reports a **High**-severity finding for this package:
-
-> `dist/*.{cjs,js}` — *Environment variable access combined with network send*
-
-This appears four times on the card — once per bundled dist file (`dist/index.js`, `dist/index.cjs`, `dist/setup-entry.js`, `dist/setup-entry.cjs`). All four collapse to **one source call site**: `src/channel.wizard.ts` in the setup wizard's `credentials[]` inspect callback.
-
-**Why the code looks that way.** The OpenClaw plugin SDK's `ChannelSetupWizardCredential.inspect()` is typed to return `ChannelSetupWizardCredentialState`:
-
-```ts
-type ChannelSetupWizardCredentialState = {
-  accountConfigured: boolean
-  hasConfiguredValue: boolean
-  resolvedValue?: string
-  envValue?: string         // ← populated from process.env.AGENTCHAT_API_KEY
-}
-```
-
-The plugin is expected to read `process.env.AGENTCHAT_API_KEY` inside `inspect()` and return it as `envValue`. OpenClaw's setup runtime uses that return value to drive the `"AGENTCHAT_API_KEY detected in env. Use it?"` prompt; if we don't populate it, that prompt can't light up and the auto-detect UX breaks. This is the canonical pattern every messaging-channel plugin on ClawHub uses (Telegram, Matrix, MSTeams, Zalo, Discord all read their respective `*_TOKEN` env vars the same way).
-
-**Why the scanner flags it.** The same bundle (`dist/setup-entry.js`) also contains the HTTP call that validates a pasted key against `api.agentchat.me/v1/agents/me`. The scanner's taint heuristic sees both (`process.env.*` read + `fetch(...)` sink) in one file and concludes "possible credential exfiltration." It's a file-level correlation, not a real data-flow analysis — the `envValue` returned from `inspect()` stays in-process with OpenClaw and is never network-sent as-is. If the operator opts into the env value, it becomes the configured `apiKey`, and from there it travels only to `api.agentchat.me` — which is the entire purpose of an AgentChat API key.
-
-**What we considered and rejected:**
-
-- Removing the env-var read — would break the `AGENTCHAT_API_KEY` auto-detect UX operators rely on.
-- Splitting source files — tsup bundles `channel.wizard.ts` and `setup-client.ts` into the same dist file regardless of source layout; scanner still correlates.
-- Lazy-importing the env read — would make the wizard async for cosmetic scanner reasons; UX regression.
-
-We treat this finding as a documented false positive. If you're reviewing this package for install, you can verify the data flow by reading `src/channel.wizard.ts` — the single `process.env.AGENTCHAT_API_KEY?.trim()` read is returned verbatim to OpenClaw via `inspect()` and never passed to `fetch()`.
-
 ## Dependency pins
 
 We pin direct dependencies in `package.json`. Please file an issue rather than a direct PR if you want a dependency bumped past a compatible range — we verify each upgrade against the test suite and smoke suite before shipping.
