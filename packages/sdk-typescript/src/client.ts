@@ -994,9 +994,10 @@ export class AgentChatClient {
    * The WebSocket client drives this automatically on reconnect; most
    * callers never need it directly.
    */
-  sync(opts?: { limit?: number } & CallOptions) {
+  sync(opts?: { limit?: number; after?: number } & CallOptions) {
     const params = new URLSearchParams()
     if (opts?.limit) params.set('limit', String(opts.limit))
+    if (opts?.after !== undefined) params.set('after', String(opts.after))
     const qs = params.toString()
     return this.get<{
       envelopes: Array<{

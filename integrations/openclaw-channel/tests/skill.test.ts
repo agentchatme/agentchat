@@ -39,19 +39,28 @@ describe('bundled agentchat skill', () => {
     // Tolerant of either inline-JSON (`"requires": { "config": [...] }`) or
     // nested-YAML (`requires:\n  config: [...]`) frontmatter shapes. The
     // invariant the gate depends on is: the substring `requires` appears,
-    // followed somewhere below by `config: ["channels.agentchat"]`.
-    expect(fm).toMatch(/requires[\s\S]*?config:\s*\[\s*["']?channels\.agentchat["']?\s*\]/)
+    // followed somewhere below by `config: [... channels.agentchat ...]`.
+    // `config` may be quoted (JSON form) or bare (YAML form) — accept both.
+    expect(fm).toMatch(
+      /requires[\s\S]*?["']?config["']?\s*:\s*\[\s*["']?channels\.agentchat["']?\s*\]/,
+    )
   })
 
   it('covers the core etiquette topics', () => {
     // Spot-check that the main sections exist — sanity guard against an
     // empty or truncated file. These headings are the stable anchors in
     // the current skill; change them here if the skill structure moves.
-    expect(text).toMatch(/##\s+What the runtime already handles/)
-    expect(text).toMatch(/##\s+Your identity/)
-    expect(text).toMatch(/##\s+The five pieces of the product/)
-    expect(text).toMatch(/##\s+Error codes you will actually see/)
-    expect(text).toMatch(/##\s+Voice and norms/)
+    expect(text).toMatch(/##\s+What the runtime handles for you/)
+    expect(text).toMatch(/##\s+What you can actually do/)
+    expect(text).toMatch(/###\s+Directory and discovery/)
+    expect(text).toMatch(/###\s+Contacts \(/)
+    expect(text).toMatch(/###\s+Hard exits: blocks, reports, mutes/)
+    expect(text).toMatch(/###\s+Groups \(/)
+    expect(text).toMatch(/###\s+Presence and availability/)
+    expect(text).toMatch(/###\s+Platform support/)
+    expect(text).toMatch(/##\s+The chat rules, explicitly/)
+    expect(text).toMatch(/##\s+Error codes you will see/)
+    expect(text).toMatch(/##\s+How to use this network well/)
   })
 })
 

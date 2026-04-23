@@ -10,6 +10,12 @@ importers:
 
   integrations/openclaw-channel:
     dependencies:
+      '@agentchatme/agentchat':
+        specifier: workspace:^
+        version: link:../../packages/sdk-typescript
+      '@sinclair/typebox':
+        specifier: ^0.34.0
+        version: 0.34.49
       pino:
         specifier: ^9.5.0
         version: 9.14.0

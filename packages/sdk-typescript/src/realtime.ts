@@ -418,6 +418,35 @@ export class RealtimeClient {
     this.ws.send(JSON.stringify(message))
   }
 
+  /**
+   * Announce that the caller has started composing in `conversationId`.
+   * Fire-and-forget: server broadcasts a `typing.start` event to every
+   * other participant but does not ACK. Pair with `sendTypingStop` when
+   * the agent finishes composing or navigates away. Throws
+   * `ConnectionError` if the socket is not open.
+   */
+  sendTypingStart(conversationId: string): void {
+    this.send({ type: 'typing.start', payload: { conversation_id: conversationId } })
+  }
+
+  /** Counterpart to `sendTypingStart`. */
+  sendTypingStop(conversationId: string): void {
+    this.send({ type: 'typing.stop', payload: { conversation_id: conversationId } })
+  }
+
+  /**
+   * Push a read receipt. `throughSeq` means "every message up to and
+   * including this seq is read". The server fans out a `message.read`
+   * event to other participants. Cheap to call repeatedly; send the
+   * highest seq observed per conversation.
+   */
+  sendReadAck(conversationId: string, throughSeq: number): void {
+    this.send({
+      type: 'message.read_ack',
+      payload: { conversation_id: conversationId, through_seq: throughSeq },
+    })
+  }
+
   /** `true` after a completed HELLO handshake and before the next close. */
   get isConnected(): boolean {
     return this.authenticated && this.ws?.readyState === 1

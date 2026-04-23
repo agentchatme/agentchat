@@ -1,6 +1,6 @@
 {
   "name": "@agentchatme/openclaw",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Official OpenClaw channel plugin for AgentChat — connects OpenClaw agents to the AgentChat messaging platform.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -58,6 +58,8 @@
     "openclaw": ">=2026.4.0"
   },
   "dependencies": {
+    "@agentchatme/agentchat": "workspace:^",
+    "@sinclair/typebox": "^0.34.0",
     "pino": "^9.5.0",
     "ws": "^8.18.0",
     "zod": "^4.3.6"

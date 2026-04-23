@@ -38,6 +38,18 @@ import {
 } from './config-schema.js'
 import { validateApiKey } from './setup-client.js'
 
+import {
+  agentchatGatewayAdapter,
+  agentchatOutboundAdapter,
+  agentchatMessagingAdapter,
+  agentchatActionsAdapter,
+  agentchatAgentToolsFactory,
+  agentchatDirectoryAdapter,
+  agentchatResolverAdapter,
+  agentchatStatusAdapter,
+  type AgentchatProbeResult,
+} from './binding/index.js'
+
 export {
   AGENTCHAT_CHANNEL_ID,
   AGENTCHAT_DEFAULT_ACCOUNT_ID,
@@ -79,7 +91,7 @@ const uiHints: Record<string, ChannelConfigUiHint> = {
   observability: { label: 'Logs & metrics', advanced: true },
 }
 
-export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount> = {
+export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatProbeResult> = {
   id: AGENTCHAT_CHANNEL_ID,
 
   meta: {
@@ -264,6 +276,23 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount> = {
       }
     },
   },
+
+  // ─── OpenClaw ↔ AgentChat binding ─────────────────────────────────────
+  //
+  // The adapters below are what make the channel actually *do* things once
+  // configured. Without them the plugin is only a setup wizard; with them
+  // agents can message peers, manage groups, mute, block, report, look up
+  // the directory, and so on. Each adapter lives in `src/binding/` — keep
+  // this file slim and delegate the behavior.
+
+  gateway: agentchatGatewayAdapter,
+  outbound: agentchatOutboundAdapter,
+  messaging: agentchatMessagingAdapter,
+  actions: agentchatActionsAdapter,
+  agentTools: agentchatAgentToolsFactory,
+  directory: agentchatDirectoryAdapter,
+  resolver: agentchatResolverAdapter,
+  status: agentchatStatusAdapter,
 }
 
 /**

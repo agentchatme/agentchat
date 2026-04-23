@@ -19,6 +19,7 @@ export type ClientAction =
   | 'message.read_ack'
   | 'presence.update'
   | 'typing.start'
+  | 'typing.stop'
 
 export interface WsMessage {
   type: ServerEvent | ClientAction

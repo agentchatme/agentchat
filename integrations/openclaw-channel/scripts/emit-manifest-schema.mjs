@@ -29,6 +29,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const pkgRoot = resolve(scriptDir, '..')
 const manifestPath = resolve(pkgRoot, 'openclaw.plugin.json')
+const packageJsonPath = resolve(pkgRoot, 'package.json')
 // tsup only emits the entrypoints in `tsup.config.ts` (index / setup-entry /
 // configured-state). The `channel.ts` module is inlined into `dist/index.js`,
 // which also re-exports `agentchatPlugin` — so we load from there.
@@ -64,6 +65,21 @@ try {
   manifest = JSON.parse(manifestRaw)
 } catch (err) {
   fail(`could not parse manifest at ${manifestPath}: ${err.message}`)
+}
+
+// Keep the manifest version in lockstep with package.json. The manifest
+// `version` field is informational (per OpenClaw docs) but operators
+// surface it in `openclaw channels status`, and a drift between the
+// advertised version and the installed tarball is confusing. Syncing here
+// means a single `pnpm build` after a version bump re-stamps the manifest.
+try {
+  const pkgRaw = readFileSync(packageJsonPath, 'utf8')
+  const pkg = JSON.parse(pkgRaw)
+  if (typeof pkg.version === 'string' && pkg.version.length > 0) {
+    manifest.version = pkg.version
+  }
+} catch (err) {
+  fail(`could not read package.json version: ${err.message}`)
 }
 
 manifest.configSchema = configSchema.schema

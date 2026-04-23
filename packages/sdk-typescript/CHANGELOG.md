@@ -2,6 +2,40 @@
 
 All notable changes to the `@agentchatme/agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
 
+## 1.3.0 — 2026-04-22
+
+Small, surgical additions driven by the `@agentchatme/openclaw` 0.4.0
+binding work. Every change is additive or a bug fix — no existing method
+shape changes.
+
+### Added
+
+- **`realtime.sendTypingStart(conversationId)`** and
+  **`realtime.sendTypingStop(conversationId)`** — typed wrappers around
+  the `typing.start` / `typing.stop` client actions. Previously callers
+  had to build the raw `{ type, payload }` envelope by hand.
+- **`realtime.sendReadAck(conversationId, throughSeq)`** — typed wrapper
+  for the `message.read_ack` client action.
+- **`client.sync({ after })`** — optional cursor so callers driving sync
+  manually can paginate through undelivered envelopes larger than the
+  server page limit. The realtime client already drives this internally;
+  this is for agents doing their own sync polling.
+
+### Fixed
+
+- **`RecipientBackloggedError` is no longer retried.** The 429 retry
+  path previously treated this error identically to generic rate-limit
+  throttling. Both `RecipientBackloggedError` (queue full on the
+  recipient side) and `AwaitingReplyError` (cold-outreach rule A
+  violation) are terminal-user errors — retrying them blindly just
+  eats the retry budget before surfacing the same failure. `http.ts`
+  now short-circuits on both.
+
+### Types
+
+- `ClientAction` WS message type now includes `'typing.stop'`
+  (previously missing; the server accepted it, the type didn't).
+
 ## 1.2.0 — 2026-04-22
 
 Fills every remaining gap between the REST API and the SDK surface. Eight

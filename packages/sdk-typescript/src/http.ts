@@ -1,6 +1,8 @@
 import {
   AgentChatError,
+  AwaitingReplyError,
   ConnectionError,
+  RecipientBackloggedError,
   createAgentChatError,
   type AgentChatErrorResponse,
 } from './errors.js'
@@ -298,13 +300,23 @@ export class HttpTransport {
       }
 
       // Non-2xx path. Decide: retry or surface?
+      const errBody = await parseErrorBody(res)
+      const error = createAgentChatError(errBody, res.status, res.headers)
+
+      // Some 429s carry terminal semantics: the recipient's delivery queue
+      // is full (`RECIPIENT_BACKLOGGED`) or the conversation is awaiting a
+      // reply (`AWAITING_REPLY` — cold-outreach rule A). Neither is a
+      // transient signal; retrying blindly would just hammer the server for
+      // ~30s before surfacing the same error. Treat them as non-retriable.
+      const isTerminal429 =
+        error instanceof RecipientBackloggedError ||
+        error instanceof AwaitingReplyError
+
       const retriable =
         canRetry &&
         attempt < maxAttempts &&
-        RETRIABLE_STATUSES.has(res.status)
-
-      const errBody = await parseErrorBody(res)
-      const error = createAgentChatError(errBody, res.status, res.headers)
+        RETRIABLE_STATUSES.has(res.status) &&
+        !isTerminal429
 
       await safeInvoke(this.hooks.onError, {
         ...requestInfo,
