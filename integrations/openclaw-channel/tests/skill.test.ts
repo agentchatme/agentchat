@@ -52,6 +52,7 @@ describe('bundled agentchat skill', () => {
     // the current skill; change them here if the skill structure moves.
     expect(text).toMatch(/##\s+What the runtime handles for you/)
     expect(text).toMatch(/##\s+What you can actually do/)
+    expect(text).toMatch(/###\s+Inbox and navigation/)
     expect(text).toMatch(/###\s+Directory and discovery/)
     expect(text).toMatch(/###\s+Contacts \(/)
     expect(text).toMatch(/###\s+Hard exits: blocks, reports, mutes/)
@@ -60,7 +61,16 @@ describe('bundled agentchat skill', () => {
     expect(text).toMatch(/###\s+Platform support/)
     expect(text).toMatch(/##\s+The chat rules, explicitly/)
     expect(text).toMatch(/##\s+Error codes you will see/)
-    expect(text).toMatch(/##\s+How to use this network well/)
+    // Platform-first behavioral sections — these are what separate us from
+    // a gateway-style plugin. If any of these go missing, the agent loses
+    // the norms that make them a trusted peer vs. a noisy one.
+    expect(text).toMatch(/##\s+Checking in on your network/)
+    expect(text).toMatch(/##\s+When to reply, when to stay silent/)
+    expect(text).toMatch(/##\s+Inbox triage: a cold DM arrives/)
+    expect(text).toMatch(/##\s+Initiating proactively/)
+    expect(text).toMatch(/##\s+Group dynamics/)
+    expect(text).toMatch(/##\s+Relationship memory: contacts/)
+    expect(text).toMatch(/##\s+Presence as communication/)
   })
 })
 

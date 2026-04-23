@@ -567,6 +567,128 @@ export const agentchatAgentToolsFactory: ChannelAgentToolFactoryFn = ({ cfg }) =
       },
     }),
 
+    // ─── Inbox / navigation ─────────────────────────────────────────────
+    //
+    // These are platform primitives: "check my inbox", "what did X and I
+    // last talk about", "who's in this group". A messaging-gateway plugin
+    // would never need them — its agent is reactive. A platform-native
+    // agent actively browses, catches up after being offline, and decides
+    // whom to engage with based on what's already in the inbox.
+    tool({
+      name: 'agentchat_list_conversations',
+      description:
+        "Browse your inbox — every direct chat and group you're a member of, most-recent first. Use this to: check what's happened since you last looked, find a conversation by peer/group name, see which threads are muted, or decide where to proactively re-engage. Returns conversation ids you can pass to `agentchat_get_conversation_history` for details.",
+      parameters: Type.Object({
+        only: Type.Optional(
+          Type.Union([Type.Literal('direct'), Type.Literal('group')], {
+            description:
+              'Filter by conversation type. Omit for both direct chats and groups.',
+          }),
+        ),
+        includeMuted: Type.Optional(
+          Type.Boolean({
+            description:
+              'Include muted conversations in the output. Default true — mute affects notifications, not visibility.',
+          }),
+        ),
+        account: ACCOUNT_PARAM,
+      }),
+      execute: async (_id, p) => {
+        const r = clientFor(cfg, p.account)
+        if ('error' in r) return err(r.error)
+        try {
+          const convs = await r.client.listConversations()
+          let filtered = convs
+          if (p.only === 'direct') filtered = filtered.filter((c) => c.type === 'direct')
+          if (p.only === 'group') filtered = filtered.filter((c) => c.type === 'group')
+          if (p.includeMuted === false) filtered = filtered.filter((c) => !c.is_muted)
+          if (filtered.length === 0) return ok('no conversations match that filter')
+          const lines = filtered.map((c) => {
+            const mute = c.is_muted ? ' 🔇' : ''
+            const last = c.last_message_at ? ` (last: ${c.last_message_at})` : ''
+            if (c.type === 'group') {
+              return `${c.id} — group "${c.group_name ?? 'Untitled'}" · ${c.group_member_count ?? 0} members${mute}${last}`
+            }
+            const peer = c.participants[0]
+            return `${c.id} — dm with @${peer?.handle ?? 'unknown'}${mute}${last}`
+          })
+          return ok(`${filtered.length} conversation(s):\n${lines.join('\n')}`)
+        } catch (e) {
+          return err(toMsg(e))
+        }
+      },
+    }),
+    tool({
+      name: 'agentchat_get_conversation_history',
+      description:
+        "Fetch recent messages from a specific conversation. Use this to: catch up on a thread you've been away from, load context before replying to an old message, or read back what you and a contact discussed last time. Returns messages oldest-first so the tail of your output is the most recent. Pass `beforeSeq` to paginate further back.",
+      parameters: Type.Object({
+        conversationId: Type.String({
+          description:
+            'The conversation id (prefix `conv_` for direct, `grp_` for group). Get one from `agentchat_list_conversations`.',
+        }),
+        limit: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            maximum: 200,
+            default: 50,
+            description: 'Max messages to return (default 50, cap 200).',
+          }),
+        ),
+        beforeSeq: Type.Optional(
+          Type.Integer({
+            minimum: 1,
+            description:
+              'Paginate backwards: return messages with seq less than this. Omit to get the most recent page.',
+          }),
+        ),
+        account: ACCOUNT_PARAM,
+      }),
+      execute: async (_id, p) => {
+        const r = clientFor(cfg, p.account)
+        if ('error' in r) return err(r.error)
+        try {
+          const opts: { limit: number; beforeSeq?: number } = { limit: p.limit ?? 50 }
+          if (typeof p.beforeSeq === 'number') opts.beforeSeq = p.beforeSeq
+          const messages = await r.client.getMessages(p.conversationId, opts)
+          if (messages.length === 0) return ok('no messages in this conversation yet')
+          // Oldest-first so reading top-to-bottom matches chronological
+          // order; most LLMs handle that better than reverse-chronological.
+          const sorted = [...messages].sort((a, b) => a.seq - b.seq)
+          const lines = sorted.map((m) => {
+            const body = m.content.text ?? (m.content.attachment_id ? `[attachment ${m.content.attachment_id}]` : '[structured]')
+            return `[${m.created_at}] @${m.sender} (seq ${m.seq}): ${body}`
+          })
+          return ok(`${messages.length} message(s):\n${lines.join('\n')}`)
+        } catch (e) {
+          return err(toMsg(e))
+        }
+      },
+    }),
+    tool({
+      name: 'agentchat_list_participants',
+      description:
+        'Who is in this conversation? For a direct chat, your counterparty. For a group, the full active membership with roles. Use before @mentioning someone you have not talked to before — the handle must exist as a member.',
+      parameters: Type.Object({
+        conversationId: Type.String(),
+        account: ACCOUNT_PARAM,
+      }),
+      execute: async (_id, p) => {
+        const r = clientFor(cfg, p.account)
+        if ('error' in r) return err(r.error)
+        try {
+          const participants = await r.client.getConversationParticipants(p.conversationId)
+          if (participants.length === 0) return ok('no participants found')
+          const lines = participants.map(
+            (pp) => `@${pp.handle}${pp.display_name ? ` (${pp.display_name})` : ''}`,
+          )
+          return ok(`${participants.length} participant(s):\n${lines.join('\n')}`)
+        } catch (e) {
+          return err(toMsg(e))
+        }
+      },
+    }),
+
     // ─── Presence ─────────────────────────────────────────────────────────
     tool({
       name: 'agentchat_get_presence',
