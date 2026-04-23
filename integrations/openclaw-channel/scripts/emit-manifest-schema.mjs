@@ -82,7 +82,18 @@ try {
   fail(`could not read package.json version: ${err.message}`)
 }
 
-manifest.configSchema = configSchema.schema
+// Strip `$schema` / any top-level key starting with `$` from the config
+// schema before writing. Zod's JSON-Schema converter includes
+// `"$schema": "http://json-schema.org/draft-07/schema#"` by convention,
+// but ClawHub's publish backend (Convex) rejects any field starting with
+// `$` as reserved (`Field name $schema starts with a '$', which is
+// reserved.`). The $schema marker is purely documentary — consumers know
+// the shape is JSON Schema without it — so dropping it is safe.
+const cleanedSchema = { ...configSchema.schema }
+for (const key of Object.keys(cleanedSchema)) {
+  if (key.startsWith('$')) delete cleanedSchema[key]
+}
+manifest.configSchema = cleanedSchema
 if (configSchema.uiHints) {
   manifest.uiHints = configSchema.uiHints
 } else {
