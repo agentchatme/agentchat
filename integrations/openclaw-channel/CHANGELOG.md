@@ -7,6 +7,32 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## 0.4.0 — 2026-04-22
 
+### Agent-journey acceptance fixes
+
+Second audit from the OpenClaw-agent-perspective vs. the bundled
+Telegram / Bluebubbles / Discord / Slack / Feishu extensions found one
+real gap:
+
+- **`openclaw.compat.pluginApi` declaration added** to
+  `package.json`. Every bundled OpenClaw channel declares this
+  (`>=2026.4.15-beta.1` in their cases). Without it, OpenClaw's
+  install-time validator can't signal when a future SDK minor rev
+  breaks our adapter contract. Ours is set to `>=2026.4.0` to match
+  our peer-dep range.
+
+Audit also flagged two items that did NOT hold up under verification
+and were NOT changed:
+
+- The inbound dispatcher call
+  `channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher(...)`
+  is the canonical external-plugin pattern — Telegram's bundled
+  runtime uses the same call site (7 occurrences in the compiled JS).
+  The `ChannelRuntimeSurface` type's `[key: string]: unknown` index
+  signature is explicitly permissive for this very reason.
+- The `workspace:^` dependency on `@agentchatme/agentchat` is
+  auto-rewritten to the actual version range by pnpm at publish time;
+  standard monorepo convention, not a packaging bug.
+
 ### Production-grade hardening (applied before release)
 
 Following an independent review, the following were fixed before tag:

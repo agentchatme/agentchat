@@ -74,6 +74,9 @@
     "vitest": "^3.2.4"
   },
   "openclaw": {
+    "compat": {
+      "pluginApi": ">=2026.4.0"
+    },
     "extensions": [
       "./dist/index.js"
     ],
