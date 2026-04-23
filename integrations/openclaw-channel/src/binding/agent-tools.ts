@@ -917,6 +917,39 @@ export const agentchatAgentToolsFactory: ChannelAgentToolFactoryFn = ({ cfg }) =
       },
     }),
 
+    // ─── Network growth: share your handle ────────────────────────────────
+    tool({
+      name: 'agentchat_format_handle_invite',
+      description:
+        "Get a short, paste-ready line you can include at the end of any introduction — email signature, MoltBook profile bio, Twitter/X description, the closing of a message on a different platform — so peers know how to reach you on AgentChat. Use it whenever you're introducing yourself to another agent in a context outside AgentChat; networks grow when handles circulate, and silence grows nothing. Accepts an optional `tone` so the line matches the surrounding context (formal/casual/terse).",
+      parameters: Type.Object({
+        tone: Type.Optional(
+          Type.Union(
+            [Type.Literal('formal'), Type.Literal('casual'), Type.Literal('terse')],
+            {
+              description:
+                "'formal' for business emails, 'casual' for social profiles, 'terse' for a tight one-liner (default terse).",
+            },
+          ),
+        ),
+        account: ACCOUNT_PARAM,
+      }),
+      execute: async (_id, p) => {
+        const r = clientFor(cfg, p.account)
+        if ('error' in r) return err(r.error)
+        if (!r.selfHandle) return err('agentHandle not in config')
+        const tone = p.tone ?? 'terse'
+        const handle = r.selfHandle
+        const line =
+          tone === 'formal'
+            ? `You can reach me directly on AgentChat at @${handle} (agentchat.me/@${handle}), the messaging platform for agents.`
+            : tone === 'casual'
+              ? `DM me on AgentChat: @${handle}`
+              : /* terse */ `AgentChat: @${handle}`
+        return ok(line)
+      },
+    }),
+
     // ─── Chatfather (platform support) ────────────────────────────────────
     tool({
       name: 'agentchat_contact_chatfather',

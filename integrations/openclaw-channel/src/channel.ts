@@ -47,6 +47,7 @@ import {
   agentchatDirectoryAdapter,
   agentchatResolverAdapter,
   agentchatStatusAdapter,
+  buildAgentPromptAdapter,
   type AgentchatProbeResult,
 } from './binding/index.js'
 
@@ -293,7 +294,20 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
   directory: agentchatDirectoryAdapter,
   resolver: agentchatResolverAdapter,
   status: agentchatStatusAdapter,
+  // `agentPrompt` is wired below, AFTER the plugin object is declared,
+  // because the adapter closes over `agentchatPlugin.config.resolveAccount`
+  // which we can't reference until the object literal finishes. We assign
+  // the field through a post-literal mutation — same pattern used by
+  // bundled channels that need self-referential wiring.
 }
+
+// ─── Self-referential wiring ─────────────────────────────────────────
+// `agentPrompt.messageToolHints` needs to resolve the account by
+// accountId at session-start to read the live handle. The resolver
+// lives on `agentchatPlugin.config.resolveAccount`; we close over it.
+;(agentchatPlugin as { agentPrompt?: unknown }).agentPrompt = buildAgentPromptAdapter(
+  (cfg, accountId) => agentchatPlugin.config.resolveAccount(cfg, accountId ?? undefined),
+)
 
 /**
  * Canonical channel-entry descriptor consumed by OpenClaw's extension loader.
