@@ -24,6 +24,37 @@ interface RegistryEntry {
 
 const registry = new Map<string, RegistryEntry>()
 
+/**
+ * Per-account mutex. Every `registerRuntime` / `unregisterRuntime` call for
+ * the same account runs through this queue, so concurrent starts or a
+ * start-during-stop never race. The entries are raw promise tails — we
+ * drop them after the operation resolves to keep the map bounded.
+ */
+const accountLocks = new Map<string, Promise<unknown>>()
+
+function withAccountLock<T>(accountId: string, op: () => Promise<T>): Promise<T> {
+  const prev = accountLocks.get(accountId) ?? Promise.resolve()
+  // Swallow the prior result/error so one caller's failure doesn't poison
+  // the next caller's execution.
+  const next = prev.catch(() => undefined).then(op)
+  accountLocks.set(accountId, next)
+  // Clear the map entry once this op settles AND no later op chained onto
+  // it. The `accountLocks.get === next` check guards against clearing a
+  // newer tail that was appended while we were running. We attach the
+  // `finally` via `.then(undefined, ...)` chaining that owns its own
+  // error handler, because `next.finally(...)` alone would return an
+  // unhandled rejection when `next` rejects and nothing else awaits it.
+  next.then(
+    () => {
+      if (accountLocks.get(accountId) === next) accountLocks.delete(accountId)
+    },
+    () => {
+      if (accountLocks.get(accountId) === next) accountLocks.delete(accountId)
+    },
+  )
+  return next
+}
+
 export interface RegisterRuntimeParams {
   readonly accountId: string
   readonly config: AgentchatChannelConfig
@@ -34,52 +65,80 @@ export interface RegisterRuntimeParams {
 /**
  * Create and start a runtime for `accountId`. If one is already registered,
  * stop it first (config change path). Returns the live instance.
+ *
+ * Serialized per-account via `withAccountLock` so two concurrent callers
+ * cannot double-start or interleave a start with a stop.
  */
-export async function registerRuntime(
+export function registerRuntime(
   params: RegisterRuntimeParams,
 ): Promise<AgentchatChannelRuntime> {
-  const existing = registry.get(params.accountId)
-  if (existing) {
-    await existing.runtime.stop(Date.now() + 2_000)
-    registry.delete(params.accountId)
-  }
+  return withAccountLock(params.accountId, async () => {
+    const existing = registry.get(params.accountId)
+    if (existing) {
+      try {
+        await existing.runtime.stop(Date.now() + 2_000)
+      } catch (err) {
+        params.logger.warn(
+          {
+            err: err instanceof Error ? err.message : String(err),
+            accountId: params.accountId,
+          },
+          'previous runtime stop threw during re-register — replacing anyway',
+        )
+      }
+      registry.delete(params.accountId)
+    }
 
-  const runtime = new AgentchatChannelRuntime({
-    config: params.config,
-    handlers: params.handlers,
-    logger: params.logger,
+    const runtime = new AgentchatChannelRuntime({
+      config: params.config,
+      handlers: params.handlers,
+      logger: params.logger,
+    })
+    // Register BEFORE start so a handler firing on the sync path of
+    // `start()` can find the runtime via `getRuntime`.
+    registry.set(params.accountId, {
+      runtime,
+      config: params.config,
+      logger: params.logger,
+      abortController: new AbortController(),
+    })
+    try {
+      runtime.start()
+    } catch (err) {
+      // Synchronous start failure — back out of the registry so the next
+      // caller can try fresh, and surface the error.
+      registry.delete(params.accountId)
+      throw err
+    }
+    return runtime
   })
-  runtime.start()
-
-  registry.set(params.accountId, {
-    runtime,
-    config: params.config,
-    logger: params.logger,
-    abortController: new AbortController(),
-  })
-  return runtime
 }
 
 /**
  * Stop and remove the runtime for `accountId`. No-op if absent.
  * `deadlineMs` bounds the graceful-drain wait.
+ *
+ * Serialized per-account so a concurrent `registerRuntime` cannot race
+ * this stop and leave a zombie.
  */
-export async function unregisterRuntime(
+export function unregisterRuntime(
   accountId: string,
   deadlineMs = Date.now() + 5_000,
 ): Promise<void> {
-  const entry = registry.get(accountId)
-  if (!entry) return
-  registry.delete(accountId)
-  entry.abortController.abort()
-  try {
-    await entry.runtime.stop(deadlineMs)
-  } catch (err) {
-    entry.logger.error(
-      { err: err instanceof Error ? err.message : String(err), accountId },
-      'runtime.stop threw during unregister',
-    )
-  }
+  return withAccountLock(accountId, async () => {
+    const entry = registry.get(accountId)
+    if (!entry) return
+    registry.delete(accountId)
+    entry.abortController.abort()
+    try {
+      await entry.runtime.stop(deadlineMs)
+    } catch (err) {
+      entry.logger.error(
+        { err: err instanceof Error ? err.message : String(err), accountId },
+        'runtime.stop threw during unregister',
+      )
+    }
+  })
 }
 
 /**

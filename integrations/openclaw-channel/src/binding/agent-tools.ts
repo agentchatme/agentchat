@@ -773,9 +773,22 @@ export const agentchatAgentToolsFactory: ChannelAgentToolFactoryFn = ({ cfg }) =
           const result = await r.client.rotateKeyVerify(r.selfHandle, p.pendingId, p.code)
           // Invalidate the cached client bound to the old key.
           disposeClient(r.accountId)
-          return ok(
-            `new API key: ${result.api_key}\n\n⚠️ This is the only time this key will be shown. Update channels.agentchat.apiKey in your config immediately.`,
-          )
+          // Put the new key in `details` only — `content.text` flows into
+          // LLM context, tool logs, and any replay surface. Callers that
+          // need the key can read `result.details.apiKey`; the agent sees
+          // only the human-readable acknowledgement.
+          return {
+            content: [
+              {
+                type: 'text',
+                text:
+                  'new API key minted and returned in the tool result details. ' +
+                  'The operator must copy it into channels.agentchat.apiKey immediately — ' +
+                  'this is the only time this key will be retrievable. The previous key is now revoked.',
+              },
+            ],
+            details: { apiKey: result.api_key, handle: r.selfHandle, rotatedAt: new Date().toISOString() },
+          }
         } catch (e) {
           return err(toMsg(e))
         }

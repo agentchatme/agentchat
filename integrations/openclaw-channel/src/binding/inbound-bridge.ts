@@ -104,9 +104,22 @@ async function handleMessage(
 
   const dispatcher = deps.channelRuntime?.reply?.dispatchReplyWithBufferedBlockDispatcher
   if (typeof dispatcher !== 'function') {
-    deps.logger.warn(
-      { event: 'message', messageId: event.messageId },
-      'channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher unavailable — message not dispatched',
+    // This is a HARD degradation: a message reached the plugin but the
+    // OpenClaw runtime has no reply pipeline attached, so the agent never
+    // sees it. Log at error so operators can correlate "messages arrive,
+    // no replies go out" with the missing wiring immediately, rather than
+    // discovering it via a user-reported silence. The message itself is
+    // durable server-side; a restart with a properly-wired runtime will
+    // drain it from /v1/messages/sync.
+    deps.logger.error(
+      {
+        event: 'inbound_dispatch_unavailable',
+        messageId: event.messageId,
+        conversationId: event.conversationId,
+        conversationKind: event.conversationKind,
+        sender: event.sender,
+      },
+      'channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher unavailable — message NOT dispatched to agent (will be redelivered on next sync)',
     )
     return
   }

@@ -82,27 +82,16 @@ export const agentchatGatewayAdapter: ChannelGatewayAdapter<AgentchatResolvedAcc
         redactKeys: account.config.observability.redactKeys,
       })
 
-    // Runtime is constructed BEFORE we wire the bridge because the bridge
-    // needs a handle to it (to route outbound replies back to AgentChat).
-    // `registerRuntime` accepts the pre-built handlers; we set those in a
-    // second pass via runtime options next. Actually — to keep wiring
-    // simple, we accept an initial noop handlers arg, then swap the
-    // `onInbound` via the closure.
+    // Runtime and bridge wiring form a small chicken-and-egg: the bridge
+    // handler closes over the runtime (for reply dispatch), and the runtime
+    // closes over the bridge (as its `onInbound` handler). We solve it with
+    // one mutable ref for the runtime, closed over by a single bridge
+    // handler that's constructed once — reused per event, not allocated.
     let runtimeRef: Awaited<ReturnType<typeof registerRuntime>> | null = null
+    let inboundHandler: ReturnType<typeof createInboundBridge> | null = null
     const bridge = (event: unknown) => {
-      if (!runtimeRef) return
-      const handler = createInboundBridge({
-        accountId: ctx.accountId,
-        config: account.config!,
-        logger,
-        runtime: runtimeRef,
-        channelRuntime: ctx.channelRuntime as ChannelRuntimeLike | undefined,
-        gatewayCfg: ctx.cfg,
-        selfHandle: account.config!.agentHandle,
-      })
-      // Delegate to a fresh closure per event so we always see the latest
-      // runtime + deps. Cheap — the bridge itself is pure logic.
-      void handler(event as Parameters<ReturnType<typeof createInboundBridge>>[0])
+      if (!runtimeRef || !inboundHandler) return
+      void inboundHandler(event as Parameters<ReturnType<typeof createInboundBridge>>[0])
     }
 
     runtimeRef = await registerRuntime({
@@ -111,6 +100,10 @@ export const agentchatGatewayAdapter: ChannelGatewayAdapter<AgentchatResolvedAcc
       logger,
       handlers: {
         onInbound: bridge,
+        // `runtime` used below is captured AFTER registerRuntime resolves,
+        // but the handler is never invoked before that — the WS has to
+        // authenticate first. Safe to assign synchronously just after.
+
         onAuthenticated: (at) => {
           ctx.log?.info?.(`[agentchat:${ctx.accountId}] authenticated at ${new Date(at).toISOString()}`)
           ctx.setStatus({
@@ -144,11 +137,28 @@ export const agentchatGatewayAdapter: ChannelGatewayAdapter<AgentchatResolvedAcc
       },
     })
 
+    // Construct the per-event inbound handler ONCE now that `runtimeRef`
+    // is populated. Reusing it avoids allocating a fresh closure per
+    // inbound frame — at multi-hundred-msg/sec this matters.
+    inboundHandler = createInboundBridge({
+      accountId: ctx.accountId,
+      config: account.config,
+      logger,
+      runtime: runtimeRef,
+      channelRuntime: ctx.channelRuntime as ChannelRuntimeLike | undefined,
+      gatewayCfg: ctx.cfg,
+      selfHandle: account.config.agentHandle,
+    })
+
     // Honor graceful shutdown — when ctx.abortSignal aborts, tear down.
     ctx.abortSignal.addEventListener(
       'abort',
       () => {
-        void unregisterRuntime(ctx.accountId, Date.now() + 5_000)
+        void unregisterRuntime(ctx.accountId, Date.now() + 5_000).catch((err) => {
+          ctx.log?.error?.(
+            `[agentchat:${ctx.accountId}] unregisterRuntime failed on abort: ${err instanceof Error ? err.message : String(err)}`,
+          )
+        })
       },
       { once: true },
     )

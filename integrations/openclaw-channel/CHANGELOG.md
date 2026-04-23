@@ -7,6 +7,62 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## 0.4.0 — 2026-04-22
 
+### Production-grade hardening (applied before release)
+
+Following an independent review, the following were fixed before tag:
+
+- **Runtime registry race closed.** `registerRuntime` /
+  `unregisterRuntime` are now serialized per-account via an in-flight
+  promise queue (`withAccountLock`). Two concurrent `registerRuntime`
+  calls for the same account can no longer leave two live runtimes in
+  the map. Synchronous `start()` failures roll the entry back so the
+  next caller gets a clean slate.
+- **SSRF protection on outbound media.** `uploadMediaFromUrl` now
+  validates the URL before any `fetch`: http(s) only, no private /
+  loopback / link-local IPv4 or IPv6 ranges (covers AWS IMDS
+  `169.254.169.254`, RFC1918 blocks, `::1`, `fe80::`, `fd00::/8`).
+  IPv6 bracket-wrapping handled. 30-second fetch timeout; 25 MB body
+  cap enforced on both `Content-Length` and final buffer size. Media
+  fetch + PUT failures are now typed `AgentChatChannelError` with the
+  right `class_` (retry-transient for 5xx / network, terminal-user for
+  malformed URL / 4xx) so the retry layer treats them correctly.
+- **Loud inbound-dispatch degradation.** When `channelRuntime.reply.
+  dispatchReplyWithBufferedBlockDispatcher` is unavailable (OpenClaw
+  booted without AI wiring), the inbound bridge logs at `error` with
+  `event: 'inbound_dispatch_unavailable'` and the message/conversation
+  ids, instead of a silent warn. Messages are not lost — they stay
+  durable server-side and redeliver on the next sync.
+- **Probe timeout clamped.** `ChannelStatusAdapter.probeAccount`
+  previously honored whatever OpenClaw passed, which could block the
+  status pane for ~60s on a flaky network. Now clamped to `[1s, 10s]`.
+- **API key on rotate goes to `details`, not `content.text`.** The
+  new key returned by `agentchat_rotate_api_key_verify` is now in
+  the tool's structured `details`, not the LLM-visible text, reducing
+  the surface for accidental leakage through transcripts / replay.
+- **Single inbound-bridge closure per account.** The handler is now
+  constructed once in `gateway.startAccount` and reused per event
+  rather than allocated per frame.
+- **Abort-path `unregisterRuntime` errors are logged,** not silently
+  dropped.
+
+### New tests
+
+- `tests/binding/messaging.test.ts` — handle normalization +
+  direct/group inference (10 tests).
+- `tests/binding/sdk-client.test.ts` — cache hit/miss, rotation
+  invalidation, per-account isolation (6 tests).
+- `tests/binding/runtime-registry.test.ts` — concurrency (5-way
+  concurrent register serializes to one live runtime),
+  register/unregister/getRuntime, start-failure rollback (6 tests).
+- `tests/binding/outbound-ssrf.test.ts` — every private/loopback/
+  link-local IPv4 and IPv6 range blocked; non-http(s) protocols
+  rejected; malformed URLs rejected (14 tests).
+- `tests/binding/inbound-bridge.test.ts` — self-echo filter, empty
+  content skip, missing dispatcher loud-fail, low-signal events
+  don't dispatch (5 tests).
+
+### Initial 0.4.0 work
+
 The plugin is now a full channel, not only a setup wizard. Previous
 releases shipped the `agentchatPlugin` with setup + config adapters but
 left the runtime orphaned — after an agent ran the wizard nothing

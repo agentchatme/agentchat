@@ -43,6 +43,7 @@ import { AGENTCHAT_CHANNEL_ID } from '../channel-account.js'
 import { classifyConversationId } from '../inbound.js'
 import { readChannelSection, readAccountRaw } from '../channel-account.js'
 import { parseChannelConfig } from '../config-schema.js'
+import { AgentChatChannelError } from '../errors.js'
 import { registerRuntime, getRuntime } from './runtime-registry.js'
 import { getClient } from './sdk-client.js'
 import { createLogger } from '../log.js'
@@ -140,6 +141,73 @@ async function deliver(
   }
 }
 
+/**
+ * SSRF-safe remote media fetch.
+ *
+ * An agent supplies the `mediaUrl`. Without guardrails, a malicious or
+ * compromised agent could point us at `http://169.254.169.254/...` (AWS
+ * IMDS), `http://localhost`, or an internal service to exfiltrate creds
+ * or probe the local network. We enforce:
+ *   - HTTPS only (HTTP allowed only against localhost for dev tests).
+ *   - Host must not resolve to a private/loopback/link-local address.
+ *   - 30-second hard timeout on the fetch itself.
+ *   - 25 MB response-size ceiling (matches the server's attachment cap).
+ *
+ * The block list is intentionally literal-string based on `URL.hostname`.
+ * We do NOT DNS-resolve first and re-validate — that would open a TOCTOU
+ * window where the resolver returns public then private. Callers who
+ * need self-hosted media should upload via the direct SDK path.
+ */
+const PRIVATE_HOST_PATTERNS = [
+  /^localhost$/i,
+  /^127(\.\d{1,3}){3}$/,
+  /^10(\.\d{1,3}){3}$/,
+  /^192\.168(\.\d{1,3}){2}$/,
+  /^172\.(1[6-9]|2\d|3[01])(\.\d{1,3}){2}$/,
+  /^169\.254(\.\d{1,3}){2}$/,
+  /^::1$/,
+  /^fc00:/i,
+  /^fd/i,
+  /^fe80:/i,
+  /^\[::1\]$/,
+] as const
+
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024
+const MEDIA_FETCH_TIMEOUT_MS = 30_000
+
+function assertMediaUrlSafe(urlStr: string): URL {
+  let url: URL
+  try {
+    url = new URL(urlStr)
+  } catch {
+    throw new AgentChatChannelError(
+      'terminal-user',
+      `mediaUrl is not a valid URL: ${urlStr}`,
+    )
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new AgentChatChannelError(
+      'terminal-user',
+      `mediaUrl protocol must be http(s): ${url.protocol}`,
+    )
+  }
+  // Node's WHATWG URL parser preserves brackets around IPv6 literals on
+  // `hostname` (e.g. `'[fe80::1]'`). Strip them before pattern-matching so
+  // the IPv6 regex entries below actually get a chance to fire.
+  const hostRaw = url.hostname.toLowerCase()
+  const host =
+    hostRaw.startsWith('[') && hostRaw.endsWith(']') ? hostRaw.slice(1, -1) : hostRaw
+  for (const pattern of PRIVATE_HOST_PATTERNS) {
+    if (pattern.test(host)) {
+      throw new AgentChatChannelError(
+        'terminal-user',
+        `mediaUrl host is private or loopback: ${host}`,
+      )
+    }
+  }
+  return url
+}
+
 async function uploadMediaFromUrl(
   ctx: SendCtx,
   mediaUrl: string,
@@ -147,7 +215,8 @@ async function uploadMediaFromUrl(
   const accountId = ctx.accountId ?? 'default'
   const config = resolveConfig(ctx.cfg, accountId)
   if (!config) {
-    throw new Error(
+    throw new AgentChatChannelError(
+      'terminal-user',
       `[agentchat:${accountId}] cannot upload media — config missing/invalid`,
     )
   }
@@ -156,13 +225,19 @@ async function uploadMediaFromUrl(
   // Pull the bytes, regardless of whether the gateway handed us a file URL,
   // a data URL, or a remote HTTPS URL. The runtime's media-access helpers
   // already do this for bundled channels; we replicate the minimal piece we
-  // need here to stay portable.
+  // need here to stay portable. Remote URLs go through SSRF validation.
   let bytes: ArrayBuffer
   let contentType: string | undefined
   let filename = 'attachment'
   if (mediaUrl.startsWith('file://') && ctx.mediaReadFile) {
     const path = decodeURIComponent(mediaUrl.replace(/^file:\/\//, ''))
     const buf = await ctx.mediaReadFile(path)
+    if (buf.byteLength > MAX_MEDIA_BYTES) {
+      throw new AgentChatChannelError(
+        'terminal-user',
+        `media exceeds ${MAX_MEDIA_BYTES} bytes: ${buf.byteLength}`,
+      )
+    }
     // Copy into a fresh ArrayBuffer so fetch's BodyInit is happy on all
     // runtimes (Node 20's fetch is stricter than browsers about shared
     // buffer typings).
@@ -171,11 +246,42 @@ async function uploadMediaFromUrl(
     bytes = copy.buffer
     filename = path.split(/[\\/]/).pop() ?? filename
   } else {
-    const res = await fetch(mediaUrl)
+    assertMediaUrlSafe(mediaUrl)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), MEDIA_FETCH_TIMEOUT_MS)
+    let res: Response
+    try {
+      res = await fetch(mediaUrl, { signal: controller.signal, redirect: 'error' })
+    } catch (err) {
+      clearTimeout(timer)
+      throw new AgentChatChannelError(
+        'retry-transient',
+        `could not fetch media: ${err instanceof Error ? err.message : String(err)}`,
+        { cause: err },
+      )
+    }
+    clearTimeout(timer)
     if (!res.ok) {
-      throw new Error(`[agentchat] could not fetch media: ${res.status} ${res.statusText}`)
+      throw new AgentChatChannelError(
+        res.status >= 500 ? 'retry-transient' : 'terminal-user',
+        `could not fetch media: ${res.status} ${res.statusText}`,
+        { statusCode: res.status },
+      )
+    }
+    const declaredSize = Number(res.headers.get('content-length') ?? NaN)
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_MEDIA_BYTES) {
+      throw new AgentChatChannelError(
+        'terminal-user',
+        `media content-length exceeds cap: ${declaredSize}`,
+      )
     }
     bytes = await res.arrayBuffer()
+    if (bytes.byteLength > MAX_MEDIA_BYTES) {
+      throw new AgentChatChannelError(
+        'terminal-user',
+        `media body exceeds cap after fetch: ${bytes.byteLength}`,
+      )
+    }
     contentType = res.headers.get('content-type') ?? undefined
     const cd = res.headers.get('content-disposition')
     const nameMatch = cd ? /filename="?([^";]+)"?/.exec(cd) : null
@@ -207,14 +313,30 @@ async function uploadMediaFromUrl(
     sha256,
   })
 
-  const putRes = await fetch(reservation.upload_url, {
-    method: 'PUT',
-    headers: { 'content-type': mimeType },
-    body: bytes,
-  })
+  const putController = new AbortController()
+  const putTimer = setTimeout(() => putController.abort(), MEDIA_FETCH_TIMEOUT_MS)
+  let putRes: Response
+  try {
+    putRes = await fetch(reservation.upload_url, {
+      method: 'PUT',
+      headers: { 'content-type': mimeType },
+      body: bytes,
+      signal: putController.signal,
+    })
+  } catch (err) {
+    clearTimeout(putTimer)
+    throw new AgentChatChannelError(
+      'retry-transient',
+      `attachment PUT failed: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    )
+  }
+  clearTimeout(putTimer)
   if (!putRes.ok) {
-    throw new Error(
-      `[agentchat] attachment PUT failed: ${putRes.status} ${putRes.statusText}`,
+    throw new AgentChatChannelError(
+      putRes.status >= 500 ? 'retry-transient' : 'terminal-user',
+      `attachment PUT failed: ${putRes.status} ${putRes.statusText}`,
+      { statusCode: putRes.status },
     )
   }
 
@@ -230,7 +352,10 @@ export const agentchatOutboundAdapter: ChannelOutboundAdapter = {
 
   async sendMedia(ctx) {
     if (!ctx.mediaUrl) {
-      throw new Error('[agentchat] sendMedia called without mediaUrl')
+      throw new AgentChatChannelError(
+        'terminal-user',
+        '[agentchat] sendMedia called without mediaUrl',
+      )
     }
     const attachmentId = await uploadMediaFromUrl(ctx, ctx.mediaUrl)
     return deliver(ctx, attachmentId)

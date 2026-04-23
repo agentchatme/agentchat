@@ -24,14 +24,21 @@ export type AgentchatProbeResult = {
   readonly error?: string
 }
 
+/** Probe timeout bounds. OpenClaw can pass arbitrary values; we clamp
+ * both ends so a zero-timeout doesn't race and a sky-high one doesn't
+ * hold the status pane hostage for a minute on a flaky network. */
+const PROBE_MIN_MS = 1_000
+const PROBE_MAX_MS = 10_000
+
 export const agentchatStatusAdapter: ChannelStatusAdapter<AgentchatResolvedAccount, AgentchatProbeResult> = {
   async probeAccount({ account, timeoutMs }) {
     if (!account.config) {
       return { ok: false, error: 'missing channels.agentchat configuration' }
     }
     const client = getClient({ accountId: account.accountId, config: account.config })
+    const clampedTimeout = Math.min(PROBE_MAX_MS, Math.max(PROBE_MIN_MS, timeoutMs))
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), Math.max(1_000, timeoutMs))
+    const timer = setTimeout(() => controller.abort(), clampedTimeout)
     try {
       const me = await client.getMe({ signal: controller.signal })
       clearTimeout(timer)
