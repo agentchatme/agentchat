@@ -123,4 +123,15 @@ describe('agentPrompt.messageToolHints', () => {
     adapter.messageToolHints!({ cfg: {}, accountId: null })
     expect(sawAccountId).toBeUndefined()
   })
+
+  it('returns empty array instead of throwing when the resolver itself throws', () => {
+    // Defense-in-depth: a broken resolver would normally bubble up
+    // through the per-session prompt composition and fail the entire
+    // session. Our adapter catches and degrades gracefully.
+    const adapter = buildAgentPromptAdapter(() => {
+      throw new Error('simulated resolver failure')
+    })
+    const result = adapter.messageToolHints!({ cfg: {}, accountId: 'default' })
+    expect(result).toEqual([])
+  })
 })

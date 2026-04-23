@@ -68,6 +68,38 @@ export interface AgentchatResolvedAccount {
   parseError: string | null
 }
 
+/**
+ * Resolve the config section for a single account. Pure function —
+ * extracted from `config.resolveAccount` so `agentPrompt` (session-
+ * start identity injection) can reuse it without a self-reference
+ * back into the plugin object literal. Never throws: parse failures
+ * are surfaced via `parseError` on the returned record.
+ *
+ * Takes `OpenClawConfig | undefined` to match `ChannelConfigAdapter.
+ * resolveAccount`'s signature so they can share this implementation
+ * directly without casting.
+ */
+export function resolveAgentchatAccount(
+  cfg: import('./binding/openclaw-types.js').OpenClawConfig | undefined,
+  accountId?: string | null,
+): AgentchatResolvedAccount {
+  const id = accountId ?? AGENTCHAT_DEFAULT_ACCOUNT_ID
+  const section = readChannelSection(cfg)
+  const raw = readAccountRaw(section, id)
+  const { enabled, forParse } = splitEnabledFromRaw(raw)
+  let config: AgentchatChannelConfig | null = null
+  let parseError: string | null = null
+  if (forParse && Object.keys(forParse).length > 0) {
+    try {
+      config = parseChannelConfig(forParse)
+    } catch (e) {
+      parseError = e instanceof Error ? e.message : String(e)
+    }
+  }
+  const configured = Boolean(config && isApiKeyPresent(config.apiKey))
+  return { accountId: id, enabled, configured, config, parseError }
+}
+
 const uiHints: Record<string, ChannelConfigUiHint> = {
   apiKey: {
     label: 'AgentChat API key',
@@ -145,21 +177,7 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
     },
 
     resolveAccount(cfg, accountId) {
-      const id = accountId ?? AGENTCHAT_DEFAULT_ACCOUNT_ID
-      const section = readChannelSection(cfg)
-      const raw = readAccountRaw(section, id)
-      const { enabled, forParse } = splitEnabledFromRaw(raw)
-      let config: AgentchatChannelConfig | null = null
-      let parseError: string | null = null
-      if (forParse && Object.keys(forParse).length > 0) {
-        try {
-          config = parseChannelConfig(forParse)
-        } catch (e) {
-          parseError = e instanceof Error ? e.message : String(e)
-        }
-      }
-      const configured = Boolean(config && isApiKeyPresent(config.apiKey))
-      return { accountId: id, enabled, configured, config, parseError }
+      return resolveAgentchatAccount(cfg, accountId)
     },
 
     defaultAccountId() {
@@ -294,20 +312,11 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
   directory: agentchatDirectoryAdapter,
   resolver: agentchatResolverAdapter,
   status: agentchatStatusAdapter,
-  // `agentPrompt` is wired below, AFTER the plugin object is declared,
-  // because the adapter closes over `agentchatPlugin.config.resolveAccount`
-  // which we can't reference until the object literal finishes. We assign
-  // the field through a post-literal mutation — same pattern used by
-  // bundled channels that need self-referential wiring.
+  // Identity injection into the agent's baseline system prompt.
+  // Called once per session at prompt-composition time; re-derives from
+  // live config so handle rotations and key rotations propagate.
+  agentPrompt: buildAgentPromptAdapter(resolveAgentchatAccount),
 }
-
-// ─── Self-referential wiring ─────────────────────────────────────────
-// `agentPrompt.messageToolHints` needs to resolve the account by
-// accountId at session-start to read the live handle. The resolver
-// lives on `agentchatPlugin.config.resolveAccount`; we close over it.
-;(agentchatPlugin as { agentPrompt?: unknown }).agentPrompt = buildAgentPromptAdapter(
-  (cfg, accountId) => agentchatPlugin.config.resolveAccount(cfg, accountId ?? undefined),
-)
 
 /**
  * Canonical channel-entry descriptor consumed by OpenClaw's extension loader.

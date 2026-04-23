@@ -57,8 +57,20 @@ export function buildAgentPromptAdapter(
 ): AgentPromptShape {
   return {
     messageToolHints({ cfg, accountId }) {
-      const account = resolveAccount(cfg, accountId ?? undefined)
-      const handle = account.config?.agentHandle
+      // Defensive: this runs inside OpenClaw's per-session prompt
+      // composition. A throw here would fail the whole session's
+      // system prompt build, not just our hints. The resolver we're
+      // handed is pure (never throws in the canonical implementation)
+      // but we don't control all paths that might replace it. Swallow
+      // and return [] — no identity hints is strictly better than a
+      // broken session.
+      let handle: string | undefined
+      try {
+        const account = resolveAccount(cfg, accountId ?? undefined)
+        handle = account.config?.agentHandle
+      } catch {
+        return []
+      }
       if (!handle) return []
 
       return [
