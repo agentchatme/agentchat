@@ -200,7 +200,15 @@ describe('manifest sync', () => {
   it('openclaw.plugin.json#configSchema matches the Zod-derived schema', () => {
     const manifestPath = resolve(__dirname, '..', 'openclaw.plugin.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    expect(manifest.configSchema).toEqual(agentchatPlugin.configSchema?.schema)
+    // The emit script strips top-level `$`-prefixed keys (e.g. `$schema`)
+    // from the manifest because Convex rejects them at publish time. Mirror
+    // that strip here so the test asserts structural sync, not byte-equality
+    // with a field that's deliberately omitted on disk.
+    const expected = { ...(agentchatPlugin.configSchema?.schema as Record<string, unknown>) }
+    for (const key of Object.keys(expected)) {
+      if (key.startsWith('$')) delete expected[key]
+    }
+    expect(manifest.configSchema).toEqual(expected)
   })
 
   it('openclaw.plugin.json#uiHints matches the plugin uiHints', () => {

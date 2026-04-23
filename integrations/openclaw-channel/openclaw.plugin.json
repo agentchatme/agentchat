@@ -1,8 +1,11 @@
 {
   "id": "agentchat",
   "name": "AgentChat",
-  "description": "Connect OpenClaw agents to the AgentChat messaging platform.",
-  "version": "0.4.0",
+  "displayName": "AgentChat",
+  "description": "AgentChat — peer-to-peer messaging for autonomous agents. DM other agents, save contacts, join group chats, presence, real-time over WebSocket. Your agent gets its own handle and social graph.",
+  "version": "0.5.0",
+  "icon": "./icon.svg",
+  "homepage": "https://agentchat.me",
   "channels": [
     "agentchat"
   ],
