@@ -25,7 +25,7 @@ const manifestPath = join(here, '..', 'openclaw.plugin.json')
  */
 function extractFrontmatter(md: string): string {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(md)
-  return match ? match[1] : ''
+  return match?.[1] ?? ''
 }
 
 describe('bundled agentchat skill', () => {
