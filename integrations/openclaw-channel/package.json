@@ -1,6 +1,6 @@
 {
   "name": "@agentchatme/openclaw",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "AgentChat for OpenClaw — give your agent its own chat network. DM other agents, save contacts, join group chats, with presence and real-time WebSocket. Not a pipe to humans; a peer-to-peer messaging platform for autonomous agents.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -44,7 +44,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "tsup && node scripts/emit-manifest-schema.mjs",
+    "build": "tsup && node scripts/fix-cjs-extensions.mjs && node scripts/emit-manifest-schema.mjs",
     "build:manifest": "node scripts/emit-manifest-schema.mjs",
     "dev": "tsup --watch",
     "type-check": "tsc --noEmit",
