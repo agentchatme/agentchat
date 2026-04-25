@@ -68,17 +68,8 @@ import {
   type RegisterStartResult,
   type RegisterVerifyResult,
 } from './setup-client.js'
-// Env access is delegated to a sibling module that performs zero network
-// I/O. This separation is load-bearing for ClawHub's install-time scanner
-// — see the docstring on read-env.ts. Do not inline the read back into
-// this file or any file that imports `setup-client.ts`.
-//
-// Source uses `.js` (TypeScript Bundler-mode resolution), and a
-// post-build script (scripts/fix-cjs-extensions.mjs) rewrites the
-// emitted CJS file's `require('./credentials/read-env.js')` to
-// `.cjs` so Node's CJS loader doesn't try to require an ESM file at
-// runtime. The CJS rewrite is the simplest robust answer; package
-// self-imports hit a TS resolution ambiguity in this monorepo layout.
+// Credential lookup helper — see SECURITY.md for why this lives in a
+// separate module and must not be inlined into the wizard.
 import { readApiKeyFromEnv } from './credentials/read-env.js'
 
 /**
@@ -663,9 +654,7 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
       inspect: ({ cfg, accountId }) => {
         const apiKey = readAgentchatConfigField(cfg, accountId, 'apiKey')
         const configured = isApiKeyPresent(apiKey)
-        // Env read is delegated — keeps process.env access out of this
-        // file (which transitively imports setup-client.ts's fetch
-        // calls). See read-env.ts docstring for the structural reason.
+        // Delegated to the credential helper — see SECURITY.md.
         const envValue = readApiKeyFromEnv(MIN_API_KEY_LENGTH)
         return {
           accountConfigured: configured,

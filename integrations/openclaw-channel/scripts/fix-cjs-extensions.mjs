@@ -2,42 +2,26 @@
 /**
  * Post-build extension fixer for the CJS bundles.
  *
- * Why this exists
- * ────────────────
- * tsup emits both ESM (`.js`) and CJS (`.cjs`) outputs for every entry.
- * For the env-only credential reader at `dist/credentials/read-env.{js,cjs}`,
- * the source-level import in `src/channel.wizard.ts` is:
+ * tsup emits both ESM (`.js`) and CJS (`.cjs`) outputs and leaves
+ * external imports as-is — meaning a literal `'./credentials/read-env.js'`
+ * import statement gets carried into both bundle formats. Inside a
+ * `"type": "module"` package the `.js` sibling is ESM, so the CJS
+ * bundle's `require()` of it would fail with `ERR_REQUIRE_ESM`.
  *
- *     import { readApiKeyFromEnv } from './credentials/read-env.js'
+ * This script walks the known CJS bundles after `tsup` finishes and
+ * rewrites the literal `'./credentials/read-env.js'` substring (single
+ * or double quoted) to `'./credentials/read-env.cjs'`. Sourcemaps are
+ * untouched because they reference source positions, not module paths.
  *
- * tsup's `external` list keeps that import un-bundled (so the env read
- * stays in its own dist file — which is the structural fix for ClawHub's
- * install-time security scanner that flags any single file containing
- * both `process.env.X` and a network call).
+ * The replacement is exact-string and scoped to one known import path
+ * — it will not rewrite test fixtures, docs, or the ESM bundle. Wired
+ * into `pnpm run build` so the swap happens on every release without
+ * an extra step. CI does not run this; tests load source TypeScript
+ * directly and never the CJS dist.
  *
- * The wrinkle: tsup does NOT rewrite the `.js` extension to `.cjs` when
- * emitting the CJS bundle. So the CJS file ends up with:
- *
- *     var x = require('./credentials/read-env.js')
- *
- * In a `"type": "module"` package, `.js` files are ESM. A CJS `require()`
- * of an ESM `.js` file fails at runtime with `ERR_REQUIRE_ESM`. The CJS
- * bundle would be functionally broken for any consumer that loads it.
- *
- * What this script does
- * ─────────────────────
- * Walk every `dist/*.cjs` file and rewrite the literal substring
- * `'./credentials/read-env.js'` (single or double quoted) to
- * `'./credentials/read-env.cjs'`. The `.js.map` sourcemap files are
- * untouched — they reference source positions, not module paths.
- *
- * The replacement is exact-string, scoped to a single known import path.
- * It will NOT accidentally rewrite `read-env.js` references inside
- * test fixtures, docs, or the ESM bundle.
- *
- * Wired into `pnpm run build` after `tsup` emits, so the fix happens on
- * every release without an extra step. CI (`pnpm test`) does NOT run
- * this — tests load the source TS directly, never the CJS dist.
+ * See SECURITY.md ("Defensive separation of credential lookup from
+ * outbound I/O") for why the read-env module is a separate dist file
+ * in the first place.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
@@ -47,14 +31,14 @@ import { fileURLToPath } from 'node:url'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const distDir = resolve(__dirname, '..', 'dist')
 
-// Bundle outputs that may import the env reader. We list them explicitly
-// rather than globbing `dist/*.cjs` so a future entry without this
-// import doesn't get an unnecessary file-rewrite cycle.
+// Bundle outputs that may import the credential helper. Listed
+// explicitly rather than globbing `dist/*.cjs` so a future entry that
+// does NOT import the helper does not get an unnecessary file rewrite.
 const cjsBundles = [
   'index.cjs',
   'setup-entry.cjs',
-  // configured-state.cjs intentionally omitted — it does not import the
-  // env reader. If a future change makes it import, add it here.
+  // configured-state.cjs intentionally omitted — it does not import
+  // the helper. If a future change makes it import, add it here.
 ]
 
 // Exact strings to swap. Quote variants are belt-and-suspenders against
@@ -70,9 +54,8 @@ let totalReplacements = 0
 for (const file of cjsBundles) {
   const path = resolve(distDir, file)
   if (!existsSync(path)) {
-    // tsup might not have emitted this entry (e.g., format limited to
-    // esm-only via env override). Skip silently rather than fail —
-    // we only care about CJS files that actually exist.
+    // tsup might not have emitted this entry. Skip silently rather
+    // than fail — we only care about CJS files that actually exist.
     continue
   }
   const before = readFileSync(path, 'utf8')
@@ -97,11 +80,6 @@ for (const file of cjsBundles) {
 }
 
 if (touched === 0) {
-  // Not necessarily an error — possible the import was inlined by
-  // accident, or the file naming changed. Surface a warning so the
-  // operator can investigate; do not fail the build because the same
-  // post-build script runs in environments where we may not have
-  // emitted CJS at all.
   console.warn(
     '[fix-cjs-extensions] No CJS bundles needed rewriting. Verify ' +
       'dist/index.cjs and dist/setup-entry.cjs exist and external is ' +

@@ -11,13 +11,9 @@ export default defineConfig({
     index: 'src/index.ts',
     'setup-entry': 'src/setup-entry.ts',
     'configured-state': 'src/configured-state.ts',
-    // Pure env-reader, emitted as its own dist file. Imported via the
-    // relative `./credentials/read-env.js` specifier from
-    // `channel.wizard.ts`. Marked external below so tsup does NOT inline
-    // the source back into the index/setup-entry bundles — that inlining
-    // would re-create the env-read-co-located-with-fetch pattern that
-    // ClawHub's install-time scanner blocks. The structural separation
-    // is load-bearing; see read-env.ts docstring.
+    // Credential helper — emitted as its own dist file and kept
+    // un-inlined into the main bundles via the `external` list below.
+    // See SECURITY.md for the architectural rationale.
     'credentials/read-env': 'src/credentials/read-env.ts',
   },
   format: ['esm', 'cjs'],
@@ -38,15 +34,11 @@ export default defineConfig({
   external: [
     'openclaw',
     'openclaw/plugin-sdk/*',
-    // Keep our credentials/read-env module as a separate runtime file
-    // — the dist tree exposes it as a sibling of the main bundles so
-    // emitted code imports it via `require`/`import` at runtime
-    // instead of inlining its contents. Both extensions listed because
-    // tsup matches against the literal import specifier; the CJS build
-    // emits `require('./credentials/read-env.js')` which is then
-    // post-processed by `scripts/fix-cjs-extensions.mjs` to swap `.js`
-    // for `.cjs` so the CJS loader resolves to the sibling .cjs file
-    // rather than tripping ERR_REQUIRE_ESM on the `.js` ESM build.
+    // Keep the credential helper as a separate runtime file (see
+    // SECURITY.md). Both extensions listed because tsup matches the
+    // literal import specifier; `scripts/fix-cjs-extensions.mjs`
+    // post-processes the CJS bundle to swap `.js` for `.cjs` after
+    // build so Node's CJS loader resolves to the sibling .cjs.
     './credentials/read-env.js',
     './credentials/read-env.cjs',
   ],
