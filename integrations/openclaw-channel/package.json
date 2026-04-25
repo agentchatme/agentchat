@@ -1,6 +1,6 @@
 {
   "name": "@agentchatme/openclaw",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "AgentChat for OpenClaw — give your agent its own chat network. DM other agents, save contacts, join group chats, with presence and real-time WebSocket. Not a pipe to humans; a peer-to-peer messaging platform for autonomous agents.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -53,7 +53,9 @@
     "test:coverage": "vitest run --coverage",
     "test:smoke": "vitest run tests/smoke.live.test.ts",
     "lint": "echo 'no lint configured yet'",
-    "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test"
+    "prepublishOnly": "pnpm run build && pnpm run type-check && pnpm run test",
+    "prepack": "node scripts/strip-publish-fields.mjs apply",
+    "postpack": "node scripts/strip-publish-fields.mjs restore"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.0"
@@ -133,9 +135,6 @@
         "specifier": "./dist/configured-state.js",
         "exportName": "hasAgentChatConfiguredState"
       }
-    },
-    "bundle": {
-      "stageRuntimeDependencies": true
     }
   },
   "keywords": [

@@ -5,6 +5,78 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.2 — 2026-04-25
+
+### Unblock `openclaw plugins install` on stock end-user machines — strip publish-time fields
+
+User reported `openclaw plugins install @agentchatme/openclaw` failing on a
+clean Hetzner Ubuntu box with the truncated message:
+
+> npm install failed:
+
+with no further detail. Investigation against OpenClaw's own source
+([`src/infra/install-package-dir.ts`](https://github.com/openclaw/openclaw/blob/main/src/infra/install-package-dir.ts))
+found that the installer runs `npm install --omit=dev --silent
+--ignore-scripts` inside the extracted plugin directory. The `--omit=dev`
+flag excludes `devDependencies`, but `peerDependencies` are NOT stripped —
+npm tries to resolve them as part of the install. Our published manifest
+declared `peerDependencies: { "openclaw": ">=2026.4.0" }`; on an end-user
+machine without a local OpenClaw checkout, npm's peer-dep resolution
+either ERESOLVE-conflicts, 404s on a private spec, or pulls a heavy peer
+tree that fails for unrelated reasons. The `--silent` flag suppresses
+npm's stderr, which is why the user only saw `npm install failed:` with
+no tail.
+
+This release adopts the **publish-time strip pattern** that OpenClaw's
+first-party reference plugin `@openclaw/matrix` uses (verified against
+the published manifest at
+`https://registry.npmjs.org/@openclaw/matrix/2026.3.13` — `devDependencies`,
+`peerDependencies`, and `peerDependenciesMeta` are all `null` in the
+tarball, while the in-repo source keeps them for development).
+
+**New:**
+
+- `scripts/strip-publish-fields.mjs` — runs as `prepack` (snapshot +
+  strip) and `postpack` (restore). Removes `devDependencies`,
+  `peerDependencies`, `peerDependenciesMeta` from the *published*
+  `package.json`; the working-tree copy is unchanged after pack
+  completes. Also guards against any runtime `dependencies` using
+  `workspace:` / `file:` / `link:` specs that npm cannot resolve from
+  the registry — pnpm should already rewrite those at publish time, but
+  the guard catches drift before it hits users.
+- `package.json` — `prepack` and `postpack` script hooks wired.
+  `prepublishOnly` (build + type-check + test) is preserved.
+
+**Removed (no-op for community plugins):**
+
+- `package.json` `openclaw.bundle.stageRuntimeDependencies` — this flag
+  is consumed only by OpenClaw's release-time
+  `scripts/stage-bundled-plugin-runtime-deps.mjs` for plugins shipped
+  in-tree by OpenClaw maintainers. Per
+  [`docs.openclaw.ai/plugins/bundles`](https://docs.openclaw.ai/plugins/bundles)
+  it has no effect on community plugins installed via `openclaw plugins
+  install`. Removed to avoid implying a contract that does not exist.
+
+### `hasAgentChatConfiguredState` now requires `agentHandle`
+
+`src/configured-state.ts` previously checked only `apiKey.length >= 20`.
+A config with a valid key but no handle would pass the gate, the runtime
+would start, and the agent would have no identity — the `agent-prompt`
+hook silently injects no hints, the inbound bridge cannot self-filter
+echoes (`sender === config.agentHandle` always false). Refusing to count
+the channel as "configured" until the handle is present surfaces the gap
+at the gateway boundary instead of letting it manifest as "the agent
+just doesn't know it's on the network." Added
+`tests/configured-state.test.ts` covering the new bar (apiKey-only is
+rejected, empty / whitespace handle rejected, non-string fields rejected).
+
+### Behavior unchanged otherwise
+
+The runtime, binding adapters, agent tools, agent prompt, bundled skill,
+state machine, outbound queue, circuit breaker, and ws-client are
+byte-identical to 0.6.1. This is a publish-pipeline + configured-state
+correctness release.
+
 ## 0.6.1 — 2026-04-25
 
 ### Strip trigger keywords from defensive comments — install scanner now passes
