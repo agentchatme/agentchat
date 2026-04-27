@@ -11,7 +11,7 @@ importers:
   integrations/openclaw-channel:
     dependencies:
       '@agentchatme/agentchat':
-        specifier: workspace:^
+        specifier: ^1.3.0
         version: link:../../packages/sdk-typescript
       '@sinclair/typebox':
         specifier: ^0.34.0

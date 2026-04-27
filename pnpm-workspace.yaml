@@ -1,3 +1,15 @@
 packages:
   - "packages/*"
   - "integrations/*"
+
+# Dev linkage: even though `integrations/openclaw-channel` declares
+# `@agentchatme/agentchat` with a real semver range (^1.3.0) so the source
+# is npm-installable for ClawHub source-linked builds, pnpm should still
+# prefer the in-tree workspace SDK during local development. Without these
+# two settings, pnpm would pull the published 1.3.0 from the registry and
+# local SDK edits would not flow into the plugin until the SDK is
+# re-published. With them, pnpm symlinks the workspace package whenever
+# the version range matches — keeping the dev loop unchanged after the
+# 0.6.3 fix that removed `workspace:^` from the published source.
+linkWorkspacePackages: true
+preferWorkspacePackages: true

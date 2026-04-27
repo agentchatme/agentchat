@@ -86,19 +86,27 @@ try {
   fail(`could not parse package.json: ${err.message}`)
 }
 
-// Guard: runtime dependencies must not use `file:` or `link:` specs.
-// These are valid in a monorepo source tree but cannot be resolved by
-// `npm install` on an end-user machine and pnpm does NOT rewrite them
-// during pack. `workspace:` specs are intentionally allowed — pnpm
-// rewrites them to real semver as part of `pnpm pack` / `pnpm publish`,
-// so by the time the tarball is on the registry the spec is already
-// concrete. (npm's own publish, which doesn't understand `workspace:`,
-// would surface the same problem differently and is out of scope here.)
+// Guard: runtime dependencies must not use any spec npm doesn't natively
+// understand (`workspace:`, `file:`, `link:`, `catalog:`). pnpm rewrites
+// `workspace:` to real semver during `pnpm pack` for the npm tarball, but
+// ClawHub source-linked builds skip pack entirely — they zip the raw
+// source tree and run `npm install` on it. A `workspace:^` that pnpm
+// would have rewritten on publish reaches end-user machines unmodified
+// and crashes with EUNSUPPORTEDPROTOCOL. This guard catches all four
+// non-portable specs at publish time so the source itself stays npm-
+// installable. The runtime regression test
+// (`scripts/verify-source-installs.mjs`) catches the same class of bug
+// pre-publish via `npm install --dry-run`.
 const runtimeDeps = pkg.dependencies ?? {}
 const unresolvable = []
 for (const [name, spec] of Object.entries(runtimeDeps)) {
   if (typeof spec !== 'string') continue
-  if (spec.startsWith('file:') || spec.startsWith('link:')) {
+  if (
+    spec.startsWith('workspace:') ||
+    spec.startsWith('file:') ||
+    spec.startsWith('link:') ||
+    spec.startsWith('catalog:')
+  ) {
     unresolvable.push(`${name}@${spec}`)
   }
 }

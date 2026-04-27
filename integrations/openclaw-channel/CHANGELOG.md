@@ -5,6 +5,77 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.3 — 2026-04-27
+
+### Fix: `openclaw plugins install` failed with `EUNSUPPORTEDPROTOCOL` on ClawHub source-linked builds
+
+0.6.2 still failed end-user installs with the same truncated `npm install
+failed:` symptom 0.6.2 was supposed to fix. Root cause was different this
+time and only visible after we recovered the swallowed npm log from the
+target machine:
+
+```
+error code EUNSUPPORTEDPROTOCOL
+error Unsupported URL Type "workspace:": workspace:^
+```
+
+The committed source `package.json` declared
+`dependencies."@agentchatme/agentchat": "workspace:^"`. pnpm rewrites this
+to a real semver during `pnpm pack` / `pnpm publish`, so the **npm tarball**
+(`registry.npmjs.org/@agentchatme/openclaw/0.6.2`) is fully clean — the
+spec resolves to `^1.3.0` there. But ClawHub builds community plugins via
+**source-linked verification**: it zips the GitHub source tree at the
+release tag and ships that. `pnpm pack` is never invoked on that path, so
+the `workspace:^` spec reaches end-user machines verbatim, where OpenClaw
+runs `npm install` (not pnpm) and npm rejects the spec at `Arborist`'s
+ideal-tree build step.
+
+OpenClaw's `--silent` flag (hardcoded in
+[`src/infra/install-package-dir.ts`](https://github.com/openclaw/openclaw/blob/main/src/infra/install-package-dir.ts))
+suppressed both stdout and stderr, so the user saw only `npm install
+failed:` with nothing after — exactly the same surface as 0.6.1's
+`peerDependencies` bug, but a fundamentally different root cause.
+
+The fix is a **production-grade lockdown** — single source of truth, no
+process gymnastics, regression-proof:
+
+**Changed:**
+
+- `package.json` — `dependencies."@agentchatme/agentchat"` pinned to
+  `^1.3.0` (real semver). The committed source is now installable by raw
+  npm. Bun, Yarn, npm clone, ClawHub source-linked builds — all succeed.
+- `pnpm-workspace.yaml` (monorepo root) — added
+  `linkWorkspacePackages: true` and `preferWorkspacePackages: true`.
+  pnpm continues to symlink the in-tree SDK during development even
+  though the spec is now a normal semver range; the dev-loop is
+  unchanged. Settings live here rather than `.npmrc` because `.npmrc`
+  is `.gitignore`d project-wide to prevent npm auth-token leakage.
+- `scripts/strip-publish-fields.mjs` — guard now rejects `workspace:` and
+  `catalog:` specs in `dependencies` in addition to `file:` and `link:`.
+  Prior comment explicitly allowed `workspace:` on the assumption that
+  pnpm pack would rewrite it; that assumption holds for the npm tarball
+  but not for ClawHub source-linked builds, so the guard is widened.
+
+**New:**
+
+- `scripts/verify-source-installs.mjs` — regression test wired into
+  `prepublishOnly`. Copies the source `package.json` into a fresh temp
+  dir and runs `npm install --dry-run --omit=dev --ignore-scripts ...`
+  (the same flags ClawHub-side OpenClaw uses, minus `--silent`). A
+  future commit that re-introduces a `workspace:`, `file:`, `link:`, or
+  `catalog:` spec in `dependencies` cannot reach npm or ClawHub — the
+  prepublish hook fails first with the actual npm error message.
+
+### Upstream improvement (filed in parallel, non-blocking)
+
+OpenClaw `src/infra/install-package-dir.ts` hardcodes `--silent` on the
+spawned `npm install`, which suppresses every user-actionable error.
+Combined with the failure handler that formats `"npm install failed: " +
+(stderr || stdout).trim()`, an empty buffer renders as the bare prefix.
+A PR proposing replacement with `--loglevel=error` (or removal of the
+flag entirely) is filed against `openclaw/openclaw` so the next community
+plugin author hits a real error instead of an empty one.
+
 ## 0.6.2 — 2026-04-25
 
 ### Unblock `openclaw plugins install` on stock end-user machines — strip publish-time fields
