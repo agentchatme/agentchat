@@ -72,9 +72,18 @@ export type AgentchatChannelConfigInput = z.input<typeof agentchatChannelConfigS
 /**
  * Parse + validate config at plugin startup.
  *
- * Fails fast on invalid config rather than waiting until the first request.
- * The `AgentChatChannelError` wrapper makes validation failures classifiable
- * by the gateway's error handler (`terminal-user` — operator fix required).
+ * Strict on `apiKey` and the four nested groups — `parseChannelConfig` is
+ * called only AFTER `resolveAgentchatAccount` has confirmed that the
+ * persisted config block is non-empty (see `channel.ts`), so an empty
+ * install-time config never reaches Zod. The runtime-time strictness here
+ * surfaces typos and out-of-range values fast. The OpenClaw install-time
+ * JSON Schema (emitted by `scripts/emit-manifest-schema.mjs`) is more
+ * permissive — see that script's post-process step for the rationale —
+ * so a freshly-installed plugin can pass install validation against an
+ * empty config block before the setup wizard fills in credentials.
+ *
+ * `AgentChatChannelError` wraps validation failures so the gateway can
+ * classify them (`terminal-user` — operator fix required).
  */
 export function parseChannelConfig(input: unknown): AgentchatChannelConfig {
   return agentchatChannelConfigSchema.parse(input)

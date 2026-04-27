@@ -197,18 +197,53 @@ describe('channel entry — shape expected by OpenClaw loader', () => {
 })
 
 describe('manifest sync', () => {
-  it('openclaw.plugin.json#configSchema matches the Zod-derived schema', () => {
+  it('openclaw.plugin.json#configSchema matches the Zod-derived schema (with documented install-time loosening)', () => {
     const manifestPath = resolve(__dirname, '..', 'openclaw.plugin.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    // The emit script strips top-level `$`-prefixed keys (e.g. `$schema`)
-    // from the manifest because Convex rejects them at publish time. Mirror
-    // that strip here so the test asserts structural sync, not byte-equality
-    // with a field that's deliberately omitted on disk.
-    const expected = { ...(agentchatPlugin.configSchema?.schema as Record<string, unknown>) }
+    // The emit script applies two documented transforms to the runtime
+    // schema before writing it into the manifest:
+    //   1. Strip top-level `$`-prefixed keys (e.g. `$schema`) — Convex
+    //      rejects them at publish time.
+    //   2. Drop the top-level `required` array entirely so OpenClaw's
+    //      install-time validator accepts an empty config block before the
+    //      setup wizard runs. The configured-state predicate
+    //      (`hasAgentChatConfiguredState`) enforces apiKey + agentHandle at
+    //      runtime instead, and the runtime parser (Zod) materializes the
+    //      nested-object defaults via `.prefault({})` when the plugin
+    //      actually starts.
+    // This test mirrors those transforms so it asserts STRUCTURAL sync
+    // (everything else stays in lockstep) without reverting the deliberate
+    // install-time relaxation. See `scripts/emit-manifest-schema.mjs` for
+    // the full rationale and CHANGELOG 0.6.4.
+    const expected = JSON.parse(
+      JSON.stringify(agentchatPlugin.configSchema?.schema as Record<string, unknown>),
+    )
     for (const key of Object.keys(expected)) {
       if (key.startsWith('$')) delete expected[key]
     }
+    delete expected.required
     expect(manifest.configSchema).toEqual(expected)
+  })
+
+  it('openclaw.plugin.json#configSchema accepts an empty install-time config block', () => {
+    // Regression test for 0.6.4 — `openclaw plugins install` failed at the
+    // `persistPluginInstall` step because the schema's `required` array
+    // demanded `apiKey` (and four nested groups) be present BEFORE the
+    // setup wizard had a chance to fill them in. The install-time schema
+    // must tolerate `{}` so the persist succeeds; the configured-state
+    // predicate gates the runtime separately.
+    const manifestPath = resolve(__dirname, '..', 'openclaw.plugin.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    expect(manifest.configSchema.required).toBeUndefined()
+    // Sanity check: each property is still present in the schema (so
+    // shape validation works when fields ARE supplied) — only the
+    // top-level required array is dropped.
+    expect(manifest.configSchema.properties.apiKey).toBeDefined()
+    expect(manifest.configSchema.properties.apiBase).toBeDefined()
+    expect(manifest.configSchema.properties.reconnect).toBeDefined()
+    expect(manifest.configSchema.properties.ping).toBeDefined()
+    expect(manifest.configSchema.properties.outbound).toBeDefined()
+    expect(manifest.configSchema.properties.observability).toBeDefined()
   })
 
   it('openclaw.plugin.json#uiHints matches the plugin uiHints', () => {

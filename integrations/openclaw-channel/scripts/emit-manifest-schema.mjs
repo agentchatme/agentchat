@@ -93,6 +93,51 @@ const cleanedSchema = { ...configSchema.schema }
 for (const key of Object.keys(cleanedSchema)) {
   if (key.startsWith('$')) delete cleanedSchema[key]
 }
+
+// Loosen the install-time `required` array so OpenClaw's manifest
+// validator accepts an empty config block. OpenClaw runs JSON Schema
+// validation on the persisted plugin entry at install time —
+// **before** the setup wizard fills in `apiKey` and `agentHandle` —
+// so a strict required array blocks the install with
+// `must have required property 'apiKey'`. The runtime is gated separately
+// by the `configuredState` predicate (`hasAgentChatConfiguredState`),
+// which enforces apiKey + agentHandle presence before the channel ever
+// connects. Two layers, two jobs:
+//
+//   - JSON Schema (this file): describes the SHAPE of valid config,
+//     permissive about presence so install-time validation can pass
+//     against `{}`.
+//   - configuredState predicate + Zod schema (`config-schema.ts`):
+//     enforces "ready to run" at runtime. Strict.
+//
+// What stays in `required`: nothing. Every top-level field either has
+// a leaf-level `default` that OpenClaw auto-fills (`apiBase`) or has
+// a prefault `{}` at the runtime layer that fills in nested defaults
+// when the plugin starts (`reconnect` / `ping` / `outbound` /
+// `observability`) or is gated by `configuredState` (`apiKey`,
+// `agentHandle`). An empty install-time `required` means a fresh-out-
+// of-the-box config block validates without prejudging which fields
+// the user has filled in yet.
+//
+// We deliberately do NOT push `default: {}` onto the nested-object
+// subschemas. JSON Schema validators differ on whether they descend
+// into a defaulted object and revalidate its inner `required` array —
+// a permissive validator that auto-fills `reconnect: {}` and then
+// fails on the inner `required: ['initialBackoffMs', ...]` would
+// reintroduce the install-time blocker. Leaving the nested objects
+// truly absent from input means the inner schemas never run during
+// install validation; the runtime parser (Zod) materializes the
+// nested defaults via `.prefault({})` when the plugin actually starts.
+//
+// This post-process replaces an earlier mis-design where the Zod schema
+// alone described the strict shape, the JSON Schema inherited that
+// strictness, and `openclaw plugins install` failed at the persist step
+// with `must have required property 'apiKey'`. See plugin CHANGELOG
+// 0.6.4 for the full root cause writeup.
+if (cleanedSchema.required) {
+  delete cleanedSchema.required
+}
+
 manifest.configSchema = cleanedSchema
 if (configSchema.uiHints) {
   manifest.uiHints = configSchema.uiHints

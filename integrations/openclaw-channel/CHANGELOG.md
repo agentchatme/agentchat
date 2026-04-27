@@ -5,6 +5,73 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.4 — 2026-04-27
+
+### Fix: `openclaw plugins install` failed at the persist step with `must have required property 'apiKey'`
+
+After 0.6.3 unblocked the `npm install` phase, the next step in OpenClaw's
+install pipeline — `persistPluginInstall`, which writes the plugin entry
+into `~/.openclaw/openclaw.json` — failed with:
+
+```
+[plugins] agentchat invalid config: apiKey: must have required property 'apiKey',
+reconnect: must have required property 'reconnect', ping: ..., outbound: ...,
+observability: must have required property 'observability'
+```
+
+OpenClaw's manifest validator runs JSON Schema validation on the persisted
+config block at install time, **before** the setup wizard runs. The
+emitted `openclaw.plugin.json#configSchema` had `required: ['apiBase',
+'apiKey', 'reconnect', 'ping', 'outbound', 'observability']`, so the empty
+config that ships with a fresh install was rejected outright. The plugin's
+files landed on disk, but the entry was never registered, leaving the
+install in a half-completed state.
+
+The schema described the **fully-configured** shape, which is correct for
+runtime ("apiKey is required to actually authenticate"), but is wrong for
+install-time ("nothing is required yet — the wizard is about to run").
+Two layers were doing the same job at the wrong time. The configured-state
+predicate (`hasAgentChatConfiguredState`) already exists and gates the
+runtime correctly: it returns `false` until both `apiKey` (≥ 20 chars) and
+`agentHandle` are populated. OpenClaw uses that gate to decide whether to
+start the channel runtime. The schema just needed to step out of the
+install-time validation path.
+
+**Changed:**
+
+- `scripts/emit-manifest-schema.mjs` — post-process now drops the top-
+  level `required` array from `openclaw.plugin.json#configSchema` after
+  the runtime schema is emitted. Every individual property still keeps
+  its type, format, regex, and bounds — so a value supplied at the wrong
+  type still fails validation. Only the **presence** check at the top
+  level is removed. The Zod schema in `src/config-schema.ts` stays
+  strict (apiKey + nested groups required) because the runtime parser
+  is only called after `resolveAgentchatAccount` has confirmed the
+  config is non-empty; the empty install-time case bypasses Zod
+  entirely. We deliberately do NOT push `default: {}` onto the nested-
+  object subschemas because JSON Schema validators differ on whether
+  they descend into a defaulted object and revalidate its inner
+  `required` array — a permissive validator that auto-fills
+  `reconnect: {}` and then fails on the inner `required` would
+  reintroduce the install-time blocker.
+- `tests/plugin.test.ts#manifest sync` — updated to mirror the new
+  transform (drop `required` from the expected manifest derivation) and
+  added a positive regression test that asserts
+  `manifest.configSchema.required` is `undefined`. A future commit that
+  reintroduces a top-level required array fails this test before
+  publish.
+
+**Why no Zod change:**
+
+The runtime parser (`parseChannelConfig`) is gated in
+`resolveAgentchatAccount` — it's only called when the persisted config
+section has at least one key. An empty install-time config block never
+reaches Zod, so the runtime schema can stay strict without blocking
+install. Once the setup wizard fills in `apiKey` (and optionally
+`agentHandle`), the now-non-empty config block passes through Zod with
+all the type, format, and bounds checks intact, the configured-state
+predicate flips to `true`, and the runtime starts.
+
 ## 0.6.3 — 2026-04-27
 
 ### Fix: `openclaw plugins install` failed with `EUNSUPPORTEDPROTOCOL` on ClawHub source-linked builds
