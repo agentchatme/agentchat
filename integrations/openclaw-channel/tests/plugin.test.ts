@@ -246,6 +246,40 @@ describe('manifest sync', () => {
     expect(manifest.configSchema.properties.observability).toBeDefined()
   })
 
+  it('openclaw.plugin.json#channelConfigs.agentchat is present and matches the runtime schema', () => {
+    // Regression test for 0.6.5 — OpenClaw 2026.4.24+ emits the
+    // `without channelConfigs metadata` warning when a community plugin
+    // declares channels but doesn't surface a per-channel config block at
+    // `manifest.channelConfigs[channelId]`. Without it OpenClaw cannot
+    // render the config form before loading the plugin's JS runtime,
+    // defeating the "introspect schema before runtime loads" guarantee.
+    const manifestPath = resolve(__dirname, '..', 'openclaw.plugin.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
+
+    expect(manifest.channelConfigs).toBeDefined()
+    expect(manifest.channelConfigs.agentchat).toBeDefined()
+
+    const block = manifest.channelConfigs.agentchat
+    // Required field per PluginManifestChannelConfig (manifest.ts:37-45):
+    expect(block.schema).toBeDefined()
+    expect(block.schema.type).toBe('object')
+    expect(block.schema.properties.apiKey).toBeDefined()
+    expect(block.schema.properties.agentHandle).toBeDefined()
+
+    // The channel-level schema mirrors the loosened install-time schema
+    // (no top-level required) — same source-of-truth as `configSchema`,
+    // emitted from the runtime Zod export so drift is structurally
+    // impossible.
+    expect(block.schema.required).toBeUndefined()
+    expect(block.schema).toEqual(manifest.configSchema)
+
+    // uiHints come along when defined — this carries the per-field
+    // labels/placeholders OpenClaw renders in the setup form.
+    expect(block.uiHints).toBeDefined()
+    expect(block.uiHints.apiKey?.label).toBe('AgentChat API key')
+    expect(block.uiHints.apiKey?.sensitive).toBe(true)
+  })
+
   it('openclaw.plugin.json#uiHints matches the plugin uiHints', () => {
     const manifestPath = resolve(__dirname, '..', 'openclaw.plugin.json')
     const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))

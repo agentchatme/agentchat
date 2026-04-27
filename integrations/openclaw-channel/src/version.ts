@@ -7,4 +7,4 @@
  * (`tests/version.test.ts`) pins this against `package.json` so bumping one
  * without the other fails CI.
  */
-export const PACKAGE_VERSION = '0.6.4'
+export const PACKAGE_VERSION = '0.6.5'

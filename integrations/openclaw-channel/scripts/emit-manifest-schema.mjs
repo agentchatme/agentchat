@@ -138,6 +138,44 @@ if (cleanedSchema.required) {
   delete cleanedSchema.required
 }
 
+// Emit `channelConfigs.agentchat` for the pre-runtime config-schema +
+// setup-surface introspection path that OpenClaw 2026.4.24+ expects.
+//
+// Why both top-level `configSchema` and per-channel `channelConfigs`:
+// OpenClaw's manifest registry treats `channelConfigs[id]` as the
+// canonical source of channel-level schema/uiHints (winning over
+// runtime-collected metadata for community plugins, which are loaded
+// with `origin: "global"`); the top-level `configSchema` is only
+// consumed for plugin-level (non-channel) settings. Without a
+// `channelConfigs.agentchat` block, OpenClaw emits the
+// `without channelConfigs metadata` warning at install time AND has
+// to load the plugin's JS to surface the config form — defeating the
+// "introspect schema before runtime loads" guarantee. With it, the
+// install is silent and the config form renders pre-load.
+//
+// We deliberately copy the same cleanedSchema into both surfaces:
+//   - `manifest.configSchema` stays as a stub-shaped backstop for
+//     older OpenClaw versions that haven't been taught to prefer
+//     channelConfigs yet (purely backward-compat — newer versions
+//     read channelConfigs first).
+//   - `manifest.channelConfigs.agentchat.schema` carries the same
+//     loosened shape so the pre-runtime path validates identically.
+//
+// Single source of truth: the runtime Zod export. Both manifest
+// surfaces are derived from it in this script. A drift between them
+// is structurally impossible.
+const CHANNEL_ID = 'agentchat'
+const channelConfigEntry = {
+  schema: cleanedSchema,
+}
+if (configSchema.uiHints) {
+  channelConfigEntry.uiHints = configSchema.uiHints
+}
+manifest.channelConfigs = {
+  ...(manifest.channelConfigs ?? {}),
+  [CHANNEL_ID]: channelConfigEntry,
+}
+
 manifest.configSchema = cleanedSchema
 if (configSchema.uiHints) {
   manifest.uiHints = configSchema.uiHints

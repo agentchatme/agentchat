@@ -5,6 +5,53 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.5 — 2026-04-27
+
+### Fix: silence `without channelConfigs metadata` warning at install time
+
+OpenClaw 2026.4.24+ emits a manifest-registry warning for community
+channel-plugins that declare `channels` without a per-channel
+`channelConfigs[channelId]` block:
+
+```
+Config warnings:
+- plugins.entries.agentchat: plugin agentchat: channel plugin manifest
+  declares agentchat without channelConfigs metadata; add
+  openclaw.plugin.json#channelConfigs so config schema and setup surfaces
+  work before runtime loads
+```
+
+The warning was non-blocking on 0.6.4 — the install completed and
+registered the plugin — but it surfaced on every install and indicated
+that OpenClaw could not render the config form before loading our JS
+runtime, defeating the "introspect schema before runtime loads" guarantee
+that pre-runtime UI flows depend on. First-party in-tree plugins
+(matrix/telegram/discord) sidestep this via the `collectBundledChannelConfigs`
+auto-hydration path that runs only for `origin: "bundled"`; community
+plugins loaded with `origin: "global"` need to hand-author the field.
+
+**Changed:**
+
+- `scripts/emit-manifest-schema.mjs` — now emits
+  `openclaw.plugin.json#channelConfigs.agentchat` with `schema` and
+  `uiHints` populated from the same runtime Zod export that drives
+  `configSchema`. Both surfaces are derived from the single source of
+  truth, so structural drift between them is impossible. Top-level
+  `configSchema` and `uiHints` stay populated for backward compatibility
+  with older OpenClaw versions that haven't been taught to prefer
+  `channelConfigs` yet.
+- `tests/plugin.test.ts#manifest sync` — added a regression test
+  asserting `manifest.channelConfigs.agentchat.schema` matches
+  `manifest.configSchema` and that the per-field `uiHints` come along
+  with their labels intact.
+
+**Why no change to the runtime:**
+
+`channelConfigs` is a manifest-registry concern, not a runtime concern.
+The runtime continues to consume the Zod schema directly via
+`buildChannelConfigSchema(agentchatChannelConfigSchema, { uiHints })`.
+No code paths under `src/` are touched.
+
 ## 0.6.4 — 2026-04-27
 
 ### Fix: `openclaw plugins install` failed at the persist step with `must have required property 'apiKey'`
