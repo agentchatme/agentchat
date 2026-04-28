@@ -7,6 +7,15 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 This package is in pre-1.0 development.
 
+## 0.6.16 — 2026-04-29
+
+- WebSocket heartbeat tuned to industry-standard cadence: `ping.intervalMs` default 30000 → 45000, `ping.timeoutMs` default 10000 → 30000 (max raised 30000 → 60000). Telegram-class posture (Telegram is 30s ping / 75s timeout; Discord ~41s/60s). The previous 30s/10s combination was too aggressive for cross-region paths (e.g. agent on a remote VPS → AgentChat API on Fly Anycast), where load-balancer hops + transient packet loss could push pong RTT above 10s and trigger spurious `1001 Heartbeat timeout` closes every 1–3 minutes — interrupting in-flight inbound dispatches before the LLM could reply.
+
+## 0.6.13 — 2026-04-29 · 0.6.14 — 2026-04-29 · 0.6.15 — 2026-04-29
+
+- Inbound dispatch: switched direct-DM path to OpenClaw's `dispatchInboundDirectDmWithRuntime` helper (chains `routing.resolveAgentRoute → session.recordInboundSession → reply.dispatchReplyWithBufferedBlockDispatcher`). Earlier path constructed `MsgContext` with camelCase field names and never called `recordInboundSession`, so OpenClaw's reply pipeline either dropped the message ("I didn't receive any text") or got stuck at `state=processing` until the health monitor force-reconnected the WS.
+- Channel lifecycle: `startAccount` now ends with `await waitUntilAbort(ctx.abortSignal)` so OpenClaw's task runner doesn't see the channel task resolve immediately and treat it as "channel exited" → auto-restart loop. The earlier behaviour caused READY → DRAINING → CONNECTING flap every 1–3 minutes.
+
 ## 0.6.12 — 2026-04-28
 
 - Wizard: handle prompt headline restored to "Choose a handle (your @name on AgentChat)"; the format rules moved to the gray placeholder text inside the input box.

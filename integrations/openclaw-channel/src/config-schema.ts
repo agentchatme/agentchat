@@ -20,8 +20,8 @@ export const reconnectConfigSchema = z
 
 export const pingConfigSchema = z
   .object({
-    intervalMs: z.number().int().min(5_000).max(120_000).default(30_000),
-    timeoutMs: z.number().int().min(1_000).max(30_000).default(10_000),
+    intervalMs: z.number().int().min(5_000).max(120_000).default(45_000),
+    timeoutMs: z.number().int().min(1_000).max(60_000).default(30_000),
   })
   .strict()
 

@@ -9,7 +9,7 @@ describe('config schema — minimal accept', () => {
     expect(cfg.apiKey).toBe(MIN_KEY)
     expect(cfg.apiBase).toBe('https://api.agentchat.me')
     expect(cfg.reconnect.initialBackoffMs).toBe(1_000)
-    expect(cfg.ping.intervalMs).toBe(30_000)
+    expect(cfg.ping.intervalMs).toBe(45_000)
     expect(cfg.outbound.maxInFlight).toBe(256)
     expect(cfg.observability.logLevel).toBe('info')
   })
