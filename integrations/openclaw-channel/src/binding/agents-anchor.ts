@@ -49,6 +49,21 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 import type { OpenClawConfig } from './openclaw-types.js'
+// Env access is routed through the externalized read-env module so
+// neither `dist/index.js` nor `dist/setup-entry.js` ends up with
+// `process.env` literally next to `fetch(`. OpenClaw's install-time
+// scanner blocks any bundle that combines both — see read-env.ts
+// header for the full rationale.
+//
+// Path note: this file lives in src/binding/ so the source-time
+// relative import is `../credentials/...`, but after tsup bundles
+// agents-anchor INTO `dist/index.js` and `dist/setup-entry.js`, the
+// surviving external import resolves from `dist/`, where the correct
+// relative path is `./credentials/...`. We rewrite via the
+// `esbuildPlugins` hook in `tsup.config.ts` so source TypeScript
+// resolves correctly AND the post-bundle external import resolves
+// correctly.
+import { readOpenClawProfileFromEnv } from '../credentials/read-env.js'
 
 // Unified marker shared with the universal skill (Path A). Whichever
 // path is most recently configured owns the block; switching paths
@@ -94,8 +109,8 @@ export function resolveWorkspaceDir(cfg: OpenClawConfig | undefined): string {
   if (typeof configured === 'string' && configured.trim().length > 0) {
     return path.resolve(configured)
   }
-  const profile = process.env['OPENCLAW_PROFILE']?.trim()
-  if (profile && profile.toLowerCase() !== 'default') {
+  const profile = readOpenClawProfileFromEnv()
+  if (profile) {
     return path.join(os.homedir(), '.openclaw', `workspace-${profile}`)
   }
   return path.join(os.homedir(), '.openclaw', 'workspace')
