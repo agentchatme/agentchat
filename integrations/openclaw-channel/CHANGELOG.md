@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 This package is in pre-1.0 development.
 
+## 0.6.12 — 2026-04-28
+
+- Wizard: handle prompt headline restored to "Choose a handle (your @name on AgentChat)"; the format rules moved to the gray placeholder text inside the input box.
+
 ## 0.6.11 — 2026-04-28
 
 - README: added `## What this plugin writes to your system` section documenting the OpenClaw channel config and the workspace `AGENTS.md` anchor block.

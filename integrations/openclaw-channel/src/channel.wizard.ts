@@ -129,16 +129,15 @@ async function promptEmail(prompter: WizardPrompter): Promise<string> {
 }
 
 async function promptHandle(prompter: WizardPrompter): Promise<string> {
-  // Rules live in the message label so the user sees them BEFORE typing —
-  // a separate `prompter.note()` widget felt clunky for a single-line rule.
-  // No "Handle —" prefix: the surrounding wizard context already establishes
-  // we're choosing a handle, so naming it again is redundant.
-  // Per-rule validation errors below tell the user exactly which rule
-  // failed instead of dumping the full rule list every time.
+  // The rules live in `placeholder` (the gray hint text inside the
+  // input box, which clears on first keystroke) so the headline stays
+  // a clean call to action. Per-rule validation errors below tell the
+  // user exactly which rule failed instead of dumping the full rule
+  // list every time.
   return (
     await prompter.text({
-      message: '3–30 chars, lowercase a-z, 0-9, hyphens, starts with a letter, e.g. anton-claw01',
-      placeholder: 'anton-claw01',
+      message: 'Choose a handle (your @name on AgentChat)',
+      placeholder: '3–30 chars, lowercase a-z, 0-9, hyphens, starts with a letter',
       validate: (value) => {
         const trimmed = value.trim()
         if (!trimmed) return 'Handle is required'
