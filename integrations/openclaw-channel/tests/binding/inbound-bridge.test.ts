@@ -67,6 +67,41 @@ function makeRuntimeStub(): AgentchatChannelRuntime {
   } as unknown as AgentchatChannelRuntime
 }
 
+/**
+ * Build a channelRuntime mock with the full surface that
+ * `dispatchInboundDirectDmWithRuntime` calls into. The helper does:
+ *   routing.resolveAgentRoute → session.resolveStorePath →
+ *   session.readSessionUpdatedAt → reply.resolveEnvelopeFormatOptions →
+ *   reply.formatAgentEnvelope → reply.finalizeInboundContext →
+ *   session.recordInboundSession → reply.dispatchReplyWithBufferedBlockDispatcher
+ * The tests only care that the dispatcher is called (or not), so the
+ * intermediates are stubbed minimally.
+ */
+function makeChannelRuntimeStub(opts: {
+  dispatcher: ReturnType<typeof vi.fn>
+}): unknown {
+  return {
+    routing: {
+      resolveAgentRoute: vi.fn(({ accountId }: { accountId: string }) => ({
+        agentId: 'agent-main',
+        accountId,
+        sessionKey: `dm:test`,
+      })),
+    },
+    session: {
+      resolveStorePath: vi.fn(() => '/tmp/test-session-store'),
+      readSessionUpdatedAt: vi.fn(() => Date.now()),
+      recordInboundSession: vi.fn(async () => {}),
+    },
+    reply: {
+      resolveEnvelopeFormatOptions: vi.fn(() => ({ mode: 'agent' })),
+      formatAgentEnvelope: vi.fn(({ body }: { body: string }) => body),
+      finalizeInboundContext: vi.fn((ctx: unknown) => ctx),
+      dispatchReplyWithBufferedBlockDispatcher: opts.dispatcher,
+    },
+  }
+}
+
 describe('inbound bridge', () => {
   it('ignores messages from our own handle (self-echo filter)', async () => {
     const dispatcher = vi.fn()
@@ -76,7 +111,7 @@ describe('inbound bridge', () => {
       config,
       logger: emptyLogger,
       runtime,
-      channelRuntime: { reply: { dispatchReplyWithBufferedBlockDispatcher: dispatcher } },
+      channelRuntime: makeChannelRuntimeStub({ dispatcher }) as never,
       gatewayCfg: {},
       selfHandle: 'self-agent',
     })
@@ -93,7 +128,7 @@ describe('inbound bridge', () => {
       config,
       logger: emptyLogger,
       runtime,
-      channelRuntime: { reply: { dispatchReplyWithBufferedBlockDispatcher: dispatcher } },
+      channelRuntime: makeChannelRuntimeStub({ dispatcher }) as never,
       gatewayCfg: {},
       selfHandle: 'self-agent',
     })
@@ -108,7 +143,7 @@ describe('inbound bridge', () => {
       config,
       logger: emptyLogger,
       runtime: makeRuntimeStub(),
-      channelRuntime: { reply: { dispatchReplyWithBufferedBlockDispatcher: dispatcher } },
+      channelRuntime: makeChannelRuntimeStub({ dispatcher }) as never,
       gatewayCfg: {},
       selfHandle: 'self-agent',
     })
@@ -145,7 +180,7 @@ describe('inbound bridge', () => {
       config,
       logger: emptyLogger,
       runtime: makeRuntimeStub(),
-      channelRuntime: { reply: { dispatchReplyWithBufferedBlockDispatcher: dispatcher } },
+      channelRuntime: makeChannelRuntimeStub({ dispatcher }) as never,
       gatewayCfg: {},
       selfHandle: 'self-agent',
     })

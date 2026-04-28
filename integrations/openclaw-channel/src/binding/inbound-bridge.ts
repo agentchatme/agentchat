@@ -19,6 +19,8 @@
  * `agentHandle`.
  */
 
+import { dispatchInboundDirectDmWithRuntime } from 'openclaw/plugin-sdk/direct-dm'
+
 import type { Logger } from '../log.js'
 import type { AgentchatChannelConfig } from '../config-schema.js'
 import type {
@@ -45,9 +47,22 @@ export interface InboundBridgeDeps {
   readonly selfHandle?: string
 }
 
+/**
+ * The runtime surface OpenClaw passes via channelRuntime. We only declare
+ * the bits we actually call — the actual object passed at runtime is
+ * fuller and is the same shape used by every bundled channel and tested
+ * via openclaw/src/plugin-sdk/direct-dm.test.ts. Casting to `never` for
+ * dispatchInboundDirectDmWithRuntime sidesteps a deep TS type-name conflict
+ * between OpenClaw's internal cfg type and our gatewayCfg passthrough.
+ */
 export type ChannelRuntimeLike = {
+  readonly routing?: unknown
+  readonly session?: unknown
   readonly reply?: {
     readonly dispatchReplyWithBufferedBlockDispatcher?: (params: unknown) => Promise<unknown>
+    readonly resolveEnvelopeFormatOptions?: unknown
+    readonly formatAgentEnvelope?: unknown
+    readonly finalizeInboundContext?: unknown
   }
 }
 
@@ -102,15 +117,15 @@ async function handleMessage(
     return
   }
 
-  const dispatcher = deps.channelRuntime?.reply?.dispatchReplyWithBufferedBlockDispatcher
-  if (typeof dispatcher !== 'function') {
-    // This is a HARD degradation: a message reached the plugin but the
-    // OpenClaw runtime has no reply pipeline attached, so the agent never
-    // sees it. Log at error so operators can correlate "messages arrive,
-    // no replies go out" with the missing wiring immediately, rather than
-    // discovering it via a user-reported silence. The message itself is
-    // durable server-side; a restart with a properly-wired runtime will
-    // drain it from /v1/messages/sync.
+  const channelRuntime = deps.channelRuntime
+  if (
+    !channelRuntime ||
+    typeof channelRuntime.reply?.dispatchReplyWithBufferedBlockDispatcher !== 'function'
+  ) {
+    // HARD degradation: gateway booted without AI wiring (e.g. tests or
+    // a misconfigured deployment). The message reached the plugin but
+    // there is nowhere to dispatch it to. Server-side it stays durable
+    // — a restart with a properly-wired runtime drains it from sync.
     deps.logger.error(
       {
         event: 'inbound_dispatch_unavailable',
@@ -119,7 +134,7 @@ async function handleMessage(
         conversationKind: event.conversationKind,
         sender: event.sender,
       },
-      'channelRuntime.reply.dispatchReplyWithBufferedBlockDispatcher unavailable — message NOT dispatched to agent (will be redelivered on next sync)',
+      'channelRuntime unavailable — message NOT dispatched to agent (will be redelivered on next sync)',
     )
     return
   }
@@ -129,59 +144,111 @@ async function handleMessage(
     event.conversationKind === 'group'
       ? `group ${event.conversationId}`
       : `dm with @${senderHandle}`
+  const sendReply = async (replyText: string): Promise<void> => {
+    if (!replyText) return
+    const target =
+      event.conversationKind === 'group'
+        ? { kind: 'group' as const, conversationId: event.conversationId }
+        : { kind: 'direct' as const, to: senderHandle }
+    await deps.runtime.sendMessage({
+      ...target,
+      type: 'text',
+      content: { text: replyText },
+      metadata: { reply_to: event.messageId },
+    })
+  }
+  const deliver = async (payload: { text?: string; blocks?: unknown[] }) => {
+    const replyText = payload.text ?? extractText(payload.blocks)
+    await sendReply(replyText)
+  }
 
   try {
-    // Build the ctx in OpenClaw's MsgContext shape — PascalCase keys.
-    // OpenClaw's auto-reply pipeline reads `sessionCtx.Body`, `ctx.RawBody`,
-    // `ctx.CommandBody`, `ctx.From`, `ctx.To`, `ctx.SessionKey`, etc. The
-    // earlier camelCase shape (rawBody / senderAddress / messageId / ...)
-    // was silently dropped in finalizeInboundContext, leaving baseBodyFinal
-    // empty — which fired the "I didn't receive any text in your message"
-    // canned auto-reply at openclaw/src/auto-reply/reply/get-reply-run.ts:494.
-    // Mirror the canonical shape from openclaw/src/plugin-sdk/direct-dm.ts.
-    const sessionKey =
-      event.conversationKind === 'group'
-        ? `agentchat:${deps.accountId}:group:${event.conversationId}`
-        : `agentchat:${deps.accountId}:dm:${senderHandle}`
-    await dispatcher({
-      cfg: deps.gatewayCfg,
-      ctx: {
-        Body: body,
-        BodyForAgent: body,
-        RawBody: body,
-        CommandBody: body,
-        From: `@${senderHandle}`,
-        To: `@${recipientHandle}`,
-        SessionKey: sessionKey,
-        AccountId: deps.accountId,
-        ChatType: event.conversationKind === 'group' ? 'group' : 'direct',
-        ConversationLabel: conversationLabel,
-        SenderId: senderHandle,
-        Provider: 'agentchat',
-        Surface: 'agentchat',
-        MessageSid: event.messageId,
-        MessageSidFull: event.messageId,
-        Timestamp: event.createdAt,
-        OriginatingChannel: 'agentchat',
-        OriginatingTo: `@${recipientHandle}`,
-      },
-      dispatcherOptions: {
-        deliver: async (payload: { text?: string; blocks?: unknown[] }) => {
-          const replyText = payload.text ?? extractText(payload.blocks)
-          if (!replyText) return
-          const target =
-            event.conversationKind === 'group'
-              ? { kind: 'group' as const, conversationId: event.conversationId }
-              : { kind: 'direct' as const, to: senderHandle }
-          await deps.runtime.sendMessage({
-            ...target,
-            type: 'text',
-            content: { text: replyText },
-            metadata: { reply_to: event.messageId },
-          })
+    if (event.conversationKind === 'direct') {
+      // Direct DM path — use OpenClaw's canonical helper which chains:
+      //   1. resolveAgentRoute      (assigns sessionKey, agentId)
+      //   2. buildEnvelope          (formats body with sender label)
+      //   3. finalizeInboundContext (PascalCase ctx with all required fields)
+      //   4. recordInboundSession   (opens the session — was missing in 0.6.13)
+      //   5. dispatchReply...       (runs the LLM)
+      // We call the helper instead of dispatcher directly because skipping
+      // step 4 leaves the session in `sessionId=unknown state=processing`
+      // forever, and the health monitor restarts the WS, killing the in-
+      // flight message. See the diagnostic line:
+      //   stuck session: sessionId=unknown sessionKey=agentchat:default:dm:X
+      // Cast cfg + runtime to `never` because OpenClaw's internal
+      // OpenClawConfig type is not part of the public plugin-sdk surface,
+      // and our gatewayCfg is a passthrough of the same object; the runtime
+      // shape matches openclaw/src/plugin-sdk/direct-dm.test.ts mocks.
+      await dispatchInboundDirectDmWithRuntime({
+        cfg: deps.gatewayCfg as never,
+        runtime: { channel: channelRuntime } as never,
+        channel: 'agentchat',
+        channelLabel: 'AgentChat',
+        accountId: deps.accountId,
+        peer: { kind: 'direct', id: senderHandle },
+        senderId: senderHandle,
+        senderAddress: `@${senderHandle}`,
+        recipientAddress: `@${recipientHandle}`,
+        conversationLabel,
+        rawBody: body,
+        messageId: event.messageId,
+        timestamp:
+          typeof event.createdAt === 'number' ? event.createdAt : Date.parse(event.createdAt),
+        provider: 'agentchat',
+        surface: 'agentchat',
+        deliver,
+        onRecordError: (err: unknown) => {
+          deps.logger.error(
+            { err: err instanceof Error ? err.message : String(err), messageId: event.messageId },
+            'recordInboundSession failed',
+          )
         },
-      },
-    })
+        onDispatchError: (err: unknown, info: { kind: string }) => {
+          deps.logger.error(
+            {
+              err: err instanceof Error ? err.message : String(err),
+              messageId: event.messageId,
+              kind: info.kind,
+            },
+            'inbound dispatch failed',
+          )
+        },
+      })
+    } else {
+      // Group path — no group-specific helper exported from plugin-sdk yet.
+      // Build PascalCase ctx inline and dispatch directly. NOTE: this path
+      // currently skips recordInboundSession (same gap that broke direct in
+      // 0.6.13), so group conversations may exhibit `sessionId=unknown`
+      // stuck-session symptoms. Direct DMs are the verified path; group
+      // support will follow once we either get a `dispatchInboundGroupChat`
+      // helper from upstream or build the equivalent here.
+      const dispatcher = channelRuntime.reply!.dispatchReplyWithBufferedBlockDispatcher!
+      const sessionKey = `agentchat:${deps.accountId}:group:${event.conversationId}`
+      await dispatcher({
+        cfg: deps.gatewayCfg,
+        ctx: {
+          Body: body,
+          BodyForAgent: body,
+          RawBody: body,
+          CommandBody: body,
+          From: `@${senderHandle}`,
+          To: `@${recipientHandle}`,
+          SessionKey: sessionKey,
+          AccountId: deps.accountId,
+          ChatType: 'group',
+          ConversationLabel: conversationLabel,
+          SenderId: senderHandle,
+          Provider: 'agentchat',
+          Surface: 'agentchat',
+          MessageSid: event.messageId,
+          MessageSidFull: event.messageId,
+          Timestamp: event.createdAt,
+          OriginatingChannel: 'agentchat',
+          OriginatingTo: `@${recipientHandle}`,
+        },
+        dispatcherOptions: { deliver },
+      })
+    }
   } catch (err) {
     deps.logger.error(
       {
