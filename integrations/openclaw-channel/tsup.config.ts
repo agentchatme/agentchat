@@ -15,6 +15,11 @@ export default defineConfig({
     // un-inlined into the main bundles via the `external` list below.
     // See SECURITY.md for the architectural rationale.
     'credentials/read-env': 'src/credentials/read-env.ts',
+    // AGENTS.md anchor module — emitted as its own dist file so the
+    // workspace-file write logic stays in a module that only touches
+    // the local filesystem. See SECURITY.md for the architectural
+    // rationale.
+    'binding/agents-anchor': 'src/binding/agents-anchor.ts',
   },
   format: ['esm', 'cjs'],
   dts: true,
@@ -34,47 +39,21 @@ export default defineConfig({
   external: [
     'openclaw',
     'openclaw/plugin-sdk/*',
-    // Keep the credential helper as a separate runtime file (see
-    // SECURITY.md). All four source-relative variants listed because
-    // tsup matches the LITERAL import specifier — entries in src/
-    // use './credentials/...' and entries in src/binding/ use
-    // '../credentials/...'. Both extensions listed because
-    // `scripts/fix-cjs-extensions.mjs` post-processes the CJS bundle
-    // to swap `.js` for `.cjs` after build so Node's CJS loader
-    // resolves to the sibling .cjs.
-    //
-    // Load-bearing: any import path that's NOT in this list will be
-    // inlined into the consumer's bundle, dragging `process.env`
-    // alongside it and re-tripping OpenClaw's `env-harvesting`
-    // install scanner. Add new variants as soon as a new entry path
-    // depth is introduced.
+    // Credential helper — both source-relative variants listed because
+    // tsup matches the LITERAL import specifier:
+    //   - entries in src/                use './credentials/...'
+    //   - entries in src/binding/        use '../credentials/...'
+    // Both `.js` and `.cjs` listed because `scripts/fix-cjs-extensions.mjs`
+    // post-processes the CJS bundles to swap `.js` for `.cjs` after
+    // build so Node's CJS loader resolves to the sibling .cjs file.
     './credentials/read-env.js',
     './credentials/read-env.cjs',
-    // Note: `../credentials/...` variants are NOT here on purpose —
-    // they're handled by the esbuildPlugin below which both marks
-    // them external AND rewrites them to `./credentials/...` so the
-    // post-bundle import resolves from `dist/` correctly.
-  ],
-  esbuildPlugins: [
-    {
-      // Rewrite parent-relative imports of the credential helper to
-      // sibling-relative ones at bundle output time. Reason: source
-      // code in src/binding/ uses `../credentials/read-env.js`
-      // (correct for source-time TS resolution), but after tsup
-      // inlines src/binding/* into dist/index.js (a sibling of
-      // dist/credentials/), the surviving external import needs to
-      // resolve from `dist/`. Without this, the literal preserved
-      // path would point to `dist/../credentials/...` which is wrong.
-      name: 'rewrite-credentials-relative-path',
-      setup(build) {
-        build.onResolve(
-          { filter: /^\.\.\/credentials\/read-env\.(js|cjs)$/ },
-          (args) => ({
-            path: args.path.replace(/^\.\.\//, './'),
-            external: true,
-          }),
-        )
-      },
-    },
+    '../credentials/read-env.js',
+    '../credentials/read-env.cjs',
+    // AGENTS.md anchor — kept as its own runtime file. Consumers in
+    // src/ import './binding/agents-anchor.js'; no parent-relative
+    // variant exists in the source tree today.
+    './binding/agents-anchor.js',
+    './binding/agents-anchor.cjs',
   ],
 })

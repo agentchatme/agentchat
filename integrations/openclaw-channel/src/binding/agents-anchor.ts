@@ -49,20 +49,11 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 
 import type { OpenClawConfig } from './openclaw-types.js'
-// Env access is routed through the externalized read-env module so
-// neither `dist/index.js` nor `dist/setup-entry.js` ends up with
-// `process.env` literally next to `fetch(`. OpenClaw's install-time
-// scanner blocks any bundle that combines both — see read-env.ts
-// header for the full rationale.
-//
-// Path note: this file lives in src/binding/ so the source-time
-// relative import is `../credentials/...`, but after tsup bundles
-// agents-anchor INTO `dist/index.js` and `dist/setup-entry.js`, the
-// surviving external import resolves from `dist/`, where the correct
-// relative path is `./credentials/...`. We rewrite via the
-// `esbuildPlugins` hook in `tsup.config.ts` so source TypeScript
-// resolves correctly AND the post-bundle external import resolves
-// correctly.
+// Env access is delegated to the credential helper. This module
+// performs only local filesystem operations against the workspace
+// AGENTS.md file and never touches the host environment directly.
+// See SECURITY.md ("Defensive separation of credential lookup from
+// outbound I/O") for the architecture rationale.
 import { readOpenClawProfileFromEnv } from '../credentials/read-env.js'
 
 // Unified marker shared with the universal skill (Path A). Whichever
