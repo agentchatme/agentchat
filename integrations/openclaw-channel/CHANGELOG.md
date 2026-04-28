@@ -5,6 +5,57 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.6 — 2026-04-27
+
+### Fix: ClawHub static scanner blocked install on `child_process` import
+
+After 0.6.5 unblocked the `channelConfigs` warning, the next install
+attempt on the GCE VM was rejected by ClawHub's static-analysis gate:
+
+```
+WARNING: Plugin "agentchat" contains dangerous code patterns:
+  Shell command execution detected (child_process)
+  (.../scripts/verify-source-installs.mjs:52)
+Plugin "agentchat" installation blocked: dangerous code patterns
+detected: Shell command execution detected (child_process)
+```
+
+The flagged file is the regression test added in 0.6.3 — it spawned
+`npm install --dry-run` via `child_process.spawnSync` to validate that
+the source `package.json` could still be installed by raw npm. The
+script was a `prepublishOnly` dev tool; it has no runtime role and
+never executes on user machines. But ClawHub's source-linked verification
+zips the entire `integrations/openclaw-channel/` tree (including
+`scripts/`), and the scanner can't tell a build-time test apart from a
+malicious shell-exec, so it blocks the whole install.
+
+The actual regression we wanted to catch is a much narrower string-shape
+problem: any `workspace:` / `file:` / `link:` / `catalog:` spec in the
+runtime-dependency sections will crash raw npm with `EUNSUPPORTEDPROTOCOL`
+on ClawHub source-linked builds. That's a pure JSON inspection — no
+subprocess required.
+
+**Changed:**
+
+- `scripts/verify-source-installs.mjs` — rewritten as a pure JSON-spec
+  linter. Reads the source `package.json`, walks every spec in
+  `dependencies`, `peerDependencies`, and `optionalDependencies`, and
+  fails if any uses `workspace:` / `file:` / `link:` / `catalog:`. No
+  `child_process`, no `npm install`, no network. Same regression
+  coverage for the bug class that surfaced in 0.6.2 — and ClawHub's
+  scanner now passes the install through.
+- `devDependencies` is intentionally excluded from the walk because
+  `npm install --omit=dev` skips it on user machines, so its specs are
+  irrelevant to the install-time blast radius.
+
+**Why no test changes:**
+
+The unit test wired into `prepublishOnly` (run via `pnpm run
+test:install-source`) keeps its same exit-code contract: zero on clean,
+non-zero with a descriptive error on offending specs. The pre-publish
+gate that prevents a future commit from re-introducing `workspace:^` in
+runtime deps is structurally identical to the 0.6.3 wiring.
+
 ## 0.6.5 — 2026-04-27
 
 ### Fix: silence `without channelConfigs metadata` warning at install time
