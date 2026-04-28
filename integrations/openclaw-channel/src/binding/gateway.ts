@@ -24,6 +24,8 @@ import type {
   ChannelGatewayContext,
 } from './openclaw-types.js'
 
+import { waitUntilAbort } from 'openclaw/plugin-sdk/channel-lifecycle'
+
 import type { AgentchatResolvedAccount } from '../channel.js'
 import { createLogger, type Logger } from '../log.js'
 import {
@@ -150,18 +152,33 @@ export const agentchatGatewayAdapter: ChannelGatewayAdapter<AgentchatResolvedAcc
       selfHandle: account.config.agentHandle,
     })
 
-    // Honor graceful shutdown — when ctx.abortSignal aborts, tear down.
-    ctx.abortSignal.addEventListener(
-      'abort',
-      () => {
-        void unregisterRuntime(ctx.accountId, Date.now() + 5_000).catch((err) => {
-          ctx.log?.error?.(
-            `[agentchat:${ctx.accountId}] unregisterRuntime failed on abort: ${err instanceof Error ? err.message : String(err)}`,
-          )
-        })
-      },
-      { once: true },
-    )
+    // Keep the channel task pending until OpenClaw aborts. Without this,
+    // startAccount resolves immediately after wiring the runtime — and
+    // OpenClaw's task-runner (server-channels.ts:475 "channel exited")
+    // treats the resolved promise as a graceful exit and triggers
+    // auto-restart with backoff. Each restart calls registerRuntime,
+    // which stops the existing runtime first (DRAIN_REQUESTED), draining
+    // the WebSocket and killing in-flight inbound dispatches before the
+    // LLM can complete. The result is the flap loop we observed:
+    // READY → DRAINING → CONNECTING → AUTHENTICATING → READY → DRAINING
+    // every 1-3 minutes, with auto-restart attempt counter ticking up
+    // until OpenClaw gives up after 10 attempts.
+    //
+    // waitUntilAbort is the canonical OpenClaw plugin-sdk lifecycle
+    // helper — see openclaw/src/plugin-sdk/channel-lifecycle.core.ts:30
+    // and the runPassiveAccountLifecycle pattern used by IRC, Google
+    // Chat, etc. The onAbort callback runs (and is awaited) before the
+    // promise resolves, so our cleanup happens fully before OpenClaw
+    // sees the task complete — no stop/start race.
+    await waitUntilAbort(ctx.abortSignal, async () => {
+      try {
+        await unregisterRuntime(ctx.accountId, Date.now() + 5_000)
+      } catch (err) {
+        ctx.log?.error?.(
+          `[agentchat:${ctx.accountId}] unregisterRuntime failed on abort: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    })
   },
 
   async stopAccount(ctx) {
