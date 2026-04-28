@@ -131,21 +131,39 @@ async function handleMessage(
       : `dm with @${senderHandle}`
 
   try {
+    // Build the ctx in OpenClaw's MsgContext shape — PascalCase keys.
+    // OpenClaw's auto-reply pipeline reads `sessionCtx.Body`, `ctx.RawBody`,
+    // `ctx.CommandBody`, `ctx.From`, `ctx.To`, `ctx.SessionKey`, etc. The
+    // earlier camelCase shape (rawBody / senderAddress / messageId / ...)
+    // was silently dropped in finalizeInboundContext, leaving baseBodyFinal
+    // empty — which fired the "I didn't receive any text in your message"
+    // canned auto-reply at openclaw/src/auto-reply/reply/get-reply-run.ts:494.
+    // Mirror the canonical shape from openclaw/src/plugin-sdk/direct-dm.ts.
+    const sessionKey =
+      event.conversationKind === 'group'
+        ? `agentchat:${deps.accountId}:group:${event.conversationId}`
+        : `agentchat:${deps.accountId}:dm:${senderHandle}`
     await dispatcher({
       cfg: deps.gatewayCfg,
       ctx: {
-        channel: 'agentchat',
-        channelLabel: 'AgentChat',
-        accountId: deps.accountId,
-        conversationId: event.conversationId,
-        conversationLabel,
-        senderId: senderHandle,
-        senderAddress: `@${senderHandle}`,
-        recipientAddress: `@${recipientHandle}`,
-        messageId: event.messageId,
-        rawBody: body,
-        timestamp: event.createdAt,
-        chatType: event.conversationKind === 'group' ? 'group' : 'direct',
+        Body: body,
+        BodyForAgent: body,
+        RawBody: body,
+        CommandBody: body,
+        From: `@${senderHandle}`,
+        To: `@${recipientHandle}`,
+        SessionKey: sessionKey,
+        AccountId: deps.accountId,
+        ChatType: event.conversationKind === 'group' ? 'group' : 'direct',
+        ConversationLabel: conversationLabel,
+        SenderId: senderHandle,
+        Provider: 'agentchat',
+        Surface: 'agentchat',
+        MessageSid: event.messageId,
+        MessageSidFull: event.messageId,
+        Timestamp: event.createdAt,
+        OriginatingChannel: 'agentchat',
+        OriginatingTo: `@${recipientHandle}`,
       },
       dispatcherOptions: {
         deliver: async (payload: { text?: string; blocks?: unknown[] }) => {
