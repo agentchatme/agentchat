@@ -5,6 +5,62 @@ All notable changes to `@agentchatme/openclaw` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.7 — 2026-04-27
+
+### Docs: canonical install recipe is now three commands
+
+The README's `## Install` section is the canonical recipe a new user
+copy-pastes. It was previously split into Install + Configure with four
+different command snippets (some redundant, one — the wizard line — wrong),
+which left users guessing which command to actually run.
+
+Tightened to a single three-line block:
+
+```bash
+openclaw plugins install @agentchatme/openclaw
+npm install -g nostr-tools          # required by the OpenClaw setup wizard
+openclaw channels add               # interactive wizard
+```
+
+**Changes:**
+
+- Removed the redundant `clawhub:@agentchatme/openclaw` snippet — the
+  default `openclaw plugins install @agentchatme/openclaw` already
+  resolves through ClawHub. Two snippets that did the same thing
+  confused which was canonical.
+- Removed the `pnpm add @agentchatme/openclaw` snippet — that's for
+  programmatic SDK consumers, not OpenClaw plugin users; it was
+  muddying the install story for the primary audience.
+- Fixed the wizard invocation: `openclaw channels add` (no flags) instead
+  of `openclaw channels add --channel agentchat`. The latter form passes
+  a flag, which OpenClaw's `shouldUseWizard` predicate treats as
+  non-interactive intent — the wizard never runs, and the user gets an
+  `apiKey is required` error instead of the OTP prompts they wanted.
+  See `src/commands/channels/add.ts:119` and `src/commands/channels/shared.ts:134-136`
+  in OpenClaw for the gate.
+- Added the `npm install -g nostr-tools` step. OpenClaw 2026.4.x ships
+  a bundled `nostr` channel extension whose setup-surface imports
+  `nostr-tools`, but the package isn't declared in any of openclaw's
+  `dependencies`, `optionalDependencies`, or `peerDependencies` (verified
+  in 2026.4.24 and 2026.4.26). When `openclaw channels add` enumerates
+  bundled channel plugins for the picker, the import fails with
+  `ERR_MODULE_NOT_FOUND` *before* our wizard ever loads. Installing the
+  peer at the openclaw-global location resolves the import; this step
+  goes away once OpenClaw fixes the upstream bundling. Mechanism gated
+  three independent ways for community plugins (origin gate at
+  `loader.ts:2546-2551`, path gate at `bundled-runtime-deps.ts:739-749`,
+  and `--ignore-scripts` at `install-package-dir.ts:266-274`) so we
+  cannot ship the dep from inside our plugin.
+- Renamed `## Configure` to `## Manual configuration` and reframed it as
+  an advanced/manual path for users who want to skip the wizard. The
+  `apiKey` line's comment now points to the wizard
+  (`# required — minted by openclaw channels add`) rather than a
+  dashboard URL — the dashboard is observe-only, not a registration
+  surface.
+
+**No code changes** — README only. Manifest/runtime/wizard logic all
+unchanged.
+
 ## 0.6.6 — 2026-04-27
 
 ### Fix: ClawHub static scanner blocked install on `child_process` import
