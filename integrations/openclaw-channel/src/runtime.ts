@@ -63,7 +63,7 @@ export interface ChannelRuntimeOptions {
   /** Pre-built metrics recorder — if absent, uses no-op. */
   readonly metrics?: MetricsRecorder
   readonly fetch?: typeof fetch
-  /** Injected for tests. */
+  /** Provided by tests. */
   readonly webSocketCtor?: ConstructorParameters<
     typeof AgentchatWsClient
   >[0]['webSocketCtor']

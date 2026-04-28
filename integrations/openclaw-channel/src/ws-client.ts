@@ -101,7 +101,7 @@ export interface WsClientOptions {
   readonly metrics: MetricsRecorder
   /** Clock source — override in tests. Default: `Date.now`. */
   readonly now?: () => UnixMillis
-  /** WebSocket constructor override — tests inject a mock. Default: `ws`. */
+  /** WebSocket constructor override — tests pass a mock. Default: `ws`. */
   readonly webSocketCtor?: typeof NodeWebSocket
   /** Random source for jitter — override in tests. Default: `Math.random`. */
   readonly random?: () => number

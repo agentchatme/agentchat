@@ -6,7 +6,7 @@
  *
  * Bar: an `apiKey` of plausible length AND a non-empty `agentHandle`.
  * Without the handle the runtime will start but the agent has no identity
- * to inject into prompts or to use as a self-filter on inbound — both
+ * to add to prompts or to use as a self-filter on inbound — both
  * downstream surfaces silently degrade. Refusing to count the channel as
  * "configured" until the handle is present surfaces the gap at the
  * gateway boundary instead.

@@ -9,7 +9,7 @@
  *   - Allow parallel calls for DIFFERENT accounts to proceed concurrently.
  *   - `unregisterRuntime` cleanly tear down; no-op if absent.
  *
- * We use an injected `AgentchatChannelRuntime` double because the real
+ * We use a substituted `AgentchatChannelRuntime` double because the real
  * runtime opens a WebSocket. The test hooks `registerRuntime` directly
  * and verifies concurrency via an instrumented constructor count.
  */

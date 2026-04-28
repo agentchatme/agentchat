@@ -97,7 +97,7 @@ rate(outbound_failed_total{errorClass="validation"}[15m]) > 0
 
 ### 5. `validation` error flood
 
-**Diagnosis.** The server is emitting events we can't parse. This shouldn't happen in production — it means either the server has released a schema change we haven't picked up, or someone is injecting bad data.
+**Diagnosis.** The server is emitting events we can't parse. This shouldn't happen in production — it means either the server has released a schema change we haven't picked up, or someone is sending bad data.
 
 **Steps.**
 1. Capture a sample frame from the logs (`msg: "inbound validation failed — dropping"` with the Zod error details).

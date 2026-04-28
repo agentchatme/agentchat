@@ -1,5 +1,5 @@
 /**
- * AGENTS.md anchor management — persistent identity injection.
+ * AGENTS.md anchor management — persistent identity content.
  *
  * Why this file exists
  * ─────────────────────
@@ -21,7 +21,7 @@
  * official docs (concepts/system-prompt) and confirmed via OpenClaw
  * issues #21538 and #25369: workspace bootstrap files (AGENTS.md,
  * SOUL.md, USER.md, TOOLS.md, IDENTITY.md, HEARTBEAT.md, MEMORY.md)
- * are injected into the system prompt on every turn of every session,
+ * are loaded into the system prompt on every turn of every session,
  * regardless of which channel triggered the run. Sub-agent sessions
  * also receive AGENTS.md.
  *

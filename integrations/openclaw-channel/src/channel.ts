@@ -71,7 +71,7 @@ export interface AgentchatResolvedAccount {
 /**
  * Resolve the config section for a single account. Pure function —
  * extracted from `config.resolveAccount` so `agentPrompt` (session-
- * start identity injection) can reuse it without a self-reference
+ * start identity setup) can reuse it without a self-reference
  * back into the plugin object literal. Never throws: parse failures
  * are surfaced via `parseError` on the returned record.
  *
@@ -323,7 +323,7 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
   // is triggered BY AgentChat (see openclaw compact-Fl3cALvc.js:636 —
   // `runtimeChannel ? resolveChannelMessageToolHints(...) : void 0`),
   // which means it can never deliver the persistent identity awareness
-  // we need. Identity injection lives in AGENTS.md via
+  // we need. Identity content lives in AGENTS.md via
   // `writeAgentsAnchor` — see binding/agents-anchor.ts for the why.
 
   gateway: agentchatGatewayAdapter,
