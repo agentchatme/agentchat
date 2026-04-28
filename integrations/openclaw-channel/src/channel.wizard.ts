@@ -71,6 +71,7 @@ import {
 // Credential lookup helper — see SECURITY.md for why this lives in a
 // separate module and must not be inlined into the wizard.
 import { readApiKeyFromEnv } from './credentials/read-env.js'
+import { writeAgentsAnchor, removeAgentsAnchor } from './binding/agents-anchor.js'
 
 /**
  * Sentinel credential-values key used to signal "the register path in prepare
@@ -115,12 +116,12 @@ const MAX_START_RETRIES = 5
 async function promptEmail(prompter: WizardPrompter): Promise<string> {
   return (
     await prompter.text({
-      message: 'Email address (for the verification code)',
+      message: 'Email — receives a 6-digit verification code',
       placeholder: 'you@example.com',
       validate: (value) => {
         const trimmed = value.trim()
         if (!trimmed) return 'Email is required'
-        if (!EMAIL_PATTERN.test(trimmed)) return 'That does not look like a valid email address'
+        if (!EMAIL_PATTERN.test(trimmed)) return 'Not a valid email format'
         return undefined
       },
     })
@@ -128,16 +129,28 @@ async function promptEmail(prompter: WizardPrompter): Promise<string> {
 }
 
 async function promptHandle(prompter: WizardPrompter): Promise<string> {
+  // Rules live in the message label so the user sees them BEFORE typing —
+  // a separate `prompter.note()` widget felt clunky for a single-line rule.
+  // No "Handle —" prefix: the surrounding wizard context already establishes
+  // we're choosing a handle, so naming it again is redundant.
+  // Per-rule validation errors below tell the user exactly which rule
+  // failed instead of dumping the full rule list every time.
   return (
     await prompter.text({
-      message: 'Choose a handle (your @name on AgentChat)',
-      placeholder: 'my-agent',
+      message: '3–30 chars, lowercase a-z, 0-9, hyphens, starts with a letter, e.g. anton-claw01',
+      placeholder: 'anton-claw01',
       validate: (value) => {
         const trimmed = value.trim()
         if (!trimmed) return 'Handle is required'
-        if (!isValidHandleShape(trimmed)) {
-          return 'Handle must be 3–30 chars — lowercase letters/digits/hyphens; must start with a letter'
+        if (trimmed.length < HANDLE_MIN_LENGTH || trimmed.length > HANDLE_MAX_LENGTH) {
+          return `Length must be ${HANDLE_MIN_LENGTH}–${HANDLE_MAX_LENGTH} chars (you entered ${trimmed.length})`
         }
+        if (!/^[a-z]/.test(trimmed)) return 'Must start with a lowercase letter'
+        if (/[^a-z0-9-]/.test(trimmed)) {
+          return 'Only lowercase letters, digits, and hyphens — no underscores, dots, or symbols'
+        }
+        if (trimmed.includes('--')) return 'No consecutive hyphens'
+        if (trimmed.endsWith('-')) return 'Cannot end with a hyphen'
         return undefined
       },
     })
@@ -507,6 +520,23 @@ function redactKey(apiKey: string): string {
 export const agentchatSetupWizard: ChannelSetupWizard = {
   channel: AGENTCHAT_CHANNEL_ID,
 
+  // AgentChat is one-agent-per-account by product design — the agent IS the
+  // account, identity is its handle. The default OpenClaw `promptAccountId`
+  // helper is built for channels like Telegram/Slack where one workspace
+  // can host multiple bot accounts; it forces every user through an
+  // "Add a new account" → "Set account id" prompt that doesn't map to
+  // anything meaningful here.
+  //
+  // Override the resolver to silently use the default account id, so the
+  // wizard goes straight from channel selection into the register-or-paste
+  // step. An explicit `--account` override still wins so power users who
+  // genuinely want a second agent on the same machine can scope their
+  // config that way (rare, by intent).
+  resolveAccountIdForConfigure: async ({ accountOverride }) => {
+    const trimmed = accountOverride?.trim()
+    return trimmed ? trimmed : 'default'
+  },
+
   status: {
     configuredLabel: 'configured',
     unconfiguredLabel: 'not configured',
@@ -686,6 +716,34 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
       if (result.ok) {
         spinner.stop(`Authenticated as @${result.agent.handle}`)
 
+        // Write the persistent identity anchor into the workspace
+        // AGENTS.md so the agent is aware of its handle on every turn
+        // of every session — see binding/agents-anchor.ts header for
+        // the full rationale (TL;DR: messageToolHints only fires when
+        // AgentChat is the active channel; AGENTS.md is loaded every
+        // turn regardless of channel context).
+        //
+        // Best-effort by intent: a workspace that's read-only or a
+        // permission error must NOT bounce the wizard back to the user
+        // — they have a working key and config; the anchor is a
+        // nice-to-have that they can repair offline. Substitution
+        // failures (handle didn't land in the file) are the one error
+        // we surface, since they indicate a code regression and
+        // leaving a broken anchor on disk would be worse than the
+        // notice.
+        try {
+          writeAgentsAnchor({ cfg, handle: result.agent.handle })
+        } catch (err) {
+          await prompter.note(
+            [
+              err instanceof Error ? err.message : String(err),
+              '',
+              'Identity anchor write to AGENTS.md failed — your account is configured fine, but the agent will not be told about its handle in non-AgentChat sessions until this is repaired.',
+            ].join('\n'),
+            'AgentChat anchor warning',
+          )
+        }
+
         // If the wizard registered fresh, agentHandle is already in cfg.
         // If the user pasted an existing key, capture the server-known handle
         // so status/log lines render nicely without a manual config edit.
@@ -727,6 +785,13 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
   completionNote: {
     title: 'AgentChat is ready',
     lines: [
+      // Why this line exists: after our wizard returns, OpenClaw's
+      // setupChannels loops back to "Select a channel" so the user can
+      // wire up additional channels in the same session. From the user's
+      // vantage point this looks like the wizard restarted; tell them
+      // the loop is intentional and how to exit.
+      'On the next prompt, choose "Finished" to exit — or pick another channel to keep configuring.',
+      '',
       'Next steps:',
       '  • Start OpenClaw — the AgentChat channel auto-connects via WebSocket.',
       '  • DM another agent:  @<handle> <message>',
@@ -734,5 +799,21 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
     ],
   },
 
-  disable: (cfg) => setSetupChannelEnabled(cfg, AGENTCHAT_CHANNEL_ID, false),
+  // `disable` fires on `openclaw channels remove agentchat`. We strip
+  // the persistent AGENTS.md anchor here so the agent stops being told
+  // it's @handle on AgentChat the moment the channel is removed.
+  // Best-effort: a swallow on FS errors is intentional — the channel
+  // remove must not be blocked by a stale anchor we can't clean up.
+  // Plugin uninstall (`openclaw plugins uninstall`) does not currently
+  // fire any plugin hook (openclaw#5985, #54813) so this only runs
+  // when the user explicitly removes the channel; orphan blocks are
+  // documented in RUNBOOK.md.
+  disable: (cfg) => {
+    try {
+      removeAgentsAnchor({ cfg })
+    } catch {
+      // Anchor cleanup is best-effort — never block the channel-remove.
+    }
+    return setSetupChannelEnabled(cfg, AGENTCHAT_CHANNEL_ID, false)
+  },
 }

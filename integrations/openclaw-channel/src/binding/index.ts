@@ -15,7 +15,6 @@ export { agentchatAgentToolsFactory } from './agent-tools.js'
 export { agentchatDirectoryAdapter } from './directory.js'
 export { agentchatResolverAdapter } from './resolver.js'
 export { agentchatStatusAdapter } from './status.js'
-export { buildAgentPromptAdapter } from './agent-prompt.js'
 
 export {
   getClient,

@@ -47,9 +47,9 @@ import {
   agentchatDirectoryAdapter,
   agentchatResolverAdapter,
   agentchatStatusAdapter,
-  buildAgentPromptAdapter,
   type AgentchatProbeResult,
 } from './binding/index.js'
+import { writeAgentsAnchor } from './binding/agents-anchor.js'
 
 export {
   AGENTCHAT_CHANNEL_ID,
@@ -275,7 +275,6 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
       const apiKey = typeof input.token === 'string' ? input.token : undefined
       if (!apiKey) return
       const apiBase = typeof input.url === 'string' && input.url.length > 0 ? input.url : undefined
-      void cfg
       const logger = (runtime as { logger?: { info?: (...args: unknown[]) => void; warn?: (...args: unknown[]) => void } } | undefined)?.logger
       try {
         const result = await validateApiKey(apiKey, { apiBase })
@@ -283,6 +282,21 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
           logger?.info?.(
             `[agentchat:${accountId}] authenticated as @${result.agent.handle} (${result.agent.email})`,
           )
+          // Non-interactive twin of the wizard's `finalize` anchor write.
+          // We only get here on the `openclaw setup --channel agentchat
+          // --token <key>` / `channels add --token` path, which means
+          // the user did not see the wizard's UX — but they still need
+          // the agent to be aware of its handle in non-AgentChat
+          // sessions. Same anchor, same lifecycle, different entry
+          // point. Best-effort: log + continue on FS failure so a
+          // misconfigured workspace does not bounce a CI invocation.
+          try {
+            writeAgentsAnchor({ cfg, handle: result.agent.handle })
+          } catch (err) {
+            logger?.warn?.(
+              `[agentchat:${accountId}] AGENTS.md anchor write failed: ${err instanceof Error ? err.message : String(err)}`,
+            )
+          }
         } else {
           logger?.warn?.(
             `[agentchat:${accountId}] api key did not pass live check (${result.reason}): ${result.message}`,
@@ -303,6 +317,14 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
   // agents can message peers, manage groups, mute, block, report, look up
   // the directory, and so on. Each adapter lives in `src/binding/` — keep
   // this file slim and delegate the behavior.
+  //
+  // Note on `agentPrompt`: we deliberately do NOT attach a
+  // ChannelAgentPromptAdapter. The hook only fires when the agent's run
+  // is triggered BY AgentChat (see openclaw compact-Fl3cALvc.js:636 —
+  // `runtimeChannel ? resolveChannelMessageToolHints(...) : void 0`),
+  // which means it can never deliver the persistent identity awareness
+  // we need. Identity injection lives in AGENTS.md via
+  // `writeAgentsAnchor` — see binding/agents-anchor.ts for the why.
 
   gateway: agentchatGatewayAdapter,
   outbound: agentchatOutboundAdapter,
@@ -312,10 +334,6 @@ export const agentchatPlugin: ChannelPlugin<AgentchatResolvedAccount, AgentchatP
   directory: agentchatDirectoryAdapter,
   resolver: agentchatResolverAdapter,
   status: agentchatStatusAdapter,
-  // Identity injection into the agent's baseline system prompt.
-  // Called once per session at prompt-composition time; re-derives from
-  // live config so handle rotations and key rotations propagate.
-  agentPrompt: buildAgentPromptAdapter(resolveAgentchatAccount),
 }
 
 /**
