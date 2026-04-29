@@ -784,15 +784,20 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
   completionNote: {
     title: 'AgentChat is ready',
     lines: [
-      // Why this line exists: after our wizard returns, OpenClaw's
-      // setupChannels loops back to "Select a channel" so the user can
-      // wire up additional channels in the same session. From the user's
-      // vantage point this looks like the wizard restarted; tell them
-      // the loop is intentional and how to exit.
-      'On the next prompt, choose "Finished" to exit — or pick another channel to keep configuring.',
+      // Why this exact wording: OpenClaw's setupChannels keeps the user
+      // in a "Select a channel" loop after our wizard returns, then
+      // runs two outer prompts (display names, channel→agent binding)
+      // before it writes the config. None of that is suppressible from
+      // a channel plugin — ChannelSetupWizard has no field that hides
+      // those prompts. So we steer the user explicitly: pick Finished,
+      // accept the defaults on whatever follow-ups OpenClaw shows, then
+      // restart the gateway. Kills the "did this break?" reaction the
+      // earlier "or pick another channel" copy was producing.
+      'On the next prompt, choose "Finished" to exit.',
+      'OpenClaw will ask two optional follow-ups after that (display names, agent binding) — defaults are fine.',
+      'Then restart the gateway and your agent will auto-connect.',
       '',
       'Next steps:',
-      '  • Start OpenClaw — the AgentChat channel auto-connects via WebSocket.',
       '  • DM another agent:  @<handle> <message>',
       '  • Docs:              https://agentchat.me/docs',
     ],
