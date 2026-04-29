@@ -20,6 +20,8 @@
  */
 
 import { dispatchInboundDirectDmWithRuntime } from 'openclaw/plugin-sdk/direct-dm'
+import { resolveInboundRouteEnvelopeBuilderWithRuntime } from 'openclaw/plugin-sdk/inbound-envelope'
+import { recordInboundSessionAndDispatchReply } from 'openclaw/plugin-sdk/inbound-reply-dispatch'
 
 import type { Logger } from '../log.js'
 import type { AgentchatChannelConfig } from '../config-schema.js'
@@ -215,38 +217,89 @@ async function handleMessage(
         },
       })
     } else {
-      // Group path — no group-specific helper exported from plugin-sdk yet.
-      // Build PascalCase ctx inline and dispatch directly. NOTE: this path
-      // currently skips recordInboundSession (same gap that broke direct in
-      // 0.6.13), so group conversations may exhibit `sessionId=unknown`
-      // stuck-session symptoms. Direct DMs are the verified path; group
-      // support will follow once we either get a `dispatchInboundGroupChat`
-      // helper from upstream or build the equivalent here.
-      const dispatcher = channelRuntime.reply!.dispatchReplyWithBufferedBlockDispatcher!
-      const sessionKey = `agentchat:${deps.accountId}:group:${event.conversationId}`
-      await dispatcher({
-        cfg: deps.gatewayCfg,
-        ctx: {
-          Body: body,
-          BodyForAgent: body,
-          RawBody: body,
-          CommandBody: body,
-          From: `@${senderHandle}`,
-          To: `@${recipientHandle}`,
-          SessionKey: sessionKey,
-          AccountId: deps.accountId,
-          ChatType: 'group',
-          ConversationLabel: conversationLabel,
-          SenderId: senderHandle,
-          Provider: 'agentchat',
-          Surface: 'agentchat',
-          MessageSid: event.messageId,
-          MessageSidFull: event.messageId,
-          Timestamp: event.createdAt,
-          OriginatingChannel: 'agentchat',
-          OriginatingTo: `@${recipientHandle}`,
+      // Group path — no `dispatchInboundGroup*` wrapper exists in
+      // plugin-sdk yet, so we assemble the same pipeline inline using the
+      // generic helpers that the direct-DM wrapper itself uses internally:
+      //
+      //   resolveInboundRouteEnvelopeBuilderWithRuntime  (plugin-sdk)
+      //   reply.finalizeInboundContext                   (channelRuntime)
+      //   recordInboundSessionAndDispatchReply           (plugin-sdk)
+      //
+      // This is byte-equivalent to `dispatchInboundDirectDmWithRuntime`'s
+      // body — see openclaw/dist/direct-dm-*.js — only `peer.kind` and
+      // `ChatType` differ. Critically: this path NOW calls
+      // recordInboundSession before dispatch, so groups can no longer
+      // hit the `sessionId=unknown state=processing` stuck-session bug
+      // that broke direct DMs in 0.6.13 and that this fix closes for
+      // groups in 0.6.17.
+      const ts =
+        typeof event.createdAt === 'number'
+          ? event.createdAt
+          : Date.parse(event.createdAt)
+      const runtime = channelRuntime as never
+      const { route, buildEnvelope } = resolveInboundRouteEnvelopeBuilderWithRuntime({
+        cfg: deps.gatewayCfg as never,
+        channel: 'agentchat',
+        accountId: deps.accountId,
+        peer: { kind: 'group', id: event.conversationId },
+        runtime,
+      })
+      const { storePath, body: envelopeBody } = buildEnvelope({
+        channel: 'AgentChat',
+        from: conversationLabel,
+        body,
+        timestamp: ts,
+      })
+      const finalize = (channelRuntime.reply as { finalizeInboundContext: (c: Record<string, unknown>) => Record<string, unknown> }).finalizeInboundContext
+      const ctxPayload = finalize({
+        Body: envelopeBody,
+        BodyForAgent: body,
+        RawBody: body,
+        CommandBody: body,
+        From: `@${senderHandle}`,
+        To: `@${recipientHandle}`,
+        SessionKey: route.sessionKey,
+        AccountId: deps.accountId,
+        ChatType: 'group',
+        ConversationLabel: conversationLabel,
+        SenderId: senderHandle,
+        Provider: 'agentchat',
+        Surface: 'agentchat',
+        MessageSid: event.messageId,
+        MessageSidFull: event.messageId,
+        Timestamp: ts,
+        OriginatingChannel: 'agentchat',
+        OriginatingTo: `@${recipientHandle}`,
+      })
+      const session = channelRuntime.session as { recordInboundSession: never }
+      await recordInboundSessionAndDispatchReply({
+        cfg: deps.gatewayCfg as never,
+        channel: 'agentchat',
+        accountId: deps.accountId,
+        agentId: route.agentId,
+        routeSessionKey: route.sessionKey,
+        storePath,
+        ctxPayload: ctxPayload as never,
+        recordInboundSession: session.recordInboundSession,
+        dispatchReplyWithBufferedBlockDispatcher: channelRuntime.reply!
+          .dispatchReplyWithBufferedBlockDispatcher! as never,
+        deliver,
+        onRecordError: (err: unknown) => {
+          deps.logger.error(
+            { err: err instanceof Error ? err.message : String(err), messageId: event.messageId },
+            'recordInboundSession failed (group)',
+          )
         },
-        dispatcherOptions: { deliver },
+        onDispatchError: (err: unknown, info: { kind: string }) => {
+          deps.logger.error(
+            {
+              err: err instanceof Error ? err.message : String(err),
+              messageId: event.messageId,
+              kind: info.kind,
+            },
+            'inbound dispatch failed (group)',
+          )
+        },
       })
     }
   } catch (err) {

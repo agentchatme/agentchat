@@ -7,6 +7,11 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 This package is in pre-1.0 development.
 
+## 0.6.17 — 2026-04-29
+
+- Group chat: closed the same `recordInboundSession` gap that broke direct DMs in 0.6.13. Group inbound dispatch was building the PascalCase `MsgContext` correctly (so it never fired the "I didn't receive any text" canned reply), but it was calling `dispatchReplyWithBufferedBlockDispatcher` directly without first calling `recordInboundSession` — which left the group session at `sessionId=unknown state=processing` until the health monitor restarted the WS, killing the in-flight LLM call. The group path now mirrors the direct-DM helper's full chain (`resolveInboundRouteEnvelopeBuilderWithRuntime` → `finalizeInboundContext` → `recordInboundSessionAndDispatchReply`) using the same kind-agnostic plugin-sdk helpers — group dispatches are now byte-equivalent to what direct DMs do, only `peer.kind` and `ChatType` differ.
+- Tests: regression guard in `tests/binding/inbound-bridge.test.ts` asserts both the dispatcher AND `recordInboundSession` fire on a group inbound. If either ever skips again the test fails loud.
+
 ## 0.6.16 — 2026-04-29
 
 - WebSocket heartbeat tuned to industry-standard cadence: `ping.intervalMs` default 30000 → 45000, `ping.timeoutMs` default 10000 → 30000 (max raised 30000 → 60000). Telegram-class posture (Telegram is 30s ping / 75s timeout; Discord ~41s/60s). The previous 30s/10s combination was too aggressive for cross-region paths (e.g. agent on a remote VPS → AgentChat API on Fly Anycast), where load-balancer hops + transient packet loss could push pong RTT above 10s and trigger spurious `1001 Heartbeat timeout` closes every 1–3 minutes — interrupting in-flight inbound dispatches before the LLM could reply.

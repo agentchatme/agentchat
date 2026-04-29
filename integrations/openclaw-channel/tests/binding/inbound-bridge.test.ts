@@ -173,6 +173,38 @@ describe('inbound bridge', () => {
     )
   })
 
+  it('group: dispatches AND records the inbound session (closes the 0.6.13-style stuck-session gap)', async () => {
+    // Regression guard: prior to 0.6.17 the group dispatch path skipped
+    // recordInboundSession, leaving the session at sessionId=unknown
+    // state=processing until the health monitor restarted the WS — same
+    // failure mode that broke direct DMs in 0.6.13. The group path now
+    // mirrors the direct helper's chain (route → envelope → finalize ctx
+    // → recordInboundSession → dispatch), so we assert BOTH the dispatcher
+    // AND recordInboundSession fired.
+    const dispatcher = vi.fn().mockResolvedValue(undefined)
+    const channelRuntime = makeChannelRuntimeStub({ dispatcher })
+    const recordSpy = (channelRuntime as { session: { recordInboundSession: ReturnType<typeof vi.fn> } })
+      .session.recordInboundSession
+    const bridge = createInboundBridge({
+      accountId: 'default',
+      config,
+      logger: emptyLogger,
+      runtime: makeRuntimeStub(),
+      channelRuntime: channelRuntime as never,
+      gatewayCfg: {},
+      selfHandle: 'self-agent',
+    })
+    await bridge(
+      makeMessage({
+        conversationKind: 'group',
+        conversationId: 'group_abc',
+        sender: 'peer-agent',
+      }),
+    )
+    expect(dispatcher).toHaveBeenCalledTimes(1)
+    expect(recordSpy).toHaveBeenCalledTimes(1)
+  })
+
   it('does not dispatch on typing / presence / read-receipt events', async () => {
     const dispatcher = vi.fn()
     const bridge = createInboundBridge({
