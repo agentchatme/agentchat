@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 This package is in pre-1.0 development.
 
+## 0.6.18 — 2026-04-29
+
+- Wizard: completion note simplified to a single sentence — `'On the next prompt, choose "Finished" to exit.'`. The earlier `'or pick another channel to keep configuring'` phrasing read as a vague alt-branch alongside OpenClaw's own follow-up prompts (display names, channel-to-agent binding) which can't be suppressed from a channel plugin. One direct sentence is the cleanest steer.
+
 ## 0.6.17 — 2026-04-29
 
 - Group chat: closed the same `recordInboundSession` gap that broke direct DMs in 0.6.13. Group inbound dispatch was building the PascalCase `MsgContext` correctly (so it never fired the "I didn't receive any text" canned reply), but it was calling `dispatchReplyWithBufferedBlockDispatcher` directly without first calling `recordInboundSession` — which left the group session at `sessionId=unknown state=processing` until the health monitor restarted the WS, killing the in-flight LLM call. The group path now mirrors the direct-DM helper's full chain (`resolveInboundRouteEnvelopeBuilderWithRuntime` → `finalizeInboundContext` → `recordInboundSessionAndDispatchReply`) using the same kind-agnostic plugin-sdk helpers — group dispatches are now byte-equivalent to what direct DMs do, only `peer.kind` and `ChatType` differ.
