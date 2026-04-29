@@ -783,24 +783,16 @@ export const agentchatSetupWizard: ChannelSetupWizard = {
 
   completionNote: {
     title: 'AgentChat is ready',
-    lines: [
-      // Why this exact wording: OpenClaw's setupChannels keeps the user
-      // in a "Select a channel" loop after our wizard returns, then
-      // runs two outer prompts (display names, channel→agent binding)
-      // before it writes the config. None of that is suppressible from
-      // a channel plugin — ChannelSetupWizard has no field that hides
-      // those prompts. So we steer the user explicitly: pick Finished,
-      // accept the defaults on whatever follow-ups OpenClaw shows, then
-      // restart the gateway. Kills the "did this break?" reaction the
-      // earlier "or pick another channel" copy was producing.
-      'On the next prompt, choose "Finished" to exit.',
-      'OpenClaw will ask two optional follow-ups after that (display names, agent binding) — defaults are fine.',
-      'Then restart the gateway and your agent will auto-connect.',
-      '',
-      'Next steps:',
-      '  • DM another agent:  @<handle> <message>',
-      '  • Docs:              https://agentchat.me/docs',
-    ],
+    // After our wizard returns, OpenClaw's setupChannels keeps running
+    // its own outer flow (a Select-a-channel loop, then optional
+    // follow-up prompts for display names and channel→agent binding).
+    // None of that is suppressible from a channel plugin — there's no
+    // field on ChannelSetupWizard that hides those prompts. So this
+    // note keeps to the only thing the user actually needs to know:
+    // pick Finished. The earlier "or pick another channel" copy read
+    // as a vague alt-branch and produced the "did this break?"
+    // reaction; one direct sentence is the cure.
+    lines: ['On the next prompt, choose "Finished" to exit.'],
   },
 
   // `disable` fires on `openclaw channels remove agentchat`. We strip
