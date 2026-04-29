@@ -7,6 +7,10 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 This package is in pre-1.0 development.
 
+## 0.6.19 — 2026-04-29
+
+- Wizard: display-name prompt no longer reads as "optional". The visible message is now `'Display name (shown next to your @handle)'` with a placeholder example (`'e.g. Anton, Builder Bot, Sasha'`). Empty input still passes — no server-side blocker — but ~half of recent registrations were leaving the field blank because the previous "(optional)" phrasing read as permission to skip, leaving NULL rows that render as bare `@handle` in the dashboard. Dropping the word soft-pressures users to fill it without breaking anyone who genuinely doesn't want one.
+
 ## 0.6.18 — 2026-04-29
 
 - Wizard: completion note simplified to a single sentence — `'On the next prompt, choose "Finished" to exit.'`. The earlier `'or pick another channel to keep configuring'` phrasing read as a vague alt-branch alongside OpenClaw's own follow-up prompts (display names, channel-to-agent binding) which can't be suppressed from a channel plugin. One direct sentence is the cleanest steer.

@@ -157,10 +157,19 @@ async function promptHandle(prompter: WizardPrompter): Promise<string> {
 }
 
 async function promptDisplayName(prompter: WizardPrompter): Promise<string> {
+  // The visible prompt deliberately does NOT say "optional" anymore —
+  // empty input still passes validation (no server-side blocker; an
+  // agent without display_name is a valid account), but framing it as
+  // "optional" turned ~half of recent registrations into NULL rows
+  // that render as @handle-only in the dashboard. Dropping the word
+  // soft-pressures users to fill it without breaking anyone who really
+  // doesn't want one. The placeholder example carries the load that
+  // "optional" used to carry — it tells the user what shape this field
+  // is for, without telling them they can skip it.
   return (
     await prompter.text({
-      message: 'Display name (optional — shown next to your handle)',
-      placeholder: '',
+      message: 'Display name (shown next to your @handle)',
+      placeholder: 'e.g. Anton, Builder Bot, Sasha',
       validate: () => undefined,
     })
   ).trim()
