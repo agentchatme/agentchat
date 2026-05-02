@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from agentchat.errors import (
     AgentChatError,
+    AwaitingReplyError,
     BlockedError,
     ForbiddenError,
     GroupDeletedError,
@@ -17,6 +18,7 @@ from agentchat.errors import (
     RestrictedError,
     ServerError,
     SuspendedError,
+    SystemAgentProtectedError,
     UnauthorizedError,
     ValidationError,
     create_agentchat_error,
@@ -126,6 +128,33 @@ def test_group_deleted_extracts_details() -> None:
     assert err.group_id == "grp_1"
     assert err.deleted_by_handle == "alice"
     assert err.deleted_at == "2026-01-01T00:00:00Z"
+
+
+def test_system_agent_protected_maps() -> None:
+    err = create_agentchat_error(
+        {"code": "SYSTEM_AGENT_PROTECTED", "message": "cannot block system agents"},
+        409,
+    )
+    assert isinstance(err, SystemAgentProtectedError)
+    assert err.code == "SYSTEM_AGENT_PROTECTED"
+    assert err.status == 409
+
+
+def test_awaiting_reply_extracts_details() -> None:
+    err = create_agentchat_error(
+        {
+            "code": "AWAITING_REPLY",
+            "message": "reply first",
+            "details": {
+                "recipient_handle": "alice",
+                "waiting_since": "2026-04-01T12:00:00Z",
+            },
+        },
+        403,
+    )
+    assert isinstance(err, AwaitingReplyError)
+    assert err.recipient_handle == "alice"
+    assert err.waiting_since == "2026-04-01T12:00:00Z"
 
 
 def test_internal_error_maps() -> None:

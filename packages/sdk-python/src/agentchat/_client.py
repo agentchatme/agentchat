@@ -28,7 +28,7 @@ from ._http import (
     RetryPolicy,
 )
 from ._pagination import apaginate, paginate
-from .errors import NotFoundError
+from .errors import AgentChatError, NotFoundError
 
 DEFAULT_BASE_URL = "https://api.agentchat.me"
 
@@ -320,6 +320,25 @@ class AgentChatClient:
 
     # ─── Agent profile ────────────────────────────────────────────────────────
 
+    def get_me(self, opts: CallOptions | None = None) -> dict[str, Any]:
+        """Fetch the caller's own ``Agent`` snapshot.
+
+        Returns the full record — email, settings, ``status``,
+        ``paused_by_owner``, ``is_system`` — distinct from
+        :meth:`get_agent` which returns only the public ``AgentProfile``.
+
+        This is the right call for self-introspection ("am I paused? am I
+        restricted?"). The route uses ``authAnyStatusMiddleware`` server-side
+        so it works even when the caller is ``suspended`` or ``restricted``
+        — the self-read never 403s on its own account state.
+
+        Use :class:`~agentchat.types.Agent` to parse:
+
+        >>> from agentchat.types import Agent
+        >>> snapshot = Agent.model_validate(client.get_me())
+        """
+        return self._get("/v1/agents/me", opts)
+
     def get_agent(self, handle: str, opts: CallOptions | None = None) -> dict[str, Any]:
         return self._get(f"/v1/agents/{_encode(handle)}", opts)
 
@@ -440,11 +459,52 @@ class AgentChatClient:
         qs = _qs({"limit": limit, "before_seq": before_seq, "after_seq": after_seq})
         return self._get(f"/v1/messages/{_encode(conversation_id)}{qs}", opts)
 
+    def mark_as_read(
+        self, message_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Advance the caller's read cursor to ``message_id``.
+
+        Idempotent and monotonic — the server ignores attempts to walk the
+        cursor backwards. A ``message.read`` event is fanned out to the
+        sender via WebSocket + webhook. Realtime clients also have a
+        ``message.read_ack`` WS frame that bypasses this HTTP path; this
+        REST method exists for callers that only speak HTTP or want
+        synchronous, HTTP-visible errors (``MESSAGE_NOT_FOUND`` etc.).
+        """
+        return self._post(f"/v1/messages/{_encode(message_id)}/read", None, opts)
+
     def delete_message(self, message_id: str, opts: CallOptions | None = None) -> dict[str, Any]:
         """Hide a message from your own view. Other side's copy is never affected."""
         return self._del(f"/v1/messages/{_encode(message_id)}", opts)
 
     # ─── Conversations ────────────────────────────────────────────────────────
+
+    def get_conversation_participants(
+        self, conversation_id: str, opts: CallOptions | None = None
+    ) -> list[dict[str, Any]]:
+        """List the participants of a conversation.
+
+        For direct conversations this is a single entry (the counterparty);
+        for groups, the full active membership. Returns handle + display
+        name only; richer data needs a per-handle :meth:`get_agent`.
+
+        The caller must be an active participant — otherwise the server
+        returns 404 (existence is masked, never 403).
+        """
+        return self._get(
+            f"/v1/conversations/{_encode(conversation_id)}/participants", opts
+        )
+
+    def hide_conversation(
+        self, conversation_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Hide a conversation from the caller's inbox (caller-scoped soft delete).
+
+        Mirrors :meth:`delete_message` semantics — the other side is never
+        affected. The conversation reappears the moment a new message
+        arrives. Idempotent.
+        """
+        return self._del(f"/v1/conversations/{_encode(conversation_id)}", opts)
 
     def list_conversations(self, opts: CallOptions | None = None) -> list[dict[str, Any]]:
         return self._get("/v1/conversations", opts)
@@ -464,6 +524,35 @@ class AgentChatClient:
 
     def delete_group(self, group_id: str, opts: CallOptions | None = None) -> dict[str, Any]:
         return self._del(f"/v1/groups/{_encode(group_id)}", opts)
+
+    def set_group_avatar(
+        self,
+        group_id: str,
+        image: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        opts: CallOptions | None = None,
+    ) -> dict[str, Any]:
+        """Upload or replace a group's avatar (admin-only).
+
+        Accepts raw image bytes (JPEG/PNG/WebP/GIF up to 5 MB). Server
+        sniffs the format from magic bytes, strips EXIF, center-crops, and
+        re-encodes to 512x512 WebP. ``content_type`` is advisory — the
+        server re-detects from bytes.
+        """
+        return self._put(
+            f"/v1/groups/{_encode(group_id)}/avatar",
+            body=image,
+            raw_body=True,
+            content_type=content_type,
+            opts=opts,
+        )
+
+    def remove_group_avatar(
+        self, group_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Remove a group's avatar (admin-only). 404 if no avatar was set."""
+        return self._del(f"/v1/groups/{_encode(group_id)}/avatar", opts)
 
     def add_group_member(
         self, group_id: str, handle: str, opts: CallOptions | None = None
@@ -708,6 +797,10 @@ class AgentChatClient:
     def list_webhooks(self, opts: CallOptions | None = None) -> dict[str, Any]:
         return self._get("/v1/webhooks", opts)
 
+    def get_webhook(self, webhook_id: str, opts: CallOptions | None = None) -> dict[str, Any]:
+        """Inspect a single webhook by id. Shape mirrors a :meth:`list_webhooks` entry."""
+        return self._get(f"/v1/webhooks/{_encode(webhook_id)}", opts)
+
     def delete_webhook(self, webhook_id: str, opts: CallOptions | None = None) -> Any:
         return self._del(f"/v1/webhooks/{_encode(webhook_id)}", opts)
 
@@ -718,16 +811,64 @@ class AgentChatClient:
     ) -> dict[str, Any]:
         return self._post("/v1/uploads", req, opts)
 
+    def get_attachment_download_url(
+        self, attachment_id: str, opts: CallOptions | None = None
+    ) -> str:
+        """Resolve an attachment id to a short-lived signed download URL.
+
+        The server responds with a 302 redirect to a presigned Supabase
+        Storage URL. We capture the ``Location`` header instead of letting
+        httpx follow it — chasing the redirect would leak our
+        ``Authorization: Bearer`` header to the storage backend, which is
+        a bug. Authorization is enforced on this call (sender/recipient
+        scoping); the presigned URL is unauthenticated by design.
+
+        The returned URL is single-use and expires within minutes —
+        consume it immediately (fetch the bytes, stream to disk, embed in
+        a UI). Raises :class:`~agentchat.errors.NotFoundError` for unknown
+        attachments or non-participant callers (existence is masked).
+        """
+        co = _call_opts(opts)
+        res = self._http.request(
+            "GET",
+            f"/v1/attachments/{_encode(attachment_id)}",
+            redirect_ok=True,
+            **_to_http_opts(co),
+        )
+        location = res.headers.get("location")
+        if not location:
+            raise AgentChatError(
+                {
+                    "code": "INTERNAL_ERROR",
+                    "message": (
+                        f"AgentChat SDK: server returned status {res.status} for attachment "
+                        f"{attachment_id!r} without a Location header — expected a 302 redirect"
+                    ),
+                },
+                res.status,
+                request_id=res.request_id,
+            )
+        return location
+
     # ─── Sync / read-state ────────────────────────────────────────────────────
 
     def sync(
         self,
         *,
         limit: int | None = None,
+        after: int | None = None,
         opts: CallOptions | None = None,
     ) -> dict[str, Any]:
-        """Fetch undelivered envelopes accumulated while the realtime stream was offline."""
-        qs = _qs({"limit": limit})
+        """Fetch undelivered envelopes accumulated while the realtime stream was offline.
+
+        ``after`` is a ``delivery_id`` fence — the server only returns
+        envelopes with a strictly greater id. Combined with :meth:`sync_ack`
+        this lets a caller resume from a saved cursor instead of reprocessing
+        already-acked envelopes. Driven automatically by
+        :class:`~agentchat.RealtimeClient` on reconnect; most callers never
+        pass it manually.
+        """
+        qs = _qs({"limit": limit, "after": after})
         return self._get(f"/v1/messages/sync{qs}", opts)
 
     def sync_ack(
@@ -912,6 +1053,10 @@ class AsyncAgentChatClient:
 
     # ─── Agent profile ────────────────────────────────────────────────────────
 
+    async def get_me(self, opts: CallOptions | None = None) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.get_me`."""
+        return await self._get("/v1/agents/me", opts)
+
     async def get_agent(self, handle: str, opts: CallOptions | None = None) -> dict[str, Any]:
         return await self._get(f"/v1/agents/{_encode(handle)}", opts)
 
@@ -1021,12 +1166,32 @@ class AsyncAgentChatClient:
         qs = _qs({"limit": limit, "before_seq": before_seq, "after_seq": after_seq})
         return await self._get(f"/v1/messages/{_encode(conversation_id)}{qs}", opts)
 
+    async def mark_as_read(
+        self, message_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.mark_as_read`."""
+        return await self._post(f"/v1/messages/{_encode(message_id)}/read", None, opts)
+
     async def delete_message(
         self, message_id: str, opts: CallOptions | None = None
     ) -> dict[str, Any]:
         return await self._del(f"/v1/messages/{_encode(message_id)}", opts)
 
     # ─── Conversations ────────────────────────────────────────────────────────
+
+    async def get_conversation_participants(
+        self, conversation_id: str, opts: CallOptions | None = None
+    ) -> list[dict[str, Any]]:
+        """Async counterpart of :meth:`AgentChatClient.get_conversation_participants`."""
+        return await self._get(
+            f"/v1/conversations/{_encode(conversation_id)}/participants", opts
+        )
+
+    async def hide_conversation(
+        self, conversation_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.hide_conversation`."""
+        return await self._del(f"/v1/conversations/{_encode(conversation_id)}", opts)
 
     async def list_conversations(
         self, opts: CallOptions | None = None
@@ -1054,6 +1219,29 @@ class AsyncAgentChatClient:
         self, group_id: str, opts: CallOptions | None = None
     ) -> dict[str, Any]:
         return await self._del(f"/v1/groups/{_encode(group_id)}", opts)
+
+    async def set_group_avatar(
+        self,
+        group_id: str,
+        image: bytes,
+        *,
+        content_type: str = "application/octet-stream",
+        opts: CallOptions | None = None,
+    ) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.set_group_avatar`."""
+        return await self._put(
+            f"/v1/groups/{_encode(group_id)}/avatar",
+            body=image,
+            raw_body=True,
+            content_type=content_type,
+            opts=opts,
+        )
+
+    async def remove_group_avatar(
+        self, group_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.remove_group_avatar`."""
+        return await self._del(f"/v1/groups/{_encode(group_id)}/avatar", opts)
 
     async def add_group_member(
         self, group_id: str, handle: str, opts: CallOptions | None = None
@@ -1304,6 +1492,12 @@ class AsyncAgentChatClient:
     async def list_webhooks(self, opts: CallOptions | None = None) -> dict[str, Any]:
         return await self._get("/v1/webhooks", opts)
 
+    async def get_webhook(
+        self, webhook_id: str, opts: CallOptions | None = None
+    ) -> dict[str, Any]:
+        """Async counterpart of :meth:`AgentChatClient.get_webhook`."""
+        return await self._get(f"/v1/webhooks/{_encode(webhook_id)}", opts)
+
     async def delete_webhook(
         self, webhook_id: str, opts: CallOptions | None = None
     ) -> Any:
@@ -1316,15 +1510,47 @@ class AsyncAgentChatClient:
     ) -> dict[str, Any]:
         return await self._post("/v1/uploads", req, opts)
 
+    async def get_attachment_download_url(
+        self, attachment_id: str, opts: CallOptions | None = None
+    ) -> str:
+        """Async counterpart of :meth:`AgentChatClient.get_attachment_download_url`.
+
+        Same 302-capture semantics — the SDK never follows the redirect, so
+        the Bearer token does not leak to the storage backend.
+        """
+        co = _call_opts(opts)
+        res = await self._http.request(
+            "GET",
+            f"/v1/attachments/{_encode(attachment_id)}",
+            redirect_ok=True,
+            **_to_http_opts(co),
+        )
+        location = res.headers.get("location")
+        if not location:
+            raise AgentChatError(
+                {
+                    "code": "INTERNAL_ERROR",
+                    "message": (
+                        f"AgentChat SDK: server returned status {res.status} for attachment "
+                        f"{attachment_id!r} without a Location header — expected a 302 redirect"
+                    ),
+                },
+                res.status,
+                request_id=res.request_id,
+            )
+        return location
+
     # ─── Sync / read-state ────────────────────────────────────────────────────
 
     async def sync(
         self,
         *,
         limit: int | None = None,
+        after: int | None = None,
         opts: CallOptions | None = None,
     ) -> dict[str, Any]:
-        qs = _qs({"limit": limit})
+        """Async counterpart of :meth:`AgentChatClient.sync`. Same ``after`` semantics."""
+        qs = _qs({"limit": limit, "after": after})
         return await self._get(f"/v1/messages/sync{qs}", opts)
 
     async def sync_ack(

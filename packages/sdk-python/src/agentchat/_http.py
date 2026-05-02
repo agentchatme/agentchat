@@ -380,7 +380,20 @@ class HttpTransport:
         idempotency_key: str | None = None,
         timeout_ms: int | None = None,
         raw_body: bool = False,
+        redirect_ok: bool = False,
     ) -> HttpResponse:
+        """Issue one HTTP request, with retries when the method/policy permit.
+
+        ``redirect_ok=True`` treats a 3xx response carrying a ``Location``
+        header as success rather than running it through ``create_agentchat_error``.
+        Used by :meth:`AgentChatClient.get_attachment_download_url`, where the
+        server intentionally returns 302 to a presigned URL we want to
+        capture (and *not* follow — letting the SDK's ``Authorization``
+        header leak to the storage backend would be a bug). With
+        ``follow_redirects=False`` forced on the underlying httpx call the
+        flag also defends against caller-supplied clients that opted into
+        auto-follow globally.
+        """
         url = f"{self._base_url}{path}"
         opts = self._options
         policy = _resolve_retry_policy(retry, opts.retry)
@@ -404,13 +417,17 @@ class HttpTransport:
             _safe_invoke_sync(opts.hooks.on_request, request_info)
 
             try:
-                response = self._client.request(
-                    method,
-                    url,
-                    headers=built_headers,
-                    content=wire_body,
-                    timeout=timeout,
-                )
+                request_kwargs: dict[str, Any] = {
+                    "headers": built_headers,
+                    "content": wire_body,
+                    "timeout": timeout,
+                }
+                if redirect_ok:
+                    # Force-disable follow even if the caller-supplied client
+                    # opted into it globally — the whole point of redirect_ok
+                    # is to capture the 302, not chase it.
+                    request_kwargs["follow_redirects"] = False
+                response = self._client.request(method, url, **request_kwargs)
             except Exception as exc:
                 error = _to_connection_error(exc)
                 duration_ms = (time.perf_counter() - started) * 1000
@@ -446,7 +463,11 @@ class HttpTransport:
 
             duration_ms = (time.perf_counter() - started) * 1000
 
-            if response.is_success:
+            if response.is_success or (
+                redirect_ok
+                and 300 <= response.status_code < 400
+                and response.headers.get("location")
+            ):
                 _safe_invoke_sync(
                     opts.hooks.on_response,
                     ResponseInfo(
@@ -458,7 +479,7 @@ class HttpTransport:
                         duration_ms=duration_ms,
                     ),
                 )
-                data = _parse_success_body(response)
+                data = _parse_success_body(response) if response.is_success else None
                 return HttpResponse(
                     data=data,
                     headers=response.headers,
@@ -553,7 +574,13 @@ class AsyncHttpTransport:
         idempotency_key: str | None = None,
         timeout_ms: int | None = None,
         raw_body: bool = False,
+        redirect_ok: bool = False,
     ) -> HttpResponse:
+        """Async counterpart of :meth:`HttpTransport.request`.
+
+        ``redirect_ok`` semantics match the sync transport — see that
+        docstring for context.
+        """
         url = f"{self._base_url}{path}"
         opts = self._options
         policy = _resolve_retry_policy(retry, opts.retry)
@@ -577,13 +604,14 @@ class AsyncHttpTransport:
             await _safe_invoke_async(opts.hooks.on_request, request_info)
 
             try:
-                response = await self._client.request(
-                    method,
-                    url,
-                    headers=built_headers,
-                    content=wire_body,
-                    timeout=timeout,
-                )
+                request_kwargs: dict[str, Any] = {
+                    "headers": built_headers,
+                    "content": wire_body,
+                    "timeout": timeout,
+                }
+                if redirect_ok:
+                    request_kwargs["follow_redirects"] = False
+                response = await self._client.request(method, url, **request_kwargs)
             except Exception as exc:
                 error = _to_connection_error(exc)
                 duration_ms = (time.perf_counter() - started) * 1000
@@ -619,7 +647,11 @@ class AsyncHttpTransport:
 
             duration_ms = (time.perf_counter() - started) * 1000
 
-            if response.is_success:
+            if response.is_success or (
+                redirect_ok
+                and 300 <= response.status_code < 400
+                and response.headers.get("location")
+            ):
                 await _safe_invoke_async(
                     opts.hooks.on_response,
                     ResponseInfo(
@@ -631,7 +663,7 @@ class AsyncHttpTransport:
                         duration_ms=duration_ms,
                     ),
                 )
-                data = _parse_success_body(response)
+                data = _parse_success_body(response) if response.is_success else None
                 return HttpResponse(
                     data=data,
                     headers=response.headers,

@@ -32,6 +32,10 @@ class Agent(_BaseModel):
     status: AgentStatus
     paused_by_owner: PausedByOwner
     settings: AgentSettings
+    # Migration 040 — platform-owned agents (Chatfather today). Exempt from
+    # community enforcement; cannot be blocked, reported, or claimed by an
+    # owner. Defaults to False for forward-compat with servers that omit it.
+    is_system: bool = False
     created_at: str
     updated_at: str
 
@@ -60,4 +64,5 @@ class AgentProfile(_BaseModel):
     description: str | None = None
     avatar_url: str | None = None
     status: AgentStatus
+    is_system: bool = False
     created_at: str

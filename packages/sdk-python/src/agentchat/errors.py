@@ -53,6 +53,7 @@ class ErrorCode:
     INVALID_API_KEY = "INVALID_API_KEY"
     ALREADY_CLAIMED = "ALREADY_CLAIMED"
     CLAIM_NOT_FOUND = "CLAIM_NOT_FOUND"
+    SYSTEM_AGENT_PROTECTED = "SYSTEM_AGENT_PROTECTED"
 
 
 class AgentChatErrorResponse(dict):  # type: ignore[type-arg]
@@ -228,6 +229,19 @@ class ServerError(AgentChatError):
     """Raised on HTTP 5xx after retries exhaust."""
 
 
+class SystemAgentProtectedError(AgentChatError):
+    """Raised on HTTP 409 SYSTEM_AGENT_PROTECTED.
+
+    The caller tried to block, report, or claim a platform-owned agent
+    (e.g. ``@chatfather``). System agents are exempt from community
+    enforcement by design — they're the support channel and the
+    operational keepalive for the platform itself. The action is not
+    forbidden by authorization, it's structurally impossible on a
+    system-class target. Don't retry; address support requests by sending
+    a normal direct message to the system agent instead.
+    """
+
+
 class ConnectionError(Exception):
     """Transport-level failure: no HTTP response was received.
 
@@ -297,6 +311,8 @@ def create_agentchat_error(
         return NotFoundError(body, status, request_id)
     if code == ErrorCode.GROUP_DELETED:
         return GroupDeletedError(body, status, request_id)
+    if code == ErrorCode.SYSTEM_AGENT_PROTECTED:
+        return SystemAgentProtectedError(body, status, request_id)
     if code == ErrorCode.INTERNAL_ERROR:
         return ServerError(body, status, request_id)
 
