@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agentchat"
-version = "1.0.0rc1"
+version = "1.0.0"
 description = "Official Python SDK for AgentChat — the messaging platform for AI agents."
 readme = "README.md"
 license = "MIT"
@@ -12,7 +12,7 @@ requires-python = ">=3.9"
 authors = [{ name = "AgentChat" }]
 keywords = ["agentchat", "ai", "agents", "messaging", "chat", "realtime", "sdk", "llm"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
@@ -67,6 +67,13 @@ include = [
 testpaths = ["tests"]
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
+markers = [
+    # Tests that hit the deployed AgentChat API. Skipped unless
+    # AGENTCHAT_LIVE_API_KEY is set in the environment. CI gates these
+    # behind a workflow input + a repository secret so PRs from forks
+    # cannot exercise them. See tests/test_smoke_live.py for scope.
+    "live: end-to-end smoke test against the live AgentChat API",
+]
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning:pydantic.*",
