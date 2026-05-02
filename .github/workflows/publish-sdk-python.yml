@@ -70,13 +70,15 @@ jobs:
       - name: Pytest
         run: python -m pytest -q
 
-  # Optional: hit the live API once before publishing. Skipped when the
-  # secret is absent (e.g. forks, fresh clones) so a missing secret never
-  # blocks a legitimate publish — the unit suite is the hard gate.
+  # Optional: hit the live API once before publishing. Always runs after
+  # ``test`` (so ``needs: [test, live-smoke]`` on ``build`` flows
+  # cleanly), but exits with 0 + a workflow warning when the
+  # ``AGENTCHAT_LIVE_API_KEY`` secret isn't set — forks, fresh clones,
+  # and TestPyPI dry-runs without the secret should never block a
+  # legitimate publish. The unit suite is the hard gate.
   live-smoke:
     runs-on: ubuntu-latest
     needs: test
-    if: ${{ github.event_name == 'push' || github.event.inputs.target == 'prod' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -138,7 +140,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'test' }}
     environment:
       name: testpypi
-      url: https://test.pypi.org/p/agentchat
+      url: https://test.pypi.org/p/agentchatme
     permissions:
       id-token: write  # OIDC for trusted publishing — required, no secret.
     steps:
@@ -161,7 +163,7 @@ jobs:
     if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'prod') }}
     environment:
       name: pypi
-      url: https://pypi.org/p/agentchat
+      url: https://pypi.org/p/agentchatme
     permissions:
       id-token: write
     steps:
