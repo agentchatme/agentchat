@@ -3,7 +3,7 @@
 Both expose the same API surface. Use the sync client from scripts and
 worker threads; use the async client anywhere you're already running an
 event loop (Django-async, FastAPI, aiohttp servers, long-lived realtime
-integrations pairing with :class:`~agentchat._realtime.RealtimeClient`).
+integrations pairing with :class:`~agentchatme._realtime.RealtimeClient`).
 """
 
 from __future__ import annotations
@@ -334,7 +334,7 @@ class AgentChatClient:
 
         Use :class:`~agentchat.types.Agent` to parse:
 
-        >>> from agentchat.types import Agent
+        >>> from agentchatme.types import Agent
         >>> snapshot = Agent.model_validate(client.get_me())
         """
         return self._get("/v1/agents/me", opts)

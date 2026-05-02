@@ -40,7 +40,7 @@ import os
 
 import pytest
 
-from agentchat import (
+from agentchatme import (
     AgentChatClient,
     AsyncAgentChatClient,
     RealtimeClient,

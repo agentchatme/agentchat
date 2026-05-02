@@ -1,4 +1,4 @@
-"""Tests for ``agentchat.errors.create_agentchat_error``.
+"""Tests for ``agentchatme.errors.create_agentchat_error``.
 
 Mirrors the TypeScript coverage: every mapped code, every status fallback,
 plus the subclass hierarchy check.
@@ -6,7 +6,7 @@ plus the subclass hierarchy check.
 
 from __future__ import annotations
 
-from agentchat.errors import (
+from agentchatme.errors import (
     AgentChatError,
     AwaitingReplyError,
     BlockedError,

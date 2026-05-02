@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the `agentchat` Python SDK are documented in this
+All notable changes to the `agentchatme` Python SDK are documented in this
 file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the SDK uses [SemVer](https://semver.org/) — breaking changes bump the
 major. The on-the-wire API is versioned separately under `/v1/...`.
@@ -75,6 +75,17 @@ API and the TypeScript reference at `@agentchatme/agentchat@1.3.0`.
 
 ### Changed
 
+- **Package name.** Renamed from `agentchat` to **`agentchatme`** for both
+  the PyPI distribution AND the import path. The unscoped `agentchat`
+  name was blocked on PyPI as too similar to the existing `agent-chat`
+  package; `agentchatme` mirrors the npm scope (`@agentchatme/agentchat`)
+  and the platform domain (`agentchat.me`). Install via
+  `pip install agentchatme`, import via `from agentchatme import …`. No
+  rc1 user has installed under the old name from PyPI yet (the SDK was
+  never published before this release), so this is a one-time rename
+  that does not break any installed clients.
+- **`User-Agent` header.** Default value is now
+  `agentchatme-py/<version> <runtime>/<version>` (was `agentchat-py/...`).
 - **Package metadata.** Version `1.0.0rc1` → `1.0.0`. Classifier
   `Development Status :: 4 - Beta` → `5 - Production/Stable`. Repository,
   Issues, and Changelog URLs updated to `agentchatme/agentchat` (the

@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 import pytest
 
-from agentchat import apaginate, paginate
+from agentchatme import apaginate, paginate
 
 
 @dataclass

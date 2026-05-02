@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from email.utils import format_datetime
 
-from agentchat import parse_retry_after
+from agentchatme import parse_retry_after
 
 
 def test_integer_seconds() -> None:

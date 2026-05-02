@@ -3,7 +3,7 @@
 Mirrors the TypeScript SDK's ``defaultUserAgent`` format so server-side
 log analyzers can parse SDK traffic uniformly regardless of language.
 
-Format: ``agentchat-py/<sdk-version> <runtime>/<runtime-version>``
+Format: ``agentchatme-py/<sdk-version> <runtime>/<runtime-version>``
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ def default_user_agent() -> str:
     Format is deliberately close to Stripe / Twilio / OpenAI conventions
     so existing log pipelines parse it without adjustment.
     """
-    return f"agentchat-py/{VERSION} {detect_runtime()}"
+    return f"agentchatme-py/{VERSION} {detect_runtime()}"
 
 
 def platform_tag() -> str:

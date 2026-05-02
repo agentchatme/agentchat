@@ -1,4 +1,4 @@
-"""Tests for :class:`agentchat.RealtimeClient`.
+"""Tests for :class:`agentchatme.RealtimeClient`.
 
 Covers the HELLO handshake, per-conversation seq ordering, gap recovery,
 reconnect behavior, the disposed flag, and the offline drain. The
@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-from agentchat import ConnectionError as AgentChatConnectionError
-from agentchat import RealtimeClient, SequenceGapInfo
+from agentchatme import ConnectionError as AgentChatConnectionError
+from agentchatme import RealtimeClient, SequenceGapInfo
 
 # ─────────────── Mock infrastructure ───────────────
 
@@ -327,7 +327,7 @@ async def test_message_without_seq_passes_through() -> None:
 @pytest.mark.asyncio
 async def test_gap_fill_unavailable_without_client(monkeypatch: pytest.MonkeyPatch) -> None:
     # Shrink the gap timer so the test finishes quickly.
-    monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 0.05)
+    monkeypatch.setattr("agentchatme._realtime._GAP_FILL_WINDOW_S", 0.05)
     rt, ws = _make_client(on_sequence_gap=lambda info: gaps.append(info))
     gaps: list[SequenceGapInfo] = []
     seqs: list[int] = []
@@ -356,7 +356,7 @@ async def test_gap_fill_unavailable_without_client(monkeypatch: pytest.MonkeyPat
 
 @pytest.mark.asyncio
 async def test_gap_fill_success_via_get_messages(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 0.05)
+    monkeypatch.setattr("agentchatme._realtime._GAP_FILL_WINDOW_S", 0.05)
     recovered_row = {"conversation_id": "c1", "seq": 2, "body": "filled"}
     mock_api = MockAsyncClient(get_messages_result=[recovered_row])
     rt, ws = _make_client(client=mock_api, on_sequence_gap=lambda info: gaps.append(info))
@@ -389,7 +389,7 @@ async def test_gap_fill_success_via_get_messages(monkeypatch: pytest.MonkeyPatch
 async def test_gap_fill_failure_surfaces_recovered_false(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 0.05)
+    monkeypatch.setattr("agentchatme._realtime._GAP_FILL_WINDOW_S", 0.05)
     mock_api = MockAsyncClient(get_messages_raises=True)
     gaps: list[SequenceGapInfo] = []
     rt, ws = _make_client(client=mock_api, on_sequence_gap=lambda info: gaps.append(info))
@@ -412,8 +412,8 @@ async def test_gap_fill_failure_surfaces_recovered_false(
 @pytest.mark.asyncio
 async def test_buffer_overflow_triggers_force_drain(monkeypatch: pytest.MonkeyPatch) -> None:
     # Shrink the overflow cap so the test can trip it without thousands of pushes.
-    monkeypatch.setattr("agentchat._realtime._MAX_BUFFERED_PER_CONVERSATION", 4)
-    monkeypatch.setattr("agentchat._realtime._GAP_FILL_WINDOW_S", 30.0)  # timer won't fire
+    monkeypatch.setattr("agentchatme._realtime._MAX_BUFFERED_PER_CONVERSATION", 4)
+    monkeypatch.setattr("agentchatme._realtime._GAP_FILL_WINDOW_S", 30.0)  # timer won't fire
     gaps: list[SequenceGapInfo] = []
     rt, ws = _make_client(on_sequence_gap=lambda info: gaps.append(info))
     try:
@@ -570,7 +570,7 @@ async def test_user_handler_exception_is_logged_not_swallowed(
     rt.on("message.new", boom)
     rt.on("message.new", lambda m: other_saw.append(m["payload"]["seq"]))
 
-    with caplog.at_level(logging.WARNING, logger="agentchat.realtime"):
+    with caplog.at_level(logging.WARNING, logger="agentchatme.realtime"):
         await rt.connect()
         await _settle()
         await ws.push({"type": "hello.ok"})

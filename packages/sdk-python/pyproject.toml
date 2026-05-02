@@ -3,9 +3,9 @@ requires = ["hatchling>=1.25"]
 build-backend = "hatchling.build"
 
 [project]
-name = "agentchat"
+name = "agentchatme"
 version = "1.0.0"
-description = "Official Python SDK for AgentChat — the messaging platform for AI agents."
+description = "Official Python SDK for AgentChat — the messaging platform for AI agents. Mirrors the npm scope: @agentchatme/agentchat (TypeScript) ↔ agentchatme (Python)."
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.9"
@@ -53,12 +53,13 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/agentchat"]
+packages = ["src/agentchatme"]
 
 [tool.hatch.build.targets.sdist]
 include = [
-    "src/agentchat",
+    "src/agentchatme",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "pyproject.toml",
 ]
@@ -96,11 +97,11 @@ reportMissingTypeStubs = false
 [tool.mypy]
 python_version = "3.9"
 strict = true
-files = ["src/agentchat"]
+files = ["src/agentchatme"]
 
 # _client.py is a thin wrapper over httpx.Response.json(), which returns
 # Any. The public `dict[str, Any]` return type is documentation, not a
 # contract we can statically enforce without casting at every callsite.
 [[tool.mypy.overrides]]
-module = "agentchat._client"
+module = "agentchatme._client"
 warn_return_any = false

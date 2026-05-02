@@ -1,4 +1,4 @@
-"""Tests for :class:`agentchat.HttpTransport` (sync).
+"""Tests for :class:`agentchatme.HttpTransport` (sync).
 
 Uses respx to mock httpx at the transport layer. The async transport
 shares the same code paths; one sync pass is enough to exercise retry,
@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from agentchat import (
+from agentchatme import (
     AgentChatError,
     HttpTransport,
     HttpTransportOptions,
@@ -27,10 +27,10 @@ from agentchat import (
     UnauthorizedError,
     ValidationError,
 )
-from agentchat import (
+from agentchatme import (
     ConnectionError as AgentChatConnectionError,
 )
-from agentchat._http import RequestHooks
+from agentchatme._http import RequestHooks
 
 
 def _make(**opts: Any) -> HttpTransport:
@@ -306,7 +306,7 @@ def test_attaches_default_user_agent() -> None:
         mock.get("/ping").mock(side_effect=handler)
         http = _make()
         http.request("GET", "/ping")
-        assert re.match(r"^agentchat-py/\S+ \S+/\S+$", seen["ua"])
+        assert re.match(r"^agentchatme-py/\S+ \S+/\S+$", seen["ua"])
         http.close()
 
 
@@ -329,7 +329,7 @@ def test_omits_user_agent_when_set_to_none() -> None:
     # httpx always sends its own UA unless you pass ``User-Agent: ""``. The
     # SDK's contract is: user_agent=None → do not add the SDK-specific UA.
     # In practice httpx's own UA still appears, so we verify by absence of
-    # the ``agentchat-py`` prefix rather than absence of a UA entirely.
+    # the ``agentchatme-py`` prefix rather than absence of a UA entirely.
     seen: dict[str, Any] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -340,7 +340,7 @@ def test_omits_user_agent_when_set_to_none() -> None:
         mock.get("/ping").mock(side_effect=handler)
         http = _make(user_agent=None)
         http.request("GET", "/ping")
-        assert "agentchat-py" not in seen["ua"]
+        assert "agentchatme-py" not in seen["ua"]
         http.close()
 
 

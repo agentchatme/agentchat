@@ -3,7 +3,7 @@
 The quick path::
 
     import asyncio
-    from agentchat import AsyncAgentChatClient
+    from agentchatme import AsyncAgentChatClient
 
     async def main():
         async with AsyncAgentChatClient(api_key="sk_...") as client:

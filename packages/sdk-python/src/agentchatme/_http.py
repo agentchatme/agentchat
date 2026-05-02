@@ -148,7 +148,7 @@ class HttpTransportOptions:
     default_headers: dict[str, str] = field(default_factory=dict)
     user_agent: Any = _UNSET
     """Override the default ``User-Agent``. Pass ``None`` to omit entirely.
-    Leave at default to use ``agentchat-py/<version> <runtime>/<version>``."""
+    Leave at default to use ``agentchatme-py/<version> <runtime>/<version>``."""
 
 
 def _normalize_user_agent(opt: Any) -> str | None:

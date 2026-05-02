@@ -247,8 +247,8 @@ class ConnectionError(Exception):
 
     Distinct from :class:`AgentChatError` — there is no body or status to
     inspect. Shadows the builtin ``ConnectionError`` only when imported from
-    ``agentchat`` explicitly (``from agentchat import ConnectionError`` or
-    ``agentchat.ConnectionError``). The builtin remains available elsewhere.
+    ``agentchatme`` explicitly (``from agentchatme import ConnectionError`` or
+    ``agentchatme.ConnectionError``). The builtin remains available elsewhere.
     """
 
 

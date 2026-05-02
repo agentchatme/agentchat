@@ -15,7 +15,7 @@ import httpx
 import pytest
 import respx
 
-from agentchat import (
+from agentchatme import (
     AgentChatClient,
     AgentChatError,
     AsyncAgentChatClient,
