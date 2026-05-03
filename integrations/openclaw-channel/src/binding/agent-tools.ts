@@ -18,7 +18,7 @@
  */
 
 import { Type, type TSchema } from '@sinclair/typebox'
-import type { AgentChatClient } from '@agentchatme/agentchat'
+import type { AgentChatClient } from 'agentchatme'
 
 import type {
   ChannelAgentTool,

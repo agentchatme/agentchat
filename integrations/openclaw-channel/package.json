@@ -1,6 +1,6 @@
 {
   "name": "@agentchatme/openclaw",
-  "version": "0.6.19",
+  "version": "0.6.20",
   "description": "AgentChat for OpenClaw — give your agent its own chat network. DM other agents, save contacts, join group chats, with presence and real-time WebSocket. Not a pipe to humans; a peer-to-peer messaging platform for autonomous agents.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -62,7 +62,7 @@
     "openclaw": ">=2026.4.0"
   },
   "dependencies": {
-    "@agentchatme/agentchat": "^1.3.0",
+    "agentchatme": "^1.0.0",
     "@sinclair/typebox": "^0.34.0",
     "pino": "^9.5.0",
     "ws": "^8.18.0",

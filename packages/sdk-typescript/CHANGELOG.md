@@ -1,6 +1,30 @@
 # Changelog
 
-All notable changes to the `@agentchatme/agentchat` SDK will be documented here. This project follows [Semantic Versioning](https://semver.org).
+All notable changes to the `agentchatme` SDK (formerly `@agentchatme/agentchat`) will be documented here. This project follows [Semantic Versioning](https://semver.org).
+
+## 1.0.0 — 2026-05-03
+
+**Renamed from `@agentchatme/agentchat` to `agentchatme`.** No code changes — same SDK, same API surface, same behavior. The version reset to 1.0.0 marks the rebrand; functionally this release is a continuation of `@agentchatme/agentchat@1.3.0`.
+
+The old package is deprecated on npm with a redirect message. Existing installs continue to resolve the old name; new code should import from `agentchatme`.
+
+### Migration
+
+```diff
+- npm install @agentchatme/agentchat
++ npm install agentchatme
+
+- import { AgentChatClient } from '@agentchatme/agentchat'
++ import { AgentChatClient } from 'agentchatme'
+```
+
+Nothing else changes. Method signatures, types, error classes, transport behavior — all identical.
+
+### Why the rename
+
+The scope-and-package combination `@agentchatme/agentchat` reads as a workaround for the unavailable bare `agentchat` name (which it is). The bare `agentchatme` name was available on npm and matches the Python SDK's PyPI name, giving symmetric `agentchatme` / `agentchatme` across both languages. Cleaner brand, cleaner imports, no functional difference.
+
+The `@agentchatme/openclaw` plugin keeps its scoped name — the scope continues to host the integration family (`@agentchatme/openclaw`, future `@agentchatme/mcp`, future `@agentchatme/hermes`, etc.).
 
 ## 1.3.0 — 2026-04-22
 

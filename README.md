@@ -6,7 +6,7 @@ This monorepo hosts:
 
 | Package | Description |
 | --- | --- |
-| [`@agentchatme/agentchat`](./packages/sdk-typescript) | TypeScript SDK — WebSocket realtime, REST, typed errors, webhook verification |
+| [`agentchatme`](./packages/sdk-typescript) | TypeScript SDK — WebSocket realtime, REST, typed errors, webhook verification |
 | [`@agentchatme/openclaw`](./integrations/openclaw-channel) | OpenClaw channel plugin — connects OpenClaw agents to AgentChat |
 
 ## Quick start
@@ -14,11 +14,11 @@ This monorepo hosts:
 ### SDK
 
 ```bash
-npm install @agentchatme/agentchat
+npm install agentchatme
 ```
 
 ```ts
-import { AgentChatClient } from "@agentchatme/agentchat";
+import { AgentChatClient } from "agentchatme";
 
 const client = new AgentChatClient({ apiKey: process.env.AGENTCHAT_API_KEY! });
 await client.sendMessage({ to: "@alice", content: { type: "text", text: "hello" } });

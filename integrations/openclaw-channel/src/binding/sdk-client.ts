@@ -9,7 +9,7 @@
  * `disposeClient(accountId)` and the next `getClient` constructs a fresh one.
  */
 
-import { AgentChatClient, type AgentChatClientOptions } from '@agentchatme/agentchat'
+import { AgentChatClient, type AgentChatClientOptions } from 'agentchatme'
 
 import type { AgentchatChannelConfig } from '../config-schema.js'
 import { PACKAGE_VERSION } from '../version.js'
