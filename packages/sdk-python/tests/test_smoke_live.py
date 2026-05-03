@@ -45,6 +45,12 @@ from agentchatme import (
     AsyncAgentChatClient,
     RealtimeClient,
 )
+from agentchatme.types import (
+    Agent,
+    AgentProfile,
+    Contact,
+    ConversationListItem,
+)
 
 _API_KEY = os.environ.get("AGENTCHAT_LIVE_API_KEY")
 _BASE_URL = os.environ.get("AGENTCHAT_LIVE_BASE_URL", "https://api.agentchat.me")
@@ -61,7 +67,15 @@ if not _API_KEY:
 
 @pytest.mark.live
 def test_get_me_round_trips() -> None:
-    """The most fundamental check — auth works, the agent record parses."""
+    """The most fundamental check — auth works, the agent record parses.
+
+    Beyond confirming the dict has the right keys, we run the full
+    response through ``Agent.model_validate`` to catch wire drift the
+    moment the server changes a field type, renames a field, or drops
+    a required one. Pydantic ``extra="allow"`` shields us from
+    *additive* server changes (forward-compat); this validate call
+    catches the *destructive* ones (backward-compat).
+    """
     with AgentChatClient(api_key=_API_KEY or "", base_url=_BASE_URL) as client:
         me = client.get_me()
     assert isinstance(me["handle"], str)
@@ -69,6 +83,10 @@ def test_get_me_round_trips() -> None:
     assert "is_system" in me, "server should send is_system since migration 040"
     assert "settings" in me
     assert me["settings"]["inbox_mode"] in ("open", "contacts_only")
+    # Wire-compat gate: every required field on Agent / AgentSettings
+    # must still be present and the right type. Drift here breaks any
+    # caller that does ``Agent.model_validate(client.get_me())``.
+    Agent.model_validate(me)
 
 
 @pytest.mark.live
@@ -81,6 +99,9 @@ def test_list_conversations_returns_an_array() -> None:
     for c in convs:
         assert "id" in c
         assert "type" in c
+        # Wire-compat gate. Empty list is acceptable (a fresh agent has
+        # no conversations); when there ARE rows, every one must parse.
+        ConversationListItem.model_validate(c)
 
 
 @pytest.mark.live
@@ -91,6 +112,9 @@ def test_list_contacts_paginates() -> None:
     assert isinstance(page, dict)
     assert "items" in page
     assert isinstance(page["items"], list)
+    # Wire-compat gate on Contact rows. Empty list is acceptable.
+    for item in page["items"]:
+        Contact.model_validate(item)
 
 
 @pytest.mark.live
@@ -100,14 +124,37 @@ def test_directory_search_returns_envelope() -> None:
         result = client.search_agents("a", limit=5)
     assert isinstance(result, dict)
     assert "items" in result
+    # Wire-compat gate on AgentProfile rows. The 'a' prefix should match
+    # at least one agent in any non-empty network; we assert the shape
+    # of every match without requiring at least one match (an empty
+    # directory is an acceptable state too).
+    for item in result["items"]:
+        AgentProfile.model_validate(item)
 
 
 @pytest.mark.live
 def test_list_mutes_returns_array() -> None:
-    """Mutes endpoint reachable, error-free, returns a list."""
+    """Mutes endpoint reachable, error-free, returns a list.
+
+    No Pydantic model exists for ``Mute`` — the SDK returns ``list[dict]``
+    by design (mute payloads are small + heterogeneous + rarely
+    inspected, see :class:`MuteEntry` in ``_client.py`` for the loose
+    shape). The dict-key check below is the contract: handle / id /
+    target_kind / muted_until.
+    """
     with AgentChatClient(api_key=_API_KEY or "", base_url=_BASE_URL) as client:
         mutes = client.list_mutes()
     assert isinstance(mutes, list)
+    for m in mutes:
+        # Soft schema check — there's no Pydantic model to validate
+        # against, but the public contract on every mute row is these
+        # three keys (target_kind ∈ {"agent","conversation"}, target_id,
+        # muted_until). If any of them disappears, the SDK's
+        # ``list_mutes`` consumers break silently.
+        assert "target_kind" in m, m
+        assert m["target_kind"] in ("agent", "conversation"), m
+        assert "target_id" in m, m
+        assert "muted_until" in m, m  # may be None for indefinite mutes
 
 
 @pytest.mark.live
