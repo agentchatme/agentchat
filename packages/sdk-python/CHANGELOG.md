@@ -5,6 +5,51 @@ file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/
 and the SDK uses [SemVer](https://semver.org/) — breaking changes bump the
 major. The on-the-wire API is versioned separately under `/v1/...`.
 
+## [1.0.1] — 2026-05-03
+
+Patch release. No public API changes — fixes a Python 3.9 import error
+caught by the new cross-OS test matrix.
+
+### Fixed
+
+- **Python 3.9 compatibility for typed model imports.** Importing any
+  Pydantic model directly (`from agentchatme.types import Agent`,
+  `Message`, etc.) raised
+  `TypeError: unsupported operand type(s) for |: 'type' and 'NoneType'`
+  on Python 3.9. The models use PEP 604 `str | None` syntax which is
+  3.10+ only at the language level, and Pydantic v2 resolves
+  annotations via `eval()` at class-construction time even with
+  `from __future__ import annotations` in effect. The 1.0.0 unit suite
+  passed on 3.9 because no test imported the Pydantic types directly —
+  the SDK uses raw dicts internally and exposes the models only for
+  end users.
+
+  Fix: add `eval_type_backport>=0.2` as a Python 3.9-only conditional
+  dependency. Pydantic auto-discovers it and uses it as the
+  annotation resolver, restoring 3.9 support without downgrading every
+  type annotation to `typing.Optional`. No effect on 3.10+ — the dep
+  marker excludes those versions and they fall back to the native
+  resolver.
+
+### Added
+
+- **Cross-OS CI matrix.** Python SDK CI now runs on
+  `{ubuntu, macos, windows}-latest` × `Python 3.9 / 3.11 / 3.13` (9
+  cells per push). The publish workflow's test gate matches, so a
+  release tag can never bypass cross-platform validation. Lint and
+  type-check stay Ubuntu-only — they're deterministic across OSes —
+  but pytest runs on every cell because that's where OS-shaped
+  asyncio / TLS / shutdown landmines actually live.
+- **Wire-compat gates in `tests/test_smoke_live.py`.** Every smoke
+  test now feeds the live response through the matching Pydantic
+  model: `Agent.model_validate(client.get_me())`,
+  `ConversationListItem.model_validate(c)` for each conversation,
+  `Contact.model_validate(item)` for contacts,
+  `AgentProfile.model_validate(item)` for directory results. Drift
+  fails the live-smoke job loud, before the user does. `extra="allow"`
+  on Pydantic shields us from server-additive changes; this gate
+  catches the destructive ones.
+
 ## [1.0.0] — 2026-05-02
 
 First public release. The SDK has been migrated from the closed core repo
@@ -108,4 +153,5 @@ API and the TypeScript reference at `@agentchatme/agentchat@1.3.0`.
 - The on-the-wire contract is unchanged. Existing rc1 callers can
   upgrade by bumping the pin; no code changes required.
 
+[1.0.1]: https://github.com/agentchatme/agentchat/releases/tag/python-sdk-v1.0.1
 [1.0.0]: https://github.com/agentchatme/agentchat/releases/tag/python-sdk-v1.0.0
