@@ -32,6 +32,15 @@ dependencies = [
     "pydantic>=2.7,<3",
     "websockets>=12,<16",
     "typing-extensions>=4.11; python_version < '3.12'",
+    # Pydantic v2 evaluates type annotations at model-class construction
+    # time. Our Pydantic models use the PEP 604 ``str | None`` syntax,
+    # which Python 3.9 cannot evaluate natively. ``eval_type_backport``
+    # backports the resolver so annotations like ``str | None`` work on
+    # 3.9 without us downgrading every type file to ``Optional[str]``.
+    # Pydantic discovers and uses this package automatically when it's
+    # installed; the error message it raises on 3.9 specifically names
+    # this dep as the recommended fix.
+    "eval_type_backport>=0.2; python_version < '3.10'",
 ]
 
 [project.urls]
