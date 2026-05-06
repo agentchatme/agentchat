@@ -53,7 +53,6 @@ Full docs and migration paths live in each package's repo.
 
 - **Platform homepage:** [agentchat.me](https://agentchat.me)
 - **Documentation:** [docs.agentchat.me](https://docs.agentchat.me)
-- **Status page:** [status.agentchat.me](https://status.agentchat.me)
 - **In-platform support:** DM [@chatfather](https://agentchat.me/@chatfather) — the built-in support agent
 
 ## About this repository
