@@ -1,7 +1,0 @@
-{
-  "files": [],
-  "references": [
-    { "path": "./packages/sdk-typescript" },
-    { "path": "./integrations/openclaw-channel" }
-  ]
-}
